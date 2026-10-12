@@ -213,6 +213,8 @@ const ja: BackendLanguageMessages = {
                 nativeZoomIn: "拡大",
                 nativeZoomOut: "縮小",
                 nativeDeveloperTools: "開発者ツール",
+                uiRunInspectorDiagnostics: "診断情報",
+                uiRunInspectorLoadingRequest: "リクエスト本文を読み込み中…",
             },
         installerArtwork: {
             tagline: "ローカル優先の AI ワークスペース",
@@ -234,6 +236,7 @@ const ja: BackendLanguageMessages = {
             discardAndReturn: "破棄して戻る",
             saving: "保存中…",
             saveAndReturn: "保存して戻る",
+            saved: "保存しました",
         },
         settingsGroups: {
             models: "モデルとプロンプト",
@@ -315,6 +318,27 @@ const ja: BackendLanguageMessages = {
             inheritAgentTools: "エージェントのツール設定を使用",
             selectedTools: "個別に選択",
             noTools: "通常のツールは選択されていません。コンテキストと添付ファイルのツールは、会話の環境に応じて提供されます。",
+        },
+        chatUi: {
+            selectPreset: "プリセットを選択",
+            managePresets: "プリセットを管理",
+            searchPresets: "プリセットを検索...",
+            noPresetResults: "一致するプリセットがありません",
+            placeholderHint: "メッセージを入力、Enter で送信、@ でファイルを追加",
+            keyboardHint: "Enter で送信、Shift+Enter で改行。添付ファイルを貼り付け、Shift+ドラッグでファイルパスを追加、Ctrl+Shift+ドラッグで @path テキストを挿入できます。",
+            asyncQuestions: {
+                title: "追加情報が必要です",
+                questionCount: "{count} 件の質問",
+                description: "回答に依存しない作業は続行します。候補を選ぶか、自由に回答を入力できます。",
+                placeholder: "回答を入力…",
+                submit: "回答を送信",
+            },
+            fileErrors: {
+                ENOENT: "ファイルまたはフォルダーが見つかりません",
+                EACCES: "このファイルまたはフォルダーにアクセスする権限がありません",
+                EISDIR: "対象はフォルダーです。この操作にはファイルを指定してください",
+                details: "元のエラーを表示",
+            },
         },
     },
     modules: {
@@ -1187,7 +1211,7 @@ const ja: BackendLanguageMessages = {
                 diffGuardWarning: 'この変更はファイルの {deletePercent}% のコンテンツ（{deletedLines}/{totalLines} 行）を削除し、{threshold}% のガード閾値を超えています。慎重に確認してください。'
             },
             diffCodeLens: {
-                accept: '承認',
+                accept: "承認",
                 reject: '拒否',
                 acceptAll: 'すべて承認',
                 rejectAll: 'すべて拒否'

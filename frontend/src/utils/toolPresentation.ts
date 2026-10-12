@@ -19,10 +19,19 @@ export function toolIcon(name: string): string {
 }
 
 export function toolSummary(name: string, args: Record<string, unknown>): string {
+  if (name === 'ask_user') return ''
   const target = ['query', 'url', 'path', 'command', 'title', 'name', 'text'].map(key => args?.[key])
     .find(value => typeof value === 'string' && value.trim()) as string | undefined
   return target?.replace(/\s+/g, ' ').slice(0, 180)
     || getToolDescription(name, t('components.message.tool.paramCount', { count: Object.keys(args ?? {}).length }))
+}
+
+export function toolQuestionTitle(args: Record<string, unknown>): string {
+  const questions = Array.isArray(args.questions) ? args.questions : []
+  if (questions.length === 1 && typeof questions[0]?.title === 'string') return questions[0].title
+  return questions.length > 1
+    ? t('components.input.asyncQuestions.questionCount', { count: questions.length })
+    : t('components.input.asyncQuestions.title')
 }
 
 export function toolFieldLabel(key: string): string {

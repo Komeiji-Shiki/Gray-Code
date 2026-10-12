@@ -1,6 +1,7 @@
 import { h, type Component, type VNode } from 'vue'
 import type { ToolUsage } from '../../../types'
 import { DefaultToolResult, getToolConfig } from '../../../utils/toolRegistry'
+import ToolErrorMessage from '../../tools/common/ToolErrorMessage.vue'
 import {
   confirmDiff,
   rejectDiff,
@@ -69,7 +70,7 @@ export function renderToolContent(
         children.push(
           h('div', { class: 'content-section error-section' }, [
             h('div', { class: 'section-label' }, t('components.message.tool.error') + ':'),
-            h('div', { class: 'error-message' }, tool.error)
+            h(ToolErrorMessage, { class: 'error-message', error: tool.error, path: tool.args?.path })
           ])
         )
       }

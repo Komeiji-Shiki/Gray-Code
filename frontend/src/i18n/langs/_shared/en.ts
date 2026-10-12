@@ -64,11 +64,26 @@ const sharedEn = {
             },
         },
         input: {
+            asyncQuestions: {
+                description: "Work that does not depend on your answers will continue. Choose a suggested answer or write your own.",
+                placeholder: "Write your answer…",
+                questionCount: "{count} questions",
+                submit: "Submit answers",
+                title: "More information needed",
+            },
             fileNotExists: "File does not exist",
+            keyboardHint: "Enter to send; Shift+Enter for a new line. Paste attachments, Shift+drag to add file paths, or Ctrl+Shift+drag to insert @path text.",
+            mode: {
+                manageMode: "Manage presets",
+                noResults: "No matching presets",
+                search: "Search presets...",
+                selectMode: "Select preset",
+            },
             notifications: {
                 fileInOtherWorkspace: "File belongs to another workspace: {workspaceName}",
                 fileNotInAnyWorkspace: "File is not in any open workspace",
             },
+            placeholderHint: "Type a message, Enter to send, @ to add files",
             promptContext: {
                 readFailed: "Failed to read file",
             },
@@ -87,6 +102,7 @@ const sharedEn = {
                 },
             },
             tool: {
+                accept: "Accept",
                 designCard: {
                     generatePlan: "Generate Plan",
                     openFileFailed: "Failed to open file",
@@ -659,6 +675,12 @@ const sharedEn = {
                     failed: "Failure",
                 },
             },
+            fileErrors: {
+                EACCES: "Permission denied for this file or directory",
+                EISDIR: "The target is a folder; this operation requires a file",
+                ENOENT: "File or directory not found",
+                details: "View original error",
+            },
             media: {
                 cropImagePanel: {
                     status: {
@@ -1036,6 +1058,7 @@ const sharedEn = {
             moreActions: "More actions",
             pinnedFilesButton: "Manage pinned files, {count} enabled",
             pinnedFilesCount: "Pinned files: {count}",
+            preset: "Preset",
             previewPrompt: "Preview full prompt",
             promptContextCount: "Prompts: {count}",
             queuedAttachmentCount: "Attachments: {count}",
@@ -1117,6 +1140,7 @@ const sharedEn = {
             processing: "Processing…",
             saveAll: "Save all",
             saveAndReturn: "Save and return",
+            saved: "Saved",
             saving: "Saving…",
             unsavedDescription: "Save changes from all categories, or discard this draft and return to chat.",
             unsavedTitle: "Unsaved settings",
@@ -1213,6 +1237,9 @@ const sharedEn = {
             reviewToggleList: "Toggle change list",
             startupDetail: "Your original data directory is preserved. Retry, or start with another data directory and use recovery in Settings.",
             startupFailed: "GrayCode could not start",
+            uiConversationSidebarCurrentInput: "Drafts",
+            uiRunInspectorDiagnostics: "Diagnostics",
+            uiRunInspectorLoadingRequest: "Loading request body…",
             uirunInspectorDiffReviewRequested: "Awaiting file change review",
             uirunInspectorDiffReviewResolved: "File change review resolved",
             uirunInspectorTaskFailed: "Task failed",

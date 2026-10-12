@@ -33,5 +33,6 @@ export default {
     editPromptContext: 'Edit prompt context: {title}',
     fileAlreadyOpen: 'Open in editor',
     queuedAttachmentCount: 'Attachments: {count}',
-    removeAttachment: 'Remove attachment: {name}'
+    removeAttachment: 'Remove attachment: {name}',
+    preset: "Preset",
 };

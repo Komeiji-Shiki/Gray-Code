@@ -33,5 +33,6 @@ export default {
     editPromptContext: '编辑提示词上下文：{title}',
     fileAlreadyOpen: '已在编辑器中打开',
     queuedAttachmentCount: '{count} 个附件',
-    removeAttachment: '移除附件：{name}'
+    removeAttachment: '移除附件：{name}',
+    preset: "预设",
 };

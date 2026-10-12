@@ -40,7 +40,7 @@ const emit = defineEmits<{
       <a href="https://chatgpt.com/#settings/Usage" target="_blank" rel="noopener noreferrer">{{ t('desktop.chatgpt.usage') }}</a>
     </div>
     <div class="mode-selector-wrapper">
-      <span class="selector-caption">{{ t('desktop.inputUi.mode') }}</span>
+      <span class="selector-caption">{{ t('desktop.inputUi.preset') }}</span>
       <ModeSelector
         :model-value="props.currentModeId"
         :options="props.modeOptions"

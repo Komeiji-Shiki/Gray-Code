@@ -4,6 +4,7 @@ import { useI18n } from '../../../i18n'
 import { recordValue, toolRawData } from '../../../utils/toolPresentation'
 import { isPartialToolData } from '@shared/toolResultStatus'
 import ToolResultValue from './ToolResultValue.vue'
+import ToolErrorMessage from './ToolErrorMessage.vue'
 
 defineOptions({ inheritAttrs: false })
 const props = defineProps<{ args?: Record<string, unknown>; result?: unknown; error?: string; status?: string; toolName?: string; hideHeading?: boolean }>()
@@ -25,7 +26,10 @@ const waiting = computed(() => !hasResult.value && !failure.value && ['queued', 
 
 <template>
   <div class="tool-result-panel">
-    <div v-if="failure" class="result-error" :class="{ warning: partialResult }" role="alert"><span :class="['codicon', partialResult ? 'codicon-warning' : 'codicon-error']" aria-hidden="true" /><span>{{ failure }}</span></div>
+    <div v-if="failure" class="result-error" :class="{ warning: partialResult }" role="alert">
+      <span :class="['codicon', partialResult ? 'codicon-warning' : 'codicon-error']" aria-hidden="true" />
+      <ToolErrorMessage :error="failure" :path="args?.path" />
+    </div>
     <slot />
     <section v-if="hasResult" class="result-section" :aria-label="t('components.tools.result')">
       <div v-if="!hideHeading" class="result-heading"><span class="codicon codicon-output" aria-hidden="true" /><span>{{ t('components.tools.result') }}</span><span v-if="envelope?.success !== undefined" class="result-outcome" :class="{ warning: partialResult, failed: envelope.success === false && !partialResult }">{{ t(partialResult ? 'components.tools.presentation.partialSuccess' : `components.tools.${envelope.success === false ? 'failed' : 'executed'}`) }}</span></div>

@@ -4,6 +4,7 @@ import { useI18n } from '../../../i18n'
 import { recordValue, toolFieldLabel, toolImage, toolLink, toolStatusLabel, toolTextValue } from '../../../utils/toolPresentation'
 import { MESSAGE_NAMES } from '@shared/protocol'
 import { sendToExtension, showNotification } from '../../../utils/vscode'
+import ToolErrorMessage from './ToolErrorMessage.vue'
 
 const props = withDefaults(defineProps<{ value: unknown; depth?: number; field?: string; omit?: string[] }>(), { depth: 0, field: '', omit: () => [] })
 const { t } = useI18n()
@@ -67,7 +68,10 @@ async function previewToolImage() {
       <dl v-else class="result-fields" :class="{ 'result-fields-compact': compactFields }">
         <div v-for="[key, item] in entries.slice(0, visible)" :key="key" class="result-field">
           <dt :title="key">{{ toolFieldLabel(key) }}</dt>
-          <dd><ToolResultValue :value="item" :depth="depth + 1" :field="key" /></dd>
+          <dd>
+            <ToolErrorMessage v-if="key === 'error' && typeof item === 'string'" :error="item" :path="recordValue(value) ? value.path : undefined" />
+            <ToolResultValue v-else :value="item" :depth="depth + 1" :field="key" />
+          </dd>
         </div>
       </dl>
       <button v-if="count > visible" type="button" class="result-more" @click="visible += 20">{{ t('components.tools.structured.showMore', { count: count - visible }) }}</button>

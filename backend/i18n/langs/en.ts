@@ -213,6 +213,8 @@ const en: BackendLanguageMessages = {
                 nativeZoomIn: "Zoom in",
                 nativeZoomOut: "Zoom out",
                 nativeDeveloperTools: "Developer tools",
+                uiRunInspectorDiagnostics: "Diagnostics",
+                uiRunInspectorLoadingRequest: "Loading request body…",
             },
         installerArtwork: {
             tagline: "LOCAL-FIRST AI WORKSPACE",
@@ -234,6 +236,7 @@ const en: BackendLanguageMessages = {
             discardAndReturn: "Discard and return",
             saving: "Saving…",
             saveAndReturn: "Save and return",
+            saved: "Saved",
         },
         settingsGroups: {
             models: "Models and prompts",
@@ -315,6 +318,27 @@ const en: BackendLanguageMessages = {
             inheritAgentTools: "Use the agent's tool configuration",
             selectedTools: "Custom selection",
             noTools: "No regular tools are selected. Context and attachment tools remain available as required by the conversation environment.",
+        },
+        chatUi: {
+            selectPreset: "Select preset",
+            managePresets: "Manage presets",
+            searchPresets: "Search presets...",
+            noPresetResults: "No matching presets",
+            placeholderHint: "Type a message, Enter to send, @ to add files",
+            keyboardHint: "Enter to send; Shift+Enter for a new line. Paste attachments, Shift+drag to add file paths, or Ctrl+Shift+drag to insert @path text.",
+            asyncQuestions: {
+                title: "More information needed",
+                questionCount: "{count} questions",
+                description: "Work that does not depend on your answers will continue. Choose a suggested answer or write your own.",
+                placeholder: "Write your answer…",
+                submit: "Submit answers",
+            },
+            fileErrors: {
+                ENOENT: "File or directory not found",
+                EACCES: "Permission denied for this file or directory",
+                EISDIR: "The target is a folder; this operation requires a file",
+                details: "View original error",
+            },
         },
     },
     modules: {
@@ -1187,7 +1211,7 @@ const en: BackendLanguageMessages = {
                 diffGuardWarning: 'This change deletes {deletePercent}% of the file content ({deletedLines}/{totalLines} lines), exceeding the {threshold}% guard threshold. Please review carefully.'
             },
             diffCodeLens: {
-                accept: 'Accept',
+                accept: "Accept",
                 reject: 'Reject',
                 acceptAll: 'Accept All',
                 rejectAll: 'Reject All'

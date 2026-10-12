@@ -33,5 +33,6 @@ export default {
     editPromptContext: 'プロンプトコンテキストを編集：{title}',
     fileAlreadyOpen: 'エディターで開いています',
     queuedAttachmentCount: '添付ファイル {count} 件',
-    removeAttachment: '添付ファイルを削除：{name}'
+    removeAttachment: '添付ファイルを削除：{name}',
+    preset: "プリセット",
 };

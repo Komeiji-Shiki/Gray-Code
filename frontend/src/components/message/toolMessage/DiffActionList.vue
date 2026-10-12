@@ -37,7 +37,7 @@ defineProps<{
           @click.stop="confirmDiff(pendingDiff.id)"
         >
           <span class="codicon codicon-check"></span>
-          {{ t('common.save') }}
+          {{ t('components.message.tool.accept') }}
         </button>
         <button
           class="reject-btn-secondary"

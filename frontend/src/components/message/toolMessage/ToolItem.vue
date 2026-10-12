@@ -5,7 +5,7 @@
  * 纯展示 + 本地动作执行；确认/拒绝、diff 孤儿检测、确认流绑定等状态与副作用
  * 全部保留在 ToolMessage.vue，通过 props/emits 交互，不改变既有语义。
  */
-import { getCurrentInstance, type Component, type ComponentPublicInstance } from 'vue'
+import { computed, getCurrentInstance, type Component, type ComponentPublicInstance } from 'vue'
 import type { ToolUsage } from '../../../types'
 import { getToolConfig, type ToolActionConfig, type ToolActionContext } from '../../../utils/toolRegistry'
 import { getToolDisplayName, getToolDescription as localizeToolDescription } from '../../../utils/toolLocalization'
@@ -48,7 +48,7 @@ function activateTool() {
 }
 
 function getToolStatusLabel(tool: ToolUsage): string {
-  if (tool.awaitingConfirmation || tool.status === 'awaiting_approval') {
+  if (tool.awaitingConfirmation || tool.status === 'awaiting_approval' || props.pendingDiffs.length > 0) {
     return t('components.message.responseViewer.toolStatuses.awaitingApproval')
   }
 
@@ -113,6 +113,8 @@ function getToolDescription(tool: ToolUsage): string {
   const argCount = Object.keys(tool.args || {}).length
   return localizeToolDescription(tool.name, t('components.message.tool.paramCount', { count: argCount }))
 }
+
+const toolDescription = computed(() => getToolDescription(props.tool))
 
 // 获取状态图标
 function getStatusIcon(status?: string, awaitingConfirmation?: boolean): string {
@@ -252,7 +254,10 @@ async function runToolAction(action: ToolActionConfig, tool: ToolUsage) {
 
           <span :class="['tool-icon', 'codicon', getToolIcon(tool)]" aria-hidden="true"></span>
           <span class="tool-name">{{ getToolLabel(tool) }}</span>
-          <span v-if="tool.status === 'awaiting_approval'" class="gc-badge gc-badge--warning tool-approval-badge">{{ getToolStatusLabel(tool) }}</span>
+          <span
+            v-if="tool.status === 'awaiting_approval' || pendingDiffs.length > 0"
+            class="gc-badge gc-badge--warning tool-approval-badge"
+          >{{ t('components.message.responseViewer.toolStatuses.awaitingApproval') }}</span>
 
           <div
             v-if="tool.status || tool.awaitingConfirmation"
@@ -276,8 +281,8 @@ async function runToolAction(action: ToolActionConfig, tool: ToolUsage) {
           </span>
         </div>
 
-        <span class="tool-description">
-          {{ getToolDescription(tool) }}
+        <span v-if="toolDescription" class="tool-description">
+          {{ toolDescription }}
         </span>
       </component>
 

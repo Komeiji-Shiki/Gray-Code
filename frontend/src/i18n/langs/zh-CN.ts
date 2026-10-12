@@ -348,7 +348,7 @@ const zhCN = {
 
         input: {
             placeholder: '输入消息...',
-            placeholderHint: '输入消息... (Enter 发送，可粘贴附件，Shift+拖拽或@添加路径，Ctrl+Shift+拖拽插入 @path 文本)',
+            placeholderHint: sharedZhCN.components.input.placeholderHint,
             resizeInput: '调整输入框高度；方向键调整，Home 或双击恢复自动高度',
             send: '发送消息',
             sendPreserveDynamicContext: '发送并保留旧动态上下文原位',
@@ -384,10 +384,10 @@ const zhCN = {
                 edit: '编辑'
             },
             mode: {
-                selectMode: '选择模式',
-                manageMode: '管理模式',
-                search: '搜索模式...',
-                noResults: '没有匹配的模式'
+                selectMode: sharedZhCN.components.input.mode.selectMode,
+                manageMode: sharedZhCN.components.input.mode.manageMode,
+                search: sharedZhCN.components.input.mode.search,
+                noResults: sharedZhCN.components.input.mode.noResults
             },
             channelSetup: {
                 loading: '正在读取渠道配置…',
@@ -524,7 +524,15 @@ const zhCN = {
                 tokenAfter: '压缩后',
                 tokenSaved: '已节省',
                 noDetail: '暂无详情。'
-            }
+            },
+            keyboardHint: sharedZhCN.components.input.keyboardHint,
+            asyncQuestions: {
+                title: sharedZhCN.components.input.asyncQuestions.title,
+                questionCount: sharedZhCN.components.input.asyncQuestions.questionCount,
+                description: sharedZhCN.components.input.asyncQuestions.description,
+                placeholder: sharedZhCN.components.input.asyncQuestions.placeholder,
+                submit: sharedZhCN.components.input.asyncQuestions.submit,
+            },
         },
 
         message: {
@@ -1029,7 +1037,8 @@ const zhCN = {
                     lineCount: '{count} 行',
                     deletedCount: '已删除 {count} 行',
                     willDelete: '将删除第 {start} 行到第 {end} 行（共 {count} 行）'
-                }
+                },
+                accept: sharedZhCN.components.message.tool.accept,
             },
             attachment: {
                 clickToPreview: '点击预览',
@@ -3900,7 +3909,13 @@ const zhCN = {
                 steps: '步骤 {count}',
                 noTools: '未调用工具',
                 toolsUsed: '工具: {tools}'
-            }
+            },
+            fileErrors: {
+                ENOENT: sharedZhCN.components.tools.fileErrors.ENOENT,
+                EACCES: sharedZhCN.components.tools.fileErrors.EACCES,
+                EISDIR: sharedZhCN.components.tools.fileErrors.EISDIR,
+                details: sharedZhCN.components.tools.fileErrors.details,
+            },
         }
     },
 

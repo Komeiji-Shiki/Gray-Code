@@ -767,7 +767,7 @@ export default {
     "uiConversationSidebarSearchConversations": "搜索对话",
     "uiConversationSidebarBotConversations": "机器人会话",
     "uiConversationSidebarSearchConversationPlaceholder": "搜索对话标题和内容",
-    "uiConversationSidebarCurrentInput": "当前输入",
+    "uiConversationSidebarCurrentInput": "草稿",
     "uiConversationSidebarUnsentDraft": "未发送的草稿",
     "uiConversationSidebarDraftActions": "草稿操作",
     "uiConversationSidebarPin": "置顶",
@@ -1799,7 +1799,9 @@ export default {
     "nativeResetZoom": "恢复实际大小",
     "nativeZoomIn": "放大",
     "nativeZoomOut": "缩小",
-    "nativeDeveloperTools": "开发者工具"
+    "nativeDeveloperTools": "开发者工具",
+    "uiRunInspectorDiagnostics": "诊断信息",
+    "uiRunInspectorLoadingRequest": "正在读取请求正文…"
   },
   "en": {
     "screenAutoStart": "Start automatically when this companion conversation opens",
@@ -2562,7 +2564,7 @@ export default {
     "uiConversationSidebarSearchConversations": "Search chats",
     "uiConversationSidebarBotConversations": "Bot chats",
     "uiConversationSidebarSearchConversationPlaceholder": "Search chat titles and content",
-    "uiConversationSidebarCurrentInput": "Current input",
+    "uiConversationSidebarCurrentInput": "Drafts",
     "uiConversationSidebarUnsentDraft": "Unsent draft",
     "uiConversationSidebarDraftActions": "Draft actions",
     "uiConversationSidebarPin": "Pin",
@@ -3594,7 +3596,9 @@ export default {
     "nativeResetZoom": "Actual size",
     "nativeZoomIn": "Zoom in",
     "nativeZoomOut": "Zoom out",
-    "nativeDeveloperTools": "Developer tools"
+    "nativeDeveloperTools": "Developer tools",
+    "uiRunInspectorDiagnostics": "Diagnostics",
+    "uiRunInspectorLoadingRequest": "Loading request body…"
   },
   "ja": {
     "screenAutoStart": "このコンパニオン会話を開くと自動的に開始する",
@@ -4357,7 +4361,7 @@ export default {
     "uiConversationSidebarSearchConversations": "チャットを検索",
     "uiConversationSidebarBotConversations": "Bot のチャット",
     "uiConversationSidebarSearchConversationPlaceholder": "チャットのタイトルと内容を検索",
-    "uiConversationSidebarCurrentInput": "現在の入力",
+    "uiConversationSidebarCurrentInput": "下書き",
     "uiConversationSidebarUnsentDraft": "未送信の下書き",
     "uiConversationSidebarDraftActions": "下書きの操作",
     "uiConversationSidebarPin": "ピン留め",
@@ -5389,6 +5393,8 @@ export default {
     "nativeResetZoom": "実際のサイズ",
     "nativeZoomIn": "拡大",
     "nativeZoomOut": "縮小",
-    "nativeDeveloperTools": "開発者ツール"
+    "nativeDeveloperTools": "開発者ツール",
+    "uiRunInspectorDiagnostics": "診断情報",
+    "uiRunInspectorLoadingRequest": "リクエスト本文を読み込み中…"
   }
 };

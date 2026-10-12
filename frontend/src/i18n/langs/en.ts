@@ -346,7 +346,7 @@ const en: LanguageMessages = {
 
         input: {
             placeholder: 'Type a message...',
-            placeholderHint: 'Type a message... (Enter to send, paste attachments, Shift+drag or @ to add paths, Ctrl+Shift+drag to insert @path text)',
+            placeholderHint: sharedEn.components.input.placeholderHint,
             resizeInput: 'Resize message input; use arrow keys, Home, or double-click to restore automatic height',
             send: 'Send message',
             sendPreserveDynamicContext: 'Send and preserve old dynamic context in place',
@@ -382,10 +382,10 @@ const en: LanguageMessages = {
                 edit: 'Edit'
             },
             mode: {
-                selectMode: 'Select mode',
-                manageMode: 'Manage Modes',
-                search: 'Search modes...',
-                noResults: 'No matching modes'
+                selectMode: sharedEn.components.input.mode.selectMode,
+                manageMode: sharedEn.components.input.mode.manageMode,
+                search: sharedEn.components.input.mode.search,
+                noResults: sharedEn.components.input.mode.noResults
             },
             channelSetup: {
                 loading: 'Loading channel settings…',
@@ -522,7 +522,15 @@ const en: LanguageMessages = {
                 tokenAfter: 'After',
                 tokenSaved: 'Saved',
                 noDetail: 'No detail.'
-            }
+            },
+            keyboardHint: sharedEn.components.input.keyboardHint,
+            asyncQuestions: {
+                title: sharedEn.components.input.asyncQuestions.title,
+                questionCount: sharedEn.components.input.asyncQuestions.questionCount,
+                description: sharedEn.components.input.asyncQuestions.description,
+                placeholder: sharedEn.components.input.asyncQuestions.placeholder,
+                submit: sharedEn.components.input.asyncQuestions.submit,
+            },
         },
 
         message: {
@@ -1027,7 +1035,8 @@ const en: LanguageMessages = {
                     lineCount: '{count} lines',
                     deletedCount: 'Deleted {count} lines',
                     willDelete: 'Will delete lines {start} to {end} ({count} lines total)'
-                }
+                },
+                accept: sharedEn.components.message.tool.accept,
             },
             attachment: {
                 clickToPreview: 'Click to preview',
@@ -3898,7 +3907,13 @@ const en: LanguageMessages = {
                     openFileFailed: 'Failed to open file:',
                     saveFailed: 'Save failed'
                 }
-            }
+            },
+            fileErrors: {
+                ENOENT: sharedEn.components.tools.fileErrors.ENOENT,
+                EACCES: sharedEn.components.tools.fileErrors.EACCES,
+                EISDIR: sharedEn.components.tools.fileErrors.EISDIR,
+                details: sharedEn.components.tools.fileErrors.details,
+            },
         }
     },
 

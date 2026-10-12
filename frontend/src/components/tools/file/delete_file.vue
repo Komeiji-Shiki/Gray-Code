@@ -10,6 +10,7 @@
 
 import { computed } from 'vue'
 import { useI18n, useOpenWorkspaceFile } from '@/composables'
+import ToolErrorMessage from '../common/ToolErrorMessage.vue'
 
 const props = defineProps<{
   args: Record<string, unknown>
@@ -103,7 +104,7 @@ function getFileName(filePath: string): string {
     <!-- 全局错误 -->
     <div v-if="error && fileCount === 0" class="panel-error">
       <span class="codicon codicon-error error-icon"></span>
-      <span class="error-text">{{ error }}</span>
+      <ToolErrorMessage class="error-text" :error="error" :path="args.path" />
     </div>
     
     <!-- 文件列表 -->
@@ -121,9 +122,7 @@ function getFileName(filePath: string): string {
         <div class="file-info">
           <button type="button" class="file-name clickable gc-link-button" :title="item.path" @click.stop="openFile(item.path)">{{ getFileName(item.path) }}</button>
           <button type="button" class="file-path clickable gc-link-button" :title="item.path" @click.stop="openFile(item.path)">{{ item.path }}</button>
-          <span v-if="!item.success && item.error" class="file-error">
-            {{ item.error }}
-          </span>
+          <ToolErrorMessage v-if="!item.success && item.error" class="file-error" :error="item.error" :path="item.path" />
         </div>
       </div>
     </div>

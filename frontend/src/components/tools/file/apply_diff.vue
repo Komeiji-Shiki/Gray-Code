@@ -11,6 +11,7 @@ import { parseUnifiedPatchToDiffBlocks, type DiffBlock } from './diffBlocks'
 
 import { computed, ref, watch, onBeforeUnmount } from 'vue'
 import CustomScrollbar from '../../common/CustomScrollbar.vue'
+import ToolErrorMessage from '../common/ToolErrorMessage.vue'
 import VirtualDiffLines from '../../common/VirtualDiffLines.vue'
 import { useI18n, useOpenWorkspaceFile } from '@/composables'
 import { computeLineDiffCached, type LineDiffEntry, type LineDiffResult } from '@/utils/lineDiff'
@@ -346,13 +347,13 @@ onBeforeUnmount(() => {
       <span v-if="!isFailed && !isPartial" class="codicon codicon-check status-icon success"></span>
       <span v-else-if="isPartial" class="codicon codicon-warning status-icon partial"></span>
       <span v-else class="codicon codicon-error status-icon error"></span>
-      <span class="status-text">
-        <template v-if="error">{{ error }}</template>
+      <div class="status-text">
+        <ToolErrorMessage v-if="error" :error="error" :path="filePath" />
         <template v-else-if="resultData.message">{{ resultData.message }}</template>
         <template v-else-if="isPartial">{{ t('components.tools.file.applyDiffPanel.diffApplied') }} ({{ resultData.appliedCount }}/{{ resultData.totalCount }})</template>
         <template v-else-if="isFailed">{{ t('common.failed') }}</template>
         <template v-else>{{ t('components.tools.file.applyDiffPanel.diffApplied') }}</template>
-      </span>
+      </div>
       <span v-if="resultData.status === 'pending'" class="status-badge pending">{{ t('components.tools.file.applyDiffPanel.pending') }}</span>
       <span v-else-if="resultData.status === 'partial'" class="status-badge partial">{{ t('components.tools.file.applyDiffPanel.partial') }}</span>
       <span v-else-if="resultData.status === 'accepted'" class="status-badge accepted">{{ t('components.tools.file.applyDiffPanel.accepted') }}</span>
@@ -377,7 +378,7 @@ onBeforeUnmount(() => {
     <!-- 全局错误 -->
     <div v-if="error && !resultData" class="panel-error">
       <span class="codicon codicon-error error-icon"></span>
-      <span class="error-text">{{ error }}</span>
+      <ToolErrorMessage class="error-text" :error="error" :path="filePath" />
     </div>
 
         <!-- Diff 列表 -->
@@ -457,7 +458,7 @@ onBeforeUnmount(() => {
           <div class="failed-section">
             <div class="failed-error" v-if="diff.error">
               <span class="codicon codicon-error"></span>
-              {{ diff.error }}
+              <ToolErrorMessage :error="diff.error" :path="filePath" />
             </div>
             <div class="failed-label">{{ t('components.message.tool.parameters') }} (search):</div>
             <CustomScrollbar :horizontal="true" :max-height="150">

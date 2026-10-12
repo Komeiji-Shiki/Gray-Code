@@ -145,7 +145,7 @@ const checkpointsBeforeMessage = computed<CheckpointRecord[]>(() => {
 })
 
 // 模型版本
-const modelVersion = computed(() => props.message.metadata?.modelVersion)
+const modelVersion = computed(() => props.message.metadata?.modelVersion || props.message.metadata?.model)
 
 // 角色显示名称
 const roleDisplayName = computed(() => {

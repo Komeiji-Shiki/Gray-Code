@@ -53,6 +53,17 @@ describe('real HTTP model adapter with existing provider codecs', () => {
   });
   afterEach(async () => { server.closeAllConnections(); await new Promise<void>(resolve => server.close(() => resolve())); });
 
+  test.each([
+    { protocol: 'openai' as const, stream: false, expected: 'test-model' },
+    { protocol: 'gemini' as const, stream: false, expected: 'requested-model' },
+    { protocol: 'openai' as const, stream: true, expected: 'requested-model' },
+  ])('完成响应保留供应方模型名，缺失时回退本次模型：$protocol stream=$stream', async ({ protocol, stream, expected }) => {
+    profile.protocol = protocol;
+    profile.stream = stream;
+    const response = await adapter.generate({ ...input(), modelOverride: 'requested-model' });
+    expect(response.modelVersion).toBe(expected);
+  });
+
   test('Gemini 发送长期记忆和 Office 工具时保留完整 JSON Schema', async () => {
     profile.protocol = 'gemini';
     const request = input();

@@ -12,6 +12,7 @@
 
 import { computed, ref, onBeforeUnmount } from 'vue'
 import CustomScrollbar from '../../common/CustomScrollbar.vue'
+import ToolErrorMessage from '../common/ToolErrorMessage.vue'
 import { useOpenWorkspaceFile, useI18n } from '@/composables'
 import { copyToClipboard } from '@/utils/format'
 import { showNotification } from '@/utils/vscode'
@@ -216,7 +217,7 @@ onBeforeUnmount(() => {
     <!-- 全局错误 -->
     <div v-if="error && mergedFiles.length === 0" class="panel-error">
       <span class="codicon codicon-error error-icon"></span>
-      <span class="error-text">{{ error }}</span>
+      <ToolErrorMessage class="error-text" :error="error" :path="args.path" />
     </div>
 
     <!-- 文件列表 -->
@@ -255,7 +256,7 @@ onBeforeUnmount(() => {
 
         <!-- 错误信息 -->
         <div v-if="file.result && !file.result.success && file.result.error" class="file-error">
-          {{ file.result.error }}
+          <ToolErrorMessage :error="file.result.error" :path="file.path" />
         </div>
 
         <!-- 插入的代码内容 -->

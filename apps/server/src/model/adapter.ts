@@ -250,7 +250,8 @@ export class ProviderModelAdapter implements ModelProvider {
     try {
       const content = await this.receiveWithRetry(input, prepared, !!native, socket, source);
       await captured;
-      return content;
+      // 供应方可能省略模型名，完成消息仍需保留本次请求模型，供历史和界面一致读取。
+      return { ...content, modelVersion: content.modelVersion || prepared.config.model };
     } catch (error) {
       await captured?.catch(() => undefined);
       throw error;

@@ -169,7 +169,7 @@ describe('MarkdownRenderer 流式代码块滚动修复', () => {
 
     // 行号：61 行代码
     const codeLines = container.findAll('.code-line')
-    expect(codeLines.length).toBeGreaterThanOrEqual(61)
+    expect(codeLines).toHaveLength(61)
     expect(container.find('.code-line-number').exists()).toBe(true)
     expect(container.find('.code-line-content').exists()).toBe(true)
     wrapper.unmount()
@@ -208,21 +208,21 @@ describe('MarkdownRenderer 流式代码块滚动修复', () => {
   })
 
   test('流式内容追加后 DOM 同步渲染新增行', async () => {
-    // markdown-it fence 内容带尾部换行，splitHighlightedHtmlByNewline 会产生尾随空行
+    // fence 的结尾换行不产生空行号，追加的实际代码仍须及时渲染。
     const part1 = '```typescript\nconst a = 1;\n```'
     const part2 = '```typescript\nconst a = 1;\nconst b = 2;\n```'
 
     const wrapper = mountRenderer({ content: part1, isStreaming: true })
     await tick()
     await tick()
-    expect(wrapper.findAll('.code-line')).toHaveLength(2)
+    expect(wrapper.findAll('.code-line')).toHaveLength(1)
 
     await wrapper.setProps({ content: part2 })
     // 流式渲染有 120ms debounce，等待其触发
     await new Promise<void>((resolve) => setTimeout(resolve, 200))
     await tick()
 
-    expect(wrapper.findAll('.code-line')).toHaveLength(3)
+    expect(wrapper.findAll('.code-line')).toHaveLength(2)
     expect(wrapper.find('.code-block-container').exists()).toBe(true)
     expect(wrapper.find('.markdown-content').classes()).toContain('is-streaming')
     wrapper.unmount()

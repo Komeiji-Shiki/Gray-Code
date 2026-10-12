@@ -1,12 +1,13 @@
 import { shallowMount, flushPromises } from '@vue/test-utils';
 import { afterEach, expect, test, vi } from 'vitest';
 import WriteFile from '../../components/tools/file/write_file.vue';
+import { setLanguage } from '../../i18n';
 const { load } = vi.hoisted(() => ({ load: vi.fn() }));
 vi.mock('../../utils/vscode', () => ({ loadDiffContent: load, showNotification: vi.fn() }));
 vi.mock('../../components/tools/file/useWriteFilePlans', () => ({ useWriteFilePlans: () => ({ channelOptions: [], modelOptions: [], selectedChannelId: '', selectedModelId: '', isLoadingChannels: false,
   isLoadingModels: false, isExecutingPlan: false, togglePlanExpand() {}, isPlanExpanded: () => false, executePlan() {} }) }));
 const wrappers: ReturnType<typeof shallowMount>[] = [];
-afterEach(() => { wrappers.splice(0).forEach(wrapper => wrapper.unmount()); load.mockReset(); });
+afterEach(() => { wrappers.splice(0).forEach(wrapper => wrapper.unmount()); load.mockReset(); setLanguage('auto'); });
 const result = (id?: string) => ({ data: { results: [{ path: 'sample.txt', success: true, diffContentId: id }] } });
 test('同一路径的新差异先完成时，旧响应不能覆盖新预览', async () => {
   let old!: (value: unknown) => void;
@@ -28,9 +29,25 @@ test('当前结果不再引用差异时清理旧预览和加载状态', async ()
 });
 
 test('写入回执到达前保留待写内容，失败时显示全局原因', async () => {
-  const wrapper = shallowMount(WriteFile, { props: { args: { path: 'sample.txt', content: '待写正文' } }, global: { stubs: { CustomScrollbar: { template: '<div><slot /></div>' } } } }); wrappers.push(wrapper);
+  setLanguage('zh-CN');
+  const wrapper = shallowMount(WriteFile, {
+    props: { args: { path: 'sample.txt', content: '待写正文' } },
+    global: { stubs: { CustomScrollbar: { template: '<div><slot /></div>' }, ToolErrorMessage: false } }
+  });
+  wrappers.push(wrapper);
   expect(wrapper.find('.stat.success').exists()).toBe(false);
   expect(wrapper.text()).toContain('待写正文');
   await wrapper.setProps({ error: '写入已取消' });
   expect(wrapper.get('.panel-error').text()).toContain('写入已取消');
+
+  const originalError = "ENOENT: no such file or directory, open '/workspace/sample.txt'";
+  await wrapper.setProps({ error: originalError });
+  const errorPanel = wrapper.get('.panel-error');
+  expect(errorPanel.text()).toContain('文件或目录不存在');
+  expect(errorPanel.get('.error-path').text()).toBe('sample.txt');
+  expect(errorPanel.text()).not.toContain(originalError);
+  const details = errorPanel.get<HTMLDetailsElement>('details');
+  details.element.open = true;
+  await details.trigger('toggle');
+  expect(errorPanel.get('pre').text()).toBe(originalError);
 });

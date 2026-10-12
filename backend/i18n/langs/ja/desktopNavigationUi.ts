@@ -7,7 +7,7 @@ export default {
     "uiConversationSidebarSearchConversations": "チャットを検索",
     "uiConversationSidebarBotConversations": "Bot のチャット",
     "uiConversationSidebarSearchConversationPlaceholder": "チャットのタイトルと内容を検索",
-    "uiConversationSidebarCurrentInput": "現在の入力",
+    "uiConversationSidebarCurrentInput": "下書き",
     "uiConversationSidebarUnsentDraft": "未送信の下書き",
     "uiConversationSidebarDraftActions": "下書きの操作",
     "uiConversationSidebarPin": "ピン留め",

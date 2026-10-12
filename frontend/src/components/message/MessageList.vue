@@ -35,7 +35,7 @@ import { useBuildPanel } from './useBuildPanel'
 import { useTodoPanel } from './useTodoPanel'
 import { useCheckpointRestoreFlow } from './useCheckpointRestoreFlow'
 import { useVirtualMessageWindow } from './useVirtualMessageWindow'
-import { messageConversationKey, messageToolResultKey } from '../../composables/messageConversationContext'
+import { messageConversationKey, messageToolResultKey, messageWorkspaceUriKey } from '../../composables/messageConversationContext'
 
 const { t } = useI18n()
 
@@ -43,13 +43,22 @@ const props = defineProps<{
   messages: Message[]
   /** 标签页 ID，标识此 MessageList 实例所属的标签页 */
   tabId: string
+  waitingForAnswer?: boolean
 }>()
 
 // 从 store 读取等待状态
 const chatStore = useChatStore()
 provide(messageConversationKey, computed(() => chatStore.currentConversationId))
+provide(messageWorkspaceUriKey, computed(() => chatStore.currentConversation?.workspaceUri))
 provide(messageToolResultKey, (id, response) => chatStore.getToolDisplayResult(id, response))
 const continuingBackground = computed(() => chatStore.allMessages.at(-1)?.source === 'background_task')
+const waitingPlaceholderId = computed(() => {
+  if (!props.waitingForAnswer) return undefined
+  const message = props.messages.at(-1)
+  // 仅隐藏等待回答时尚无内容的助手占位，保留消息数组身份和已有楼层计算。
+  return message?.localOnly && message.role === 'assistant' && !message.content
+    && !message.parts?.length && !message.tools?.length && !message.attachments?.length ? message.id : undefined
+})
 
 /** 共享辅助：todo/build 两侧共用的工具结果合并（以参数注入两个 composable，不搞全局） */
 function getMergedToolResult(tool: any): Record<string, unknown> {
@@ -385,7 +394,7 @@ function handleContinue() {
             
             <!-- 普通消息保持逐条身份，相邻输入只连接外观 -->
             <MessageItem
-              v-else
+              v-else-if="row.item.message.id !== waitingPlaceholderId"
               :message="row.item.message"
               :message-index="row.item.backendIndex"
               :floor="row.item.floor"

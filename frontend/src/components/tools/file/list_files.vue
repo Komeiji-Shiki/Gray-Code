@@ -12,6 +12,7 @@ import { computed, ref } from 'vue'
 import { useI18n } from '@/composables'
 import { copyToClipboard } from '@/utils/format'
 import { showNotification } from '@/utils/vscode'
+import ToolErrorMessage from '../common/ToolErrorMessage.vue'
 
 const props = defineProps<{
   args: Record<string, unknown>
@@ -265,7 +266,7 @@ async function copyAllEntries() {
     <!-- 全局错误 -->
     <div v-if="error && listResults.length === 0" class="panel-error">
       <span class="codicon codicon-error error-icon"></span>
-      <span class="error-text">{{ error }}</span>
+      <ToolErrorMessage class="error-text" :error="error" :path="args.path" />
     </div>
     
     <!-- 目录列表 -->
@@ -295,7 +296,7 @@ async function copyAllEntries() {
         
         <!-- 错误信息 -->
         <div v-if="!result.success && result.error" class="dir-error">
-          {{ result.error }}
+          <ToolErrorMessage :error="result.error" :path="result.path" />
         </div>
         
         <!-- 条目列表 -->

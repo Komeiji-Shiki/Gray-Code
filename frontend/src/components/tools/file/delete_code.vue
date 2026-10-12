@@ -11,6 +11,7 @@
 
 import { computed } from 'vue'
 import { useI18n, useOpenWorkspaceFile } from '@/composables'
+import ToolErrorMessage from '../common/ToolErrorMessage.vue'
 
 const props = defineProps<{
   args: Record<string, unknown>
@@ -137,7 +138,7 @@ function getFileNameWithoutExt(fp: string): string {
     <!-- 全局错误 -->
     <div v-if="error && mergedFiles.length === 0" class="panel-error">
       <span class="codicon codicon-error error-icon"></span>
-      <span class="error-text">{{ error }}</span>
+      <ToolErrorMessage class="error-text" :error="error" :path="args.path" />
     </div>
 
     <!-- 文件列表 -->
@@ -164,7 +165,7 @@ function getFileNameWithoutExt(fp: string): string {
         <!-- 状态显示 -->
         <div v-if="file.result && !file.result.success && file.result.error" class="file-error">
           <span class="codicon codicon-error"></span>
-          {{ file.result.error }}
+          <ToolErrorMessage :error="file.result.error" :path="file.path" />
         </div>
         <div v-else-if="file.result?.status === 'accepted'" class="file-success">
           <span class="codicon codicon-check"></span>

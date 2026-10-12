@@ -64,11 +64,26 @@ const sharedZhCN = {
             },
         },
         input: {
+            asyncQuestions: {
+                description: "不依赖回答的工作会继续。你可以选择建议答案，也可以自由填写。",
+                placeholder: "填写你的回答…",
+                questionCount: "{count} 个问题",
+                submit: "提交回答",
+                title: "需要补充的信息",
+            },
             fileNotExists: "文件不存在",
+            keyboardHint: "Enter 发送，Shift+Enter 换行。可粘贴附件；Shift+拖拽添加文件路径，Ctrl+Shift+拖拽插入 @path 文本。",
+            mode: {
+                manageMode: "管理预设",
+                noResults: "没有匹配的预设",
+                search: "搜索预设...",
+                selectMode: "选择预设",
+            },
             notifications: {
                 fileInOtherWorkspace: "文件属于其他工作区: {workspaceName}",
                 fileNotInAnyWorkspace: "文件不在任何打开的工作区内",
             },
+            placeholderHint: "输入消息，Enter 发送，@ 添加文件",
             promptContext: {
                 readFailed: "读取文件失败",
             },
@@ -87,6 +102,7 @@ const sharedZhCN = {
                 },
             },
             tool: {
+                accept: "接受",
                 designCard: {
                     generatePlan: "生成计划",
                     openFileFailed: "打开文件失败",
@@ -659,6 +675,12 @@ const sharedZhCN = {
                     failed: "失败",
                 },
             },
+            fileErrors: {
+                EACCES: "没有权限访问该文件或目录",
+                EISDIR: "目标是文件夹，此操作需要文件",
+                ENOENT: "文件或目录不存在",
+                details: "查看原始错误",
+            },
             media: {
                 cropImagePanel: {
                     status: {
@@ -1036,6 +1058,7 @@ const sharedZhCN = {
             moreActions: "更多操作",
             pinnedFilesButton: "管理固定文件，已启用 {count} 个",
             pinnedFilesCount: "{count} 个固定文件",
+            preset: "预设",
             previewPrompt: "预览当前完整提示词",
             promptContextCount: "{count} 条提示",
             queuedAttachmentCount: "{count} 个附件",
@@ -1117,6 +1140,7 @@ const sharedZhCN = {
             processing: "正在处理…",
             saveAll: "保存全部",
             saveAndReturn: "保存并返回",
+            saved: "已保存",
             saving: "正在保存…",
             unsavedDescription: "可以保存所有分类的更改，或放弃这份草稿后返回对话。",
             unsavedTitle: "设置尚未保存",
@@ -1213,6 +1237,9 @@ const sharedZhCN = {
             reviewToggleList: "切换修改列表",
             startupDetail: "原数据目录会保留。可以重试启动，或选择其他数据目录启动后使用设置中的恢复入口。",
             startupFailed: "GrayCode 启动失败",
+            uiConversationSidebarCurrentInput: "草稿",
+            uiRunInspectorDiagnostics: "诊断信息",
+            uiRunInspectorLoadingRequest: "正在读取请求正文…",
             uirunInspectorDiffReviewRequested: "等待文件修改审查",
             uirunInspectorDiffReviewResolved: "文件修改审查已处理",
             uirunInspectorTaskFailed: "任务失败",

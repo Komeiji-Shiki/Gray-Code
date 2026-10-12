@@ -7,7 +7,7 @@ export default {
     "uiConversationSidebarSearchConversations": "搜索对话",
     "uiConversationSidebarBotConversations": "机器人会话",
     "uiConversationSidebarSearchConversationPlaceholder": "搜索对话标题和内容",
-    "uiConversationSidebarCurrentInput": "当前输入",
+    "uiConversationSidebarCurrentInput": "草稿",
     "uiConversationSidebarUnsentDraft": "未发送的草稿",
     "uiConversationSidebarDraftActions": "草稿操作",
     "uiConversationSidebarPin": "置顶",

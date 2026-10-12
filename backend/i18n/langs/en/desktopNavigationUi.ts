@@ -7,7 +7,7 @@ export default {
     "uiConversationSidebarSearchConversations": "Search chats",
     "uiConversationSidebarBotConversations": "Bot chats",
     "uiConversationSidebarSearchConversationPlaceholder": "Search chat titles and content",
-    "uiConversationSidebarCurrentInput": "Current input",
+    "uiConversationSidebarCurrentInput": "Drafts",
     "uiConversationSidebarUnsentDraft": "Unsent draft",
     "uiConversationSidebarDraftActions": "Draft actions",
     "uiConversationSidebarPin": "Pin",

@@ -346,6 +346,8 @@ function createMarkdownIt(options: { allowHtml: boolean }) {
       return `<div class="mermaid-block-container" data-block-id="${blockId}"><div class="code-block-header"><span class="code-block-title">mermaid</span><div class="code-block-toolbar"><button class="code-tool-btn code-copy-btn" data-code="${encodedCode}" title="${escapeHtml(titleCopy)}"><span class="copy-icon codicon codicon-copy"></span><span class="check-icon codicon codicon-check"></span></button></div></div><div class="mermaid-wrapper"><div class="mermaid">${escapeHtml(code)}</div></div></div>`
     }
 
+    // Markdown fence 的结尾换行不额外占用行号；复制仍保留原始文本。
+    const displayCode = code.replace(/\r?\n$/, '')
     // 代码高亮
     // #64：无语言标注的代码块跳过 highlightAuto（避免流式期间遍历 192 种语法卡顿主线程）
     // 有标注但 hljs 不识别的语言仍会尝试 highlightAuto，但结果加入 codeHighlightCache
@@ -354,36 +356,36 @@ function createMarkdownIt(options: { allowHtml: boolean }) {
     let highlighted: string
     let langClass = ''
     if (pendingHighlight) {
-      highlighted = escapeHtml(code)
+      highlighted = escapeHtml(displayCode)
     } else if (lang && hljs?.getLanguage(lang)) {
       // 已知语言路径复用与 auto 相同的模块级有界缓存：流式期间同一段增长中的代码
       // 每帧重复高亮，缓存命中直接取上次结果（键为 lang + 代码全文）
-      const cacheKey = `${lang}:${code}`
+      const cacheKey = `${lang}:${displayCode}`
       const cached = codeHighlightCache.get(cacheKey)
       if (cached !== undefined) {
         highlighted = cached
       } else {
         try {
-          highlighted = hljs.highlight(code, { language: lang }).value
+          highlighted = hljs.highlight(displayCode, { language: lang }).value
           codeHighlightCache.set(cacheKey, highlighted)
         } catch {
-          highlighted = escapeHtml(code)
+          highlighted = escapeHtml(displayCode)
         }
       }
       langClass = `language-${lang}`
     } else if (lang && hljs) {
       // 标注了语言但 hljs 不识别的，尝试 auto + 缓存
-      const cacheKey = `auto:${code}`
+      const cacheKey = `auto:${displayCode}`
       const cached = codeHighlightCache.get(cacheKey)
       if (cached !== undefined) {
         highlighted = cached
       } else {
-        highlighted = hljs.highlightAuto(code).value
+        highlighted = hljs.highlightAuto(displayCode).value
         codeHighlightCache.set(cacheKey, highlighted)
       }
     } else {
       // 完全无标注：跳过 auto，仅转义原文
-      highlighted = escapeHtml(code)
+      highlighted = escapeHtml(displayCode)
     }
 
     const encodedCode = btoa(encodeURIComponent(code))

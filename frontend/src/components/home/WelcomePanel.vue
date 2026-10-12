@@ -9,6 +9,7 @@
  * 用户可以在下方输入框输入消息开始新对话
  */
 
+import { computed } from 'vue'
 import { CustomScrollbar, AnnouncementModal } from '../common'
 import ConversationList from '../history/ConversationList.vue'
 import { useChatStore, useSettingsStore } from '@/stores'
@@ -18,6 +19,9 @@ import { showNotification } from '@/utils/vscode'
 const { t } = useI18n()
 const chatStore = useChatStore()
 const settingsStore = useSettingsStore()
+const props = withDefaults(defineProps<{ mode?: 'chat' | 'code' | 'character' }>(), { mode: 'chat' })
+const recentConversations = computed(() => chatStore.filteredConversations.filter(conversation =>
+  conversation.id !== chatStore.currentConversationId || conversation.messageCount > 0).slice(0, 8))
 
 // 处理选择对话
 async function handleSelect(id: string) {
@@ -69,16 +73,13 @@ async function handleDelete(id: string) {
         </div>
         <h1 class="welcome-title">{{ t('components.home.welcome') }}</h1>
         <p class="welcome-subtitle">
-          {{ t('components.home.welcomeMessage') }}
-        </p>
-        <p class="welcome-hint">
-          {{ t('components.home.welcomeHint') }}
+          {{ t(`desktop.shell.${props.mode}Detail`) }}
         </p>
       </div>
     </div>
     
     <!-- 历史对话区域 -->
-    <div class="history-section" v-if="chatStore.filteredConversations.length > 0 || chatStore.isLoadingConversations">
+    <div class="history-section" v-if="recentConversations.length > 0 || chatStore.isLoadingConversations">
       <div class="section-header">
         <h2 class="section-title">{{ t('components.home.recentChats') }}</h2>
         <button class="view-all-btn" @click="settingsStore.showHistory" v-if="!chatStore.isLoadingConversations">
@@ -89,7 +90,7 @@ async function handleDelete(id: string) {
       
       <CustomScrollbar class="history-list">
         <ConversationList
-          :conversations="chatStore.filteredConversations.slice(0, 8)"
+          :conversations="recentConversations"
           :current-id="chatStore.currentConversationId"
           :loading="chatStore.isLoadingConversations"
           :format-time="chatStore.formatTime"
@@ -99,10 +100,6 @@ async function handleDelete(id: string) {
       </CustomScrollbar>
     </div>
     
-    <!-- 无历史时的提示 -->
-    <div class="no-history" v-else-if="!chatStore.isLoadingConversations">
-      <p class="no-history-text">{{ t('components.home.noRecentChats') }}</p>
-    </div>
   </div>
 </template>
 
@@ -191,13 +188,6 @@ async function handleDelete(id: string) {
   line-height: 1.4;
 }
 
-.welcome-hint {
-  margin: 0;
-  font-size: 12px;
-  color: var(--gc-text-muted);
-  opacity: 0.7;
-}
-
 /* 历史对话区域 */
 .history-section {
   flex: 1;
@@ -250,20 +240,4 @@ async function handleDelete(id: string) {
   min-height: 0;
 }
 
-/* 无历史提示 */
-.no-history {
-  flex: 1;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  padding: 24px;
-  text-align: center;
-}
-
-.no-history-text {
-  margin: 0;
-  font-size: 13px;
-  color: var(--gc-text-muted);
-}
 </style>

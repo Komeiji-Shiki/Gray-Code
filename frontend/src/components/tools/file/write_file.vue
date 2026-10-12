@@ -12,6 +12,7 @@ import { useWriteFilePlans } from './useWriteFilePlans'
 
 import { computed, ref, onBeforeUnmount, watch } from 'vue'
 import CustomScrollbar from '../../common/CustomScrollbar.vue'
+import ToolErrorMessage from '../common/ToolErrorMessage.vue'
 import VirtualDiffLines from '../../common/VirtualDiffLines.vue'
 import { MarkdownRenderer } from '../../common'
 import ChannelSelector from '../../input/ChannelSelector.vue'
@@ -458,7 +459,7 @@ onBeforeUnmount(() => {
     <!-- 全局错误 -->
     <div v-if="error && writeResults.length === 0" class="panel-error">
       <span class="codicon codicon-error error-icon"></span>
-      <span class="error-text">{{ error }}</span>
+      <ToolErrorMessage class="error-text" :error="error" :path="args.path" />
     </div>
 
     <!-- 文件列表 -->
@@ -505,7 +506,7 @@ onBeforeUnmount(() => {
 
         <!-- 错误信息 -->
         <div v-if="file.result && !file.result.success && file.result.error" class="file-error">
-          {{ file.result.error }}
+          <ToolErrorMessage :error="file.result.error" :path="file.path" />
         </div>
 
         <!-- 视图切换按钮 -->

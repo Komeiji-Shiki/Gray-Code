@@ -64,11 +64,26 @@ const sharedJa = {
             },
         },
         input: {
+            asyncQuestions: {
+                description: "回答に依存しない作業は続行します。候補を選ぶか、自由に回答を入力できます。",
+                placeholder: "回答を入力…",
+                questionCount: "{count} 件の質問",
+                submit: "回答を送信",
+                title: "追加情報が必要です",
+            },
             fileNotExists: "ファイルが存在しません",
+            keyboardHint: "Enter で送信、Shift+Enter で改行。添付ファイルを貼り付け、Shift+ドラッグでファイルパスを追加、Ctrl+Shift+ドラッグで @path テキストを挿入できます。",
+            mode: {
+                manageMode: "プリセットを管理",
+                noResults: "一致するプリセットがありません",
+                search: "プリセットを検索...",
+                selectMode: "プリセットを選択",
+            },
             notifications: {
                 fileInOtherWorkspace: "ファイルは別のワークスペースに属しています: {workspaceName}",
                 fileNotInAnyWorkspace: "ファイルが開いているワークスペースにありません",
             },
+            placeholderHint: "メッセージを入力、Enter で送信、@ でファイルを追加",
             promptContext: {
                 readFailed: "ファイルの読み取りに失敗しました",
             },
@@ -87,6 +102,7 @@ const sharedJa = {
                 },
             },
             tool: {
+                accept: "承認",
                 designCard: {
                     generatePlan: "計画を生成",
                     openFileFailed: "ファイルを開くのに失敗しました",
@@ -659,6 +675,12 @@ const sharedJa = {
                     failed: "失敗",
                 },
             },
+            fileErrors: {
+                EACCES: "このファイルまたはフォルダーにアクセスする権限がありません",
+                EISDIR: "対象はフォルダーです。この操作にはファイルを指定してください",
+                ENOENT: "ファイルまたはフォルダーが見つかりません",
+                details: "元のエラーを表示",
+            },
             media: {
                 cropImagePanel: {
                     status: {
@@ -1036,6 +1058,7 @@ const sharedJa = {
             moreActions: "その他の操作",
             pinnedFilesButton: "固定ファイルを管理、{count} 件が有効",
             pinnedFilesCount: "固定ファイル {count} 件",
+            preset: "プリセット",
             previewPrompt: "プロンプト全体をプレビュー",
             promptContextCount: "プロンプト {count} 件",
             queuedAttachmentCount: "添付ファイル {count} 件",
@@ -1117,6 +1140,7 @@ const sharedJa = {
             processing: "処理中…",
             saveAll: "すべて保存",
             saveAndReturn: "保存して戻る",
+            saved: "保存しました",
             saving: "保存中…",
             unsavedDescription: "すべての分類の変更を保存するか、下書きを破棄してチャットに戻れます。",
             unsavedTitle: "未保存の設定",
@@ -1213,6 +1237,9 @@ const sharedJa = {
             reviewToggleList: "変更一覧を切り替える",
             startupDetail: "元のデータは保持されます。再試行するか、別のデータフォルダーで起動し、設定から復元できます。",
             startupFailed: "GrayCode を起動できませんでした",
+            uiConversationSidebarCurrentInput: "下書き",
+            uiRunInspectorDiagnostics: "診断情報",
+            uiRunInspectorLoadingRequest: "リクエスト本文を読み込み中…",
             uirunInspectorDiffReviewRequested: "ファイル変更のレビュー待ち",
             uirunInspectorDiffReviewResolved: "ファイル変更のレビュー完了",
             uirunInspectorTaskFailed: "タスクに失敗",

@@ -216,6 +216,8 @@ const zhCN = {
                 nativeZoomIn: "放大",
                 nativeZoomOut: "缩小",
                 nativeDeveloperTools: "开发者工具",
+                uiRunInspectorDiagnostics: "诊断信息",
+                uiRunInspectorLoadingRequest: "正在读取请求正文…",
             },
         installerArtwork: {
             tagline: "本地优先 AI 工作台",
@@ -237,6 +239,7 @@ const zhCN = {
             discardAndReturn: "放弃并返回",
             saving: "正在保存…",
             saveAndReturn: "保存并返回",
+            saved: "已保存",
         },
         settingsGroups: {
             models: "模型与提示",
@@ -318,6 +321,27 @@ const zhCN = {
             inheritAgentTools: "沿用 Agent 工具配置",
             selectedTools: "自选工具",
             noTools: "未选择常规工具，上下文和附件工具仍按会话环境提供。",
+        },
+        chatUi: {
+            selectPreset: "选择预设",
+            managePresets: "管理预设",
+            searchPresets: "搜索预设...",
+            noPresetResults: "没有匹配的预设",
+            placeholderHint: "输入消息，Enter 发送，@ 添加文件",
+            keyboardHint: "Enter 发送，Shift+Enter 换行。可粘贴附件；Shift+拖拽添加文件路径，Ctrl+Shift+拖拽插入 @path 文本。",
+            asyncQuestions: {
+                title: "需要补充的信息",
+                questionCount: "{count} 个问题",
+                description: "不依赖回答的工作会继续。你可以选择建议答案，也可以自由填写。",
+                placeholder: "填写你的回答…",
+                submit: "提交回答",
+            },
+            fileErrors: {
+                ENOENT: "文件或目录不存在",
+                EACCES: "没有权限访问该文件或目录",
+                EISDIR: "目标是文件夹，此操作需要文件",
+                details: "查看原始错误",
+            },
         },
     },
     modules: {
@@ -1190,7 +1214,7 @@ const zhCN = {
                 diffGuardWarning: '此次修改删除了 {deletePercent}% 的文件内容（{deletedLines}/{totalLines} 行），超过 {threshold}% 的警戒阈值，请仔细检查'
             },
             diffCodeLens: {
-                accept: '接受',
+                accept: "接受",
                 reject: '拒绝',
                 acceptAll: '全部接受',
                 rejectAll: '全部拒绝'

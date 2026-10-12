@@ -10,6 +10,7 @@
 
 import { computed } from 'vue'
 import { useI18n } from '@/composables'
+import ToolErrorMessage from '../common/ToolErrorMessage.vue'
 
 const props = defineProps<{
   args: Record<string, unknown>
@@ -102,7 +103,7 @@ function getDirName(dirPath: string): string {
     <!-- 全局错误 -->
     <div v-if="error && dirCount === 0" class="panel-error">
       <span class="codicon codicon-error error-icon"></span>
-      <span class="error-text">{{ error }}</span>
+      <ToolErrorMessage class="error-text" :error="error" :path="args.path" />
     </div>
     
     <!-- 目录列表 -->
@@ -120,9 +121,7 @@ function getDirName(dirPath: string): string {
         <div class="dir-info">
           <span class="dir-name">{{ getDirName(item.path) }}</span>
           <span class="dir-path">{{ item.path }}</span>
-          <span v-if="!item.success && item.error" class="dir-error">
-            {{ item.error }}
-          </span>
+          <ToolErrorMessage v-if="!item.success && item.error" class="dir-error" :error="item.error" :path="item.path" />
         </div>
       </div>
     </div>

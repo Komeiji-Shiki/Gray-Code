@@ -172,7 +172,8 @@ onBeforeUnmount(() => {
       :title="source === 'tokenizer' ? t('components.input.tpsTokenizerReal') : t('components.input.tpsTokenizerEstimate')"
       :aria-label="source === 'tokenizer' ? t('components.input.tpsTokenizerReal') : t('components.input.tpsTokenizerEstimate')"
     >
-      <i class="codicon" :class="source === 'tokenizer' ? 'codicon-check' : 'codicon-warning'" aria-hidden="true"></i>
+      <i v-if="source === 'tokenizer'" class="codicon codicon-check" aria-hidden="true"></i>
+      <span v-else class="tps-estimate-mark" aria-hidden="true">≈</span>
     </span>
   </div>
 </template>
@@ -241,8 +242,9 @@ onBeforeUnmount(() => {
   color: var(--gc-chart-green);
 }
 
-.tps-source.is-estimate .codicon {
-  color: var(--gc-chart-yellow);
+.tps-estimate-mark {
+  color: var(--gc-text-muted);
+  font-size: 14px;
 }
 
 /* 窄面板：隐藏 canvas 只留数值，避免把右侧按钮挤出 */

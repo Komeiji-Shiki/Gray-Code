@@ -346,7 +346,7 @@ const ja: LanguageMessages = {
 
         input: {
             placeholder: 'メッセージを入力...',
-            placeholderHint: 'メッセージを入力...（Enter で送信、添付ファイルを貼り付け、Shift+ドラッグまたは@でパスを追加、Ctrl+Shift+ドラッグで @path を挿入）',
+            placeholderHint: sharedJa.components.input.placeholderHint,
             resizeInput: '入力欄の高さを調整します。矢印キー、Home、またはダブルクリックで自動高さに戻します',
             send: 'メッセージを送信',
             sendPreserveDynamicContext: '古い動的コンテキストを元の位置に保って送信',
@@ -382,10 +382,10 @@ const ja: LanguageMessages = {
                 edit: '編集'
             },
             mode: {
-                selectMode: 'モードを選択',
-                manageMode: 'モードを管理',
-                search: 'モードを検索...',
-                noResults: '一致するモードがありません'
+                selectMode: sharedJa.components.input.mode.selectMode,
+                manageMode: sharedJa.components.input.mode.manageMode,
+                search: sharedJa.components.input.mode.search,
+                noResults: sharedJa.components.input.mode.noResults
             },
             channelSetup: {
                 loading: 'チャンネル設定を読み込んでいます…',
@@ -522,7 +522,15 @@ const ja: LanguageMessages = {
                 tokenAfter: '圧縮後',
                 tokenSaved: '削減',
                 noDetail: '詳細がありません。'
-            }
+            },
+            keyboardHint: sharedJa.components.input.keyboardHint,
+            asyncQuestions: {
+                title: sharedJa.components.input.asyncQuestions.title,
+                questionCount: sharedJa.components.input.asyncQuestions.questionCount,
+                description: sharedJa.components.input.asyncQuestions.description,
+                placeholder: sharedJa.components.input.asyncQuestions.placeholder,
+                submit: sharedJa.components.input.asyncQuestions.submit,
+            },
         },
 
         message: {
@@ -1027,7 +1035,8 @@ const ja: LanguageMessages = {
                     lineCount: '{count} 行',
                     deletedCount: '{count} 行を削除しました',
                     willDelete: '{start} 行目から {end} 行目までを削除します（合計 {count} 行）'
-                }
+                },
+                accept: sharedJa.components.message.tool.accept,
             },
             attachment: {
                 clickToPreview: 'クリックしてプレビュー',
@@ -3898,7 +3907,13 @@ const ja: LanguageMessages = {
                     openFileFailed: 'ファイルを開くのに失敗しました:',
                     saveFailed: '保存に失敗しました'
                 }
-            }
+            },
+            fileErrors: {
+                ENOENT: sharedJa.components.tools.fileErrors.ENOENT,
+                EACCES: sharedJa.components.tools.fileErrors.EACCES,
+                EISDIR: sharedJa.components.tools.fileErrors.EISDIR,
+                details: sharedJa.components.tools.fileErrors.details,
+            },
         }
     },
 

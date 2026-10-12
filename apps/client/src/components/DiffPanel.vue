@@ -183,7 +183,16 @@ onUnmounted(() => { disposed = true; loadSequence++; resolveSequence++; resizeOb
       <div ref="editorRoot" class="diff-editor"></div>
       <div v-if="!selected() && !loading && !error" class="review-empty"><NavigationIcon name="review" /><h3>{{ shellText(targetMissing ? 'reviewTargetMissing' : 'reviewEmptyTitle') }}</h3><p>{{ shellText(targetMissing ? 'reviewTargetMissingDetail' : 'reviewEmptyDetail') }}</p></div>
       </div>
-      <footer v-if="selected()" class="review-footer"><span class="diff-status" :class="`status-${selected()!.status}`">{{ statusLabels[selected()!.status] }}</span><span class="review-footer-spacer"></span><template v-if="selected()!.status === 'pending'"><button class="reject-change" :disabled="!!processingId" @click="resolve(false)">{{ shellText('reviewReject') }}</button><button class="accept-change" :disabled="!!processingId" @click="resolve(true)">{{ shellText(processingId === selected()!.id ? 'reviewProcessing' : 'reviewAccept') }}</button></template></footer>
+      <footer v-if="selected()" class="review-footer">
+        <span class="diff-status" :class="`status-${selected()!.status}`">{{ statusLabels[selected()!.status] }}</span>
+        <span class="review-footer-spacer"></span>
+        <template v-if="selected()!.status === 'pending'">
+          <button class="accept-change" :disabled="!!processingId" @click="resolve(true)">
+            {{ shellText(processingId === selected()!.id ? 'reviewProcessing' : 'reviewAccept') }}
+          </button>
+          <button class="reject-change" :disabled="!!processingId" @click="resolve(false)">{{ shellText('reviewReject') }}</button>
+        </template>
+      </footer>
     </div>
     </div>
   </section>

@@ -62,6 +62,18 @@ const splashDone = ref(false)
 const chatStore = useChatStore()
 const settingsStore = useSettingsStore()
 const terminalStore = useTerminalStore()
+const applicationMode = ref<'chat' | 'code' | 'character'>('chat')
+let applicationModeRevision = 0
+const hasPendingQuestions = ref(false)
+function updateApplicationMode(mode?: string) {
+  if (mode !== 'chat' && mode !== 'code' && mode !== 'character') return
+  applicationModeRevision++
+  applicationMode.value = mode
+  characterPresentation.active = applicationMode.value === 'character'
+}
+
+watch(() => chatStore.currentConversationId, () => { hasPendingQuestions.value = false }, { flush: 'sync' })
+
 let disposed = false
 let desktopNavigationRevision = 0
 let rememberDesktopConversation = false
@@ -113,9 +125,10 @@ async function restoreDesktopConversation(tabId: string | null, revision: number
 
 if (window.__GRAYCODE_HOST) {
   if (!isSubAgentMonitor) watch(() => chatStore.currentConversationId, conversationId => {
+    const revision = applicationModeRevision
     characterPresentation.conversationId = conversationId; characterPresentation.active = false
     void sendToExtension<{ mode?: string }>('ui.conversation.focus', { conversationId }).then(result => {
-      if (characterPresentation.conversationId === conversationId) characterPresentation.active = result?.mode === 'character'
+      if (characterPresentation.conversationId === conversationId && applicationModeRevision === revision) updateApplicationMode(result?.mode)
     })
   }, { immediate: true })
   if (!isSubAgentMonitor) watch(() => settingsStore.currentView, view => {
@@ -360,7 +373,10 @@ onMounted(async () => {
       void chatStore.synchronizeRemote(message.data?.authenticatedAgain === true).then(async () => {
         const conversationId = chatStore.currentConversationId;
         const result = await sendToExtension<{ mode?: string }>('ui.conversation.focus', { conversationId, resynchronized: true });
-        if (chatStore.currentConversationId === conversationId) { characterPresentation.conversationId = conversationId; characterPresentation.active = result?.mode === 'character'; }
+        if (chatStore.currentConversationId === conversationId) {
+          characterPresentation.conversationId = conversationId
+          updateApplicationMode(result?.mode)
+        }
         await sendToExtension('ui.view.set', { view: settingsStore.currentView });
         await sendToExtension('ui.conversation.views', { views: chatStore.getConversationViews() });
       }).catch(error => {
@@ -387,6 +403,7 @@ onMounted(async () => {
         desktopNavigationRevision++
       switch (message.command) {
         case 'platform.modeSelected':
+          updateApplicationMode(message.data.mode)
           if (message.data.promptModeId) void chatStore.setCurrentPromptModeId(message.data.promptModeId)
           break
         case 'platform.openModeConversation':
@@ -561,12 +578,14 @@ onBeforeUnmount(() => {
         <!-- 初始状态：显示欢迎面板+历史对话列表 -->
         <WelcomePanel
           v-if="chatStore.showEmptyState"
+          :mode="applicationMode"
         />
 
         <!-- 单实例消息列表：仅渲染当前活跃标签页，减少隐藏实例的重算成本 -->
         <MessageList
           v-if="chatStore.activeTabId && !chatStore.showEmptyState"
           :messages="chatStore.messages"
+          :waiting-for-answer="hasPendingQuestions"
           :tab-id="chatStore.activeTabId"
           @edit="handleEdit"
           @delete="handleDelete"
@@ -642,7 +661,7 @@ onBeforeUnmount(() => {
       <BackgroundTaskBar />
 
       <!-- 输入区域：语言就绪后按需加载渠道；不等待完整聊天/历史初始化 -->
-      <AsyncQuestions v-if="isDesktopHost" :conversation-id="chatStore.currentConversationId" />
+      <AsyncQuestions v-if="isDesktopHost" :conversation-id="chatStore.currentConversationId" @pending-change="hasPendingQuestions = $event" />
       <SubAgentPendingRequests v-if="isDesktopHost" :conversation-id="chatStore.currentConversationId" />
       <InputArea
         v-if="languageLoaded"
