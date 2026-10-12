@@ -61,16 +61,18 @@ export async function loadCurrentConfig(state: ChatStoreState): Promise<void> {
     if (configIdAtStart !== state.configId.value || state.currentConversationId.value !== conversationId
       || state.activeTabId.value !== tabId) return
     if (config) {
+      // 旧渠道可能已有模型列表却没有默认值，读取时回退首项，不修改持久化配置。
+      const defaultModel = config.model || config.models?.[0]?.id || ''
       state.currentConfig.value = {
         id: config.id,
         name: config.name,
-        model: config.model || '',
+        model: defaultModel,
         type: config.type,
         maxContextTokens: config.maxContextTokens
       }
 
       if (!normalizeModelId(state.selectedModelId.value)) {
-        state.selectedModelId.value = config.model || ''
+        state.selectedModelId.value = defaultModel
       }
     }
   } catch (err) {

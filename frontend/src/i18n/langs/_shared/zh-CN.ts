@@ -272,11 +272,14 @@ const sharedZhCN = {
                 },
             },
             modelManager: {
+                defaultLabel: "默认",
+                enabledTooltip: "当前默认模型",
                 errors: {
                     addFailed: "添加模型失败",
                     removeFailed: "移除模型失败",
                     setActiveFailed: "设置激活模型失败",
                 },
+                setDefaultTooltip: "点击设为默认模型",
             },
             promptSettings: {
                 assemblyMode: {

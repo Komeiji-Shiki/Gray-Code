@@ -272,11 +272,14 @@ const sharedEn = {
                 },
             },
             modelManager: {
+                defaultLabel: "Default",
+                enabledTooltip: "Current default model",
                 errors: {
                     addFailed: "Failed to add models",
                     removeFailed: "Failed to remove model",
                     setActiveFailed: "Failed to set active model",
                 },
+                setDefaultTooltip: "Click to set as the default model",
             },
             promptSettings: {
                 assemblyMode: {

@@ -7,10 +7,11 @@
  * - 未提供 prepare：点击后立即显示对话框（向后兼容）
  */
 import { mount, flushPromises } from '@vue/test-utils'
-import { describe, expect, vi, afterEach } from 'vitest'
+import { describe, expect, vi, beforeEach, afterEach } from 'vitest'
 import ModelManager from '../ModelManager.vue'
 import ModelSelectionDialog from '../ModelSelectionDialog.vue'
 import { t } from '@/i18n'
+import { sendToExtension } from '@/utils/vscode'
 
 const showNotificationMock = vi.hoisted(() => vi.fn())
 vi.mock('@/utils/vscode', () => ({
@@ -75,5 +76,52 @@ describe('ModelManager.openDialog 等待 prepare', () => {
     const wrapper = mountManager()
     await wrapper.find('.fetch-btn').trigger('click')
     expect(wrapper.findComponent(ModelSelectionDialog).props('visible')).toBe(true)
+  })
+})
+
+describe('ModelManager 默认模型', () => {
+  beforeEach(() => {
+    vi.mocked(sendToExtension).mockReset().mockResolvedValue(undefined)
+  })
+
+  test('获取后批量添加模型时，把首个新增模型设为默认', async () => {
+    const wrapper = mountManager()
+    wrapper.findComponent(ModelSelectionDialog).vm.$emit('confirm', [
+      { id: 'model-first', name: 'First' },
+      { id: 'model-second', name: 'Second' }
+    ])
+    await flushPromises()
+
+    expect(sendToExtension).toHaveBeenNthCalledWith(1, 'models.addModels', expect.objectContaining({ configId: 'cfg-1' }))
+    expect(sendToExtension).toHaveBeenNthCalledWith(2, 'models.setActiveModel', { configId: 'cfg-1', modelId: 'model-first' })
+    expect(wrapper.emitted('update:selectedModel')).toEqual([['model-first']])
+  })
+
+  test('手动添加模型时，为没有默认模型的渠道设置默认值', async () => {
+    const wrapper = mountManager()
+    await wrapper.find('.add-model input').setValue(' custom-model ')
+    await wrapper.find('.add-btn').trigger('click')
+    await flushPromises()
+
+    expect(sendToExtension).toHaveBeenNthCalledWith(1, 'models.addModels', {
+      configId: 'cfg-1', models: [{ id: 'custom-model', name: 'custom-model' }]
+    })
+    expect(sendToExtension).toHaveBeenNthCalledWith(2, 'models.setActiveModel', { configId: 'cfg-1', modelId: 'custom-model' })
+    expect(wrapper.emitted('update:selectedModel')).toEqual([['custom-model']])
+  })
+
+  test.each(['dialog', 'manual'])('%s 添加模型保留渠道已有的默认模型', async source => {
+    const wrapper = mountManager({ models: [{ id: 'existing' }], selectedModel: 'existing' })
+    if (source === 'dialog') {
+      wrapper.findComponent(ModelSelectionDialog).vm.$emit('confirm', [{ id: 'new-model' }])
+    } else {
+      await wrapper.find('.add-model input').setValue('new-model')
+      await wrapper.find('.add-btn').trigger('click')
+    }
+    await flushPromises()
+
+    expect(sendToExtension).toHaveBeenCalledTimes(1)
+    expect(sendToExtension).toHaveBeenCalledWith('models.addModels', expect.objectContaining({ configId: 'cfg-1' }))
+    expect(wrapper.emitted('update:selectedModel')).toBeUndefined()
   })
 })

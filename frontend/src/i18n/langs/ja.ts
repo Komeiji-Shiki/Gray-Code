@@ -2016,7 +2016,7 @@ const ja: LanguageMessages = {
                 addPlaceholder: 'モデル ID を手動入力',
                 addTooltip: '追加',
                 removeTooltip: '削除',
-                enabledTooltip: '現在有効なモデル',
+                enabledTooltip: sharedJa.components.settings.modelManager.enabledTooltip,
                 filterPlaceholder: 'モデルをフィルター...',
                 clearFilter: 'フィルターをクリア',
                 noResults: '一致するモデルがありません',
@@ -2030,7 +2030,9 @@ const ja: LanguageMessages = {
                     addFailed: sharedJa.components.settings.modelManager.errors.addFailed,
                     removeFailed: sharedJa.components.settings.modelManager.errors.removeFailed,
                     setActiveFailed: sharedJa.components.settings.modelManager.errors.setActiveFailed
-                }
+                },
+                defaultLabel: sharedJa.components.settings.modelManager.defaultLabel,
+                setDefaultTooltip: sharedJa.components.settings.modelManager.setDefaultTooltip,
             },
             modelSelectionDialog: {
                 title: '追加するモデルを選択',

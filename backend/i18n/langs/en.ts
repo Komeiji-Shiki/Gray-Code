@@ -1614,7 +1614,12 @@ Project-level takes priority. Duplicate skill names only load the highest-priori
                 entriesLabel: 'Preset entries',
                 entriesDescription: 'Uses sortable entries, with Chat History controlling the actual history position.'
             }
-        }
+        },
+        modelManager: {
+            defaultLabel: "Default",
+            setDefaultTooltip: "Click to set as the default model",
+            enabledTooltip: "Current default model",
+        },
     },
 
     errors: {

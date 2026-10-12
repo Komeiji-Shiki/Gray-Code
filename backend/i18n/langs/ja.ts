@@ -1614,7 +1614,12 @@ description: "このスキルの機能と使用場面の簡単な説明"
                 entriesLabel: 'プリセットエントリ',
                 entriesDescription: '並べ替え可能なエントリを使用し、Chat History で実際の履歴の位置を制御します。'
             }
-        }
+        },
+        modelManager: {
+            defaultLabel: "既定",
+            setDefaultTooltip: "クリックして既定のモデルに設定",
+            enabledTooltip: "現在の既定モデル",
+        },
     },
 
     errors: {

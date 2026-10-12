@@ -2018,7 +2018,7 @@ const zhCN = {
                 addPlaceholder: '手动输入模型 ID',
                 addTooltip: '添加',
                 removeTooltip: '移除',
-                enabledTooltip: '当前启用的模型',
+                enabledTooltip: sharedZhCN.components.settings.modelManager.enabledTooltip,
                 filterPlaceholder: '筛选模型...',
                 clearFilter: '清除筛选',
                 noResults: '没有匹配的模型',
@@ -2032,7 +2032,9 @@ const zhCN = {
                     addFailed: sharedZhCN.components.settings.modelManager.errors.addFailed,
                     removeFailed: sharedZhCN.components.settings.modelManager.errors.removeFailed,
                     setActiveFailed: sharedZhCN.components.settings.modelManager.errors.setActiveFailed
-                }
+                },
+                defaultLabel: sharedZhCN.components.settings.modelManager.defaultLabel,
+                setDefaultTooltip: sharedZhCN.components.settings.modelManager.setDefaultTooltip,
             },
             modelSelectionDialog: {
                 title: '选择要添加的模型',

@@ -2016,7 +2016,7 @@ const en: LanguageMessages = {
                 addPlaceholder: 'Manually enter model ID',
                 addTooltip: 'Add',
                 removeTooltip: 'Remove',
-                enabledTooltip: 'Currently enabled model',
+                enabledTooltip: sharedEn.components.settings.modelManager.enabledTooltip,
                 filterPlaceholder: 'Filter models...',
                 clearFilter: 'Clear filter',
                 noResults: 'No matching models',
@@ -2030,7 +2030,9 @@ const en: LanguageMessages = {
                     addFailed: sharedEn.components.settings.modelManager.errors.addFailed,
                     removeFailed: sharedEn.components.settings.modelManager.errors.removeFailed,
                     setActiveFailed: sharedEn.components.settings.modelManager.errors.setActiveFailed
-                }
+                },
+                defaultLabel: sharedEn.components.settings.modelManager.defaultLabel,
+                setDefaultTooltip: sharedEn.components.settings.modelManager.setDefaultTooltip,
             },
             modelSelectionDialog: {
                 title: 'Select Models to Add',

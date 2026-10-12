@@ -272,11 +272,14 @@ const sharedJa = {
                 },
             },
             modelManager: {
+                defaultLabel: "既定",
+                enabledTooltip: "現在の既定モデル",
                 errors: {
                     addFailed: "モデルの追加に失敗しました",
                     removeFailed: "モデルの削除に失敗しました",
                     setActiveFailed: "アクティブモデルの設定に失敗しました",
                 },
+                setDefaultTooltip: "クリックして既定のモデルに設定",
             },
             promptSettings: {
                 assemblyMode: {

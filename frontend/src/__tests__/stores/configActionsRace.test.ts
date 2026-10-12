@@ -1,6 +1,9 @@
 import { beforeEach, describe, expect, test, vi } from 'vitest'
 import { createChatState } from '../../stores/chat/state'
-import { applyConversationModelConfig, applyConversationPromptMode, setConfigId, setCurrentPromptModeId, setSelectedModelId } from '../../stores/chat/configActions'
+import {
+  applyConversationModelConfig, applyConversationPromptMode, loadCurrentConfig, setConfigId, setCurrentPromptModeId, setSelectedModelId
+} from '../../stores/chat/configActions'
+import { resetConversationState } from '../../stores/chat/tabActions'
 import { sendToExtension } from '../../utils/vscode'
 import { createAndPersistConversation } from '../../stores/chat/conversationActions'
 
@@ -17,6 +20,26 @@ function state() {
 
 describe('渠道和模式异步切换', () => {
   beforeEach(() => send.mockReset().mockResolvedValue(undefined))
+
+  test.each([
+    { model: 'default-model', expected: 'default-model' },
+    { model: '', expected: 'first-model' }
+  ])('新对话从渠道默认值或旧渠道首项恢复模型：$expected', async ({ model, expected }) => {
+    const current = state()
+    current.selectedModelId.value = ''
+    send.mockResolvedValueOnce({
+      id: 'channel-a', name: 'Channel A', type: 'openai', model,
+      models: [{ id: 'first-model' }, { id: 'default-model' }]
+    })
+
+    await loadCurrentConfig(current)
+    expect(current.selectedModelId.value).toBe(expected)
+    current.selectedModelId.value = 'last-used-model'
+    resetConversationState(current)
+    expect(current.selectedModelId.value).toBe(expected)
+    expect(send).toHaveBeenCalledTimes(1)
+    expect(send).toHaveBeenCalledWith('config.getConfig', { configId: 'channel-a' })
+  })
 
   test('旧会话元数据迟到不会改动新会话的渠道或推理配置', async () => {
     const current = state()

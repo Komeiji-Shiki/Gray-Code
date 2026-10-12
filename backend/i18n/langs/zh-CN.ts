@@ -1617,7 +1617,12 @@ description: "简要描述该技能的功能及使用场景"
                 entriesLabel: '预设条目',
                 entriesDescription: '使用可排序条目，并通过 Chat History 控制真实历史位置。'
             }
-        }
+        },
+        modelManager: {
+            defaultLabel: "默认",
+            setDefaultTooltip: "点击设为默认模型",
+            enabledTooltip: "当前默认模型",
+        },
     },
 
     errors: {

@@ -89,6 +89,9 @@ async function handleConfirm(selectedModels: ModelInfo[]) {
     // 触发父组件重新加载配置
     const updatedModels = [...props.models, ...serializableModels]
     emit('update:models', updatedModels)
+    if (!props.selectedModel && serializableModels.length > 0) {
+      await selectModel(serializableModels[0].id)
+    }
   } catch (error) {
     console.error('Failed to add models:', error)
     await notifyFailure(t('components.settings.modelManager.errors.addFailed'), error)
@@ -125,6 +128,9 @@ async function addCustomModel() {
     // 触发父组件重新加载配置
     const updatedModels = [...props.models, model]
     emit('update:models', updatedModels)
+    if (!props.selectedModel) {
+      await selectModel(model.id)
+    }
     newModelId.value = ''
   } catch (error) {
     console.error('Failed to add model:', error)
@@ -186,7 +192,7 @@ async function confirmClearAllModels() {
   }
 }
 
-// 选择模型作为启用
+// 默认模型与模型列表共用当前设置草稿。
 async function selectModel(modelId: string) {
   try {
     await sendToExtension(MESSAGE_NAMES['models.setActiveModel'], {
@@ -264,6 +270,7 @@ async function selectModel(modelId: string) {
               type="button"
               class="model-select-button"
               :aria-pressed="selectedModel === model.id"
+              :title="t('components.settings.modelManager.setDefaultTooltip')"
               @click="selectModel(model.id)"
             >
               <span class="model-status" aria-hidden="true">
@@ -278,6 +285,9 @@ async function selectModel(modelId: string) {
                 <span class="model-id">{{ model.id }}</span>
                 <span v-if="model.name && model.name !== model.id" class="model-name">{{ model.name }}</span>
                 <span v-if="model.description" class="model-desc">{{ model.description }}</span>
+              </span>
+              <span v-if="selectedModel === model.id" class="model-default-label">
+                {{ t('components.settings.modelManager.defaultLabel') }}
               </span>
             </button>
             <button
@@ -583,6 +593,12 @@ async function selectModel(modelId: string) {
   font-family: var(--gc-font-code);
   color: var(--gc-text-primary);
   font-weight: 500;
+}
+
+.model-default-label {
+  flex-shrink: 0;
+  color: var(--gc-text-muted);
+  font-size: 11px;
 }
 
 .model-name {
