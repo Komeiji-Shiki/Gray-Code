@@ -4,7 +4,7 @@ import { DesktopSaveAll } from './saveAll';
 import { recoverStartup } from './startupRecovery';
 const desktopSaveAll = new DesktopSaveAll();
 import { DesktopWindowState, restoreWindowBounds } from './windowState';
-import { t, getActualLanguage } from '../../../backend/i18n';
+import { t, getActualLanguage, getMessagesForLanguage } from '../../../backend/i18n';
 import { DesktopUpdates } from './updates';
 import { DesktopInstaller, confirmInstalledRecovery } from './installer';
 import { DesktopStorageLocation } from './storageLocation';
@@ -47,7 +47,7 @@ import { resolveAppearancePalette } from '../../../shared/appearance';
 import { isTrustedApplicationFrame } from './trustedFrame';
 import { desktopRpcReply } from '../../../shared/desktopBridge';
 import { DesktopRequests } from './requests';
-import { shellShortcuts } from '../../client/src/shortcuts';
+import { shellShortcuts } from '../../../shared/shellShortcutBridge';
 
 // 由桌面构建脚本写入，显示当前可执行文件对应的源码版本。
 declare const __GRAYCODE_DESKTOP_BUILD__: import('../../../shared/distribution').DistributionInfo & { buildTime: string };
@@ -225,46 +225,54 @@ function minimizeToTray(): void {
   ensureTray();
   window.hide();
 }
+let applicationMenuLanguage: ReturnType<typeof getActualLanguage> | undefined;
 function setApplicationMenu(): void {
+  const configuredLanguage = application.product.runtimeSettings().getUISettings().language;
+  const locale = configuredLanguage && configuredLanguage !== 'auto' ? configuredLanguage : app.getLocale();
+  const language = locale.startsWith('zh') ? 'zh-CN' : locale.startsWith('ja') ? 'ja' : 'en';
+  // 设置变更还包含模型、工作区等内容，只有实际界面语言变化才需要重新创建原生菜单。
+  if (language === applicationMenuLanguage) return;
+  const messages = getMessagesForLanguage(language).desktop;
   Menu.setApplicationMenu(Menu.buildFromTemplate([
     {
-      id: 'file', label: t('desktop.shell.nativeFileMenu'),
+      id: 'file', label: messages.shell.nativeFileMenu,
       submenu: [
-        { label: t('desktop.shell.uiConversationSidebarNewChat'), accelerator: shellShortcuts.newConversation.accelerator,
+        { label: messages.shell.uiConversationSidebarNewChat, accelerator: shellShortcuts.newConversation.accelerator,
           registerAccelerator: false, click: () => notify({ type: 'desktop.shortcut', command: 'newConversation' }) },
         { type: 'separator' },
-        { label: t('desktop.shell.nativeMinimizeToTray'), click: () => minimizeToTray() },
-        { label: t('desktop.quit'), accelerator: 'CmdOrCtrl+Q', click: () => void confirmQuit() },
+        { label: messages.shell.nativeMinimizeToTray, click: () => minimizeToTray() },
+        { label: messages.quit, accelerator: 'CmdOrCtrl+Q', click: () => void confirmQuit() },
       ],
     },
     {
-      id: 'edit', label: t('desktop.shell.nativeEditMenu'),
+      id: 'edit', label: messages.shell.nativeEditMenu,
       submenu: [
-        { role: 'undo', label: t('desktop.shell.nativeUndo') },
-        { role: 'redo', label: t('desktop.shell.nativeRedo') },
+        { role: 'undo', label: messages.shell.nativeUndo },
+        { role: 'redo', label: messages.shell.nativeRedo },
         { type: 'separator' },
-        { role: 'cut', label: t('desktop.shell.nativeCut') },
-        { role: 'copy', label: t('desktop.shell.nativeCopy') },
-        { role: 'paste', label: t('desktop.shell.nativePaste') },
-        { role: 'selectAll', label: t('desktop.shell.nativeSelectAll') },
-        { label: t('desktop.shell.uiConversationSidebarSettings'), visible: false, accelerator: 'CmdOrCtrl+,',
+        { role: 'cut', label: messages.shell.nativeCut },
+        { role: 'copy', label: messages.shell.nativeCopy },
+        { role: 'paste', label: messages.shell.nativePaste },
+        { role: 'selectAll', label: messages.shell.nativeSelectAll },
+        { label: messages.shell.uiConversationSidebarSettings, visible: false, accelerator: 'CmdOrCtrl+,',
           click: () => notify({ type: 'settings.open' }) },
       ],
     },
     {
-      id: 'view', label: t('desktop.shell.nativeViewMenu'),
+      id: 'view', label: messages.shell.nativeViewMenu,
       submenu: [
-        { label: t('desktop.shell.nativeToggleSidebar'), accelerator: shellShortcuts.toggleSidebar.accelerator,
+        { label: messages.shell.nativeToggleSidebar, accelerator: shellShortcuts.toggleSidebar.accelerator,
           registerAccelerator: false, click: () => notify({ type: 'desktop.shortcut', command: 'toggleSidebar' }) },
         { type: 'separator' },
-        { role: 'resetZoom', label: t('desktop.shell.nativeResetZoom') },
-        { role: 'zoomIn', label: t('desktop.shell.nativeZoomIn') },
-        { role: 'zoomOut', label: t('desktop.shell.nativeZoomOut') },
-        { label: t('desktop.shell.nativeDeveloperTools'), accelerator: 'CmdOrCtrl+Shift+I',
+        { role: 'resetZoom', label: messages.shell.nativeResetZoom },
+        { role: 'zoomIn', label: messages.shell.nativeZoomIn },
+        { role: 'zoomOut', label: messages.shell.nativeZoomOut },
+        { label: messages.shell.nativeDeveloperTools, accelerator: 'CmdOrCtrl+Shift+I',
           click: () => window?.webContents.openDevTools({ mode: 'detach' }) },
       ],
     },
   ]));
+  applicationMenuLanguage = language;
 }
 function desktopColors(): Record<string, string> {
   const appearance = application.settings.snapshot().settings.appearance;

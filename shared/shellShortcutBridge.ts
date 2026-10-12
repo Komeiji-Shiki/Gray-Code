@@ -9,6 +9,18 @@ export interface ShellShortcutBinding {
   accelerator: string;
 }
 
+// 外壳与原生菜单共用键位表，菜单只显示由外壳分派的快捷键。
+export const shellShortcuts = {
+  newConversation: { key: 'n', primary: true, accelerator: 'CmdOrCtrl+N' },
+  toggleSidebar: { key: 'b', primary: true, accelerator: 'CmdOrCtrl+B' },
+  projectSearch: { key: 'f', primary: true, shift: true, accelerator: 'CmdOrCtrl+Shift+F' },
+  'debug.continue': { key: 'f5', accelerator: 'F5' },
+  'debug.stop': { key: 'f5', shift: true, accelerator: 'Shift+F5' },
+  'debug.next': { key: 'f10', accelerator: 'F10' },
+  'debug.stepIn': { key: 'f11', accelerator: 'F11' },
+  'debug.stepOut': { key: 'f11', shift: true, accelerator: 'Shift+F11' },
+} satisfies Record<string, Omit<ShellShortcutBinding, 'command'>>;
+
 interface ShortcutKeyEvent {
   key: string;
   ctrlKey: boolean;

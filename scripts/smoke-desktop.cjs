@@ -1,5 +1,5 @@
 // Run with: electron scripts/smoke-desktop.cjs. All data and screenshots stay in .tmp.
-const { app, BrowserWindow, dialog, webContents, nativeImage } = require('electron');
+const { app, BrowserWindow, dialog, webContents, nativeImage, Menu } = require('electron');
 const fs = require('node:fs/promises');
 const fsSync = require('node:fs');
 const path = require('node:path');
@@ -261,6 +261,16 @@ async function main() {
   const saved = await ui('ui.settings.save');
   assert(!JSON.stringify(saved).includes('smoke-only'));
   await ui('ui.settings.end');
+  for (const [language, label] of [['en', 'File'], ['zh-CN', '文件']]) {
+    const previousMenu = Menu.getApplicationMenu();
+    await ui('ui.settings.begin');
+    await ui('updateUISettings', { ui: { language } });
+    await ui('ui.settings.save');
+    await ui('ui.settings.end');
+    assert.notEqual(Menu.getApplicationMenu(), previousMenu, 'Changing the interface language must rebuild the native menu.');
+    assert.equal(Menu.getApplicationMenu().getMenuItemById('file').label, label);
+  }
+  const configuredMenu = Menu.getApplicationMenu();
   window.webContents.reload();
   await until(() => evaluate('!!document.querySelector(".desktop-workspace") && document.body.innerText.includes("桌面验证项目")'), 'configured application');
   await until(() => chat('!!document.querySelector(".input-editor") && document.body.innerText.includes("smoke-model")'), 'configured original input');
@@ -300,6 +310,7 @@ async function main() {
   await evaluate('Array.from(document.querySelectorAll(".tree-row")).find(node=>node.textContent.includes("hello.ts")).click()');
   await until(() => evaluate('!!document.querySelector(".monaco-editor")'), 'Monaco editor');
   await verifyLatestFileFocus(evaluate);
+  shellShortcuts.monacoProjectSearchVisible = await workflowSmoke.verifyMonacoSearchShortcut({ window, evaluate, until });
   await require('./smoke-image-preview.cjs')({ window, evaluate, ui, until, root, output });
   const terminal = await rpc('terminal.create', { workspaceId: 'smoke' });
   await evaluate(`window.__smokeTerminalOutput = ''; window.graycode.subscribe(event => { if(event.type==='terminal.data' && event.id===${JSON.stringify(terminal.id)}) window.__smokeTerminalOutput += event.data; }); undefined`);
@@ -445,10 +456,11 @@ async function main() {
   closingSettings.appearance.codeFontSize += 1;
   await ui('platform.settings.update', { settings: closingSettings });
   const shutdownRetryVerified = await verifyShutdownRetry(rpc, window);
+  assert.equal(Menu.getApplicationMenu(), configuredMenu, 'Settings changes that keep the language must reuse the native menu.');
   const report = { ok: true, electron: process.versions.electron, node: process.versions.node, requests, regexSearchVerified: true, editorFlowVerified: true,
     chatLayout, rendererPerformance, pets: petSmoke, workflows: { companion: companionWorkflow, projectSwitch: projectSwitchWorkflow, shellShortcuts, inputToolbar,
       settings: { screenshots: ['settings-context.png', 'settings-context-prompts.png', 'settings-context-count.png', 'settings-companion.png'],
-        unifiedContextAndCompanion: true } },
+        unifiedContextAndCompanion: true, nativeMenuLanguageSwitch: true, nativeMenuRetainedForOtherSettings: true } },
     verified: ['SQLite worker', 'encrypted settings', 'Monaco', 'native PTY', 'HTTP model/tool loop', 'partial read yellow warning', 'on-demand context status', 'user retention immediate save', 'async question', 'approval denial', 'HTML preview', 'original tabs and input', 'full-width user messages', 'tool header layout at 760/320/240px', 'straight selection markers', 'centered channel checkbox ticks', '20 settings sections', 'system fonts', 'shared settings draft', 'MCP JSON draft and encrypted configuration', 'original UI reroll and branch switching', 'background import preview, discard and atomic save', ...(shutdownRetryVerified ? ['shutdown failure and retry with owned process'] : [])], fontCount: fonts.length, errors, output };
   await fs.writeFile(path.join(output, 'report.json'), JSON.stringify(report, null, 2));
   process.stdout.write(`${JSON.stringify(report)}\n`);

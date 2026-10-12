@@ -110,6 +110,25 @@ async function verifyShellShortcuts({ window, rpc, evaluate, chat, until, projec
   }
 }
 
+async function verifyMonacoSearchShortcut({ window, evaluate, until }) {
+  await evaluate('document.querySelector(".monaco-editor .inputarea, .monaco-editor .native-edit-context").focus()');
+  assert(await evaluate('!!document.activeElement?.closest(".monaco-editor")'), 'Monaco must own keyboard focus.');
+  assert(!await evaluate('document.querySelector(".search-panel")?.getBoundingClientRect().width > 0'), 'Project search must start hidden.');
+  const keyboard = window.webContents.debugger;
+  keyboard.attach('1.3');
+  try {
+    const key = { key: 'f', code: 'KeyF', windowsVirtualKeyCode: 70, nativeVirtualKeyCode: 70, modifiers: 10 };
+    await keyboard.sendCommand('Input.dispatchKeyEvent', { type: 'keyDown', ...key });
+    await keyboard.sendCommand('Input.dispatchKeyEvent', { type: 'keyUp', ...key });
+    await until(() => evaluate('document.querySelector(".search-panel")?.getBoundingClientRect().width > 0'),
+      'Ctrl+Shift+F opens project search from Monaco');
+    return true;
+  } finally {
+    keyboard.detach();
+    await evaluate('Array.from(document.querySelectorAll(".workbench-tab [role=tab]")).find(tab => tab.textContent.includes("hello.ts")).click()');
+  }
+}
+
 async function runCompanionWorkflow({ window, rpc, evaluate, chat, until, output, configId, getRequests }) {
   const resource = (await rpc('pets.list'))[0];
   assert(resource?.actions.length, 'The existing pet smoke must provide an annotated resource.');
@@ -344,4 +363,4 @@ async function verifyInputToolbar({ window, chat, until, output }) {
   return { actions, icons, screenshots: pictures, keyboardNavigation: true, keyboardCloseAndFocusRestore: true, tabClosesMenu: true };
 }
 
-module.exports = { runProjectSwitchWorkflow, verifyShellShortcuts, runCompanionWorkflow, verifyInputToolbar, screenshot };
+module.exports = { runProjectSwitchWorkflow, verifyShellShortcuts, verifyMonacoSearchShortcut, runCompanionWorkflow, verifyInputToolbar, screenshot };

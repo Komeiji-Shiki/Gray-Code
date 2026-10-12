@@ -4,8 +4,7 @@ import { appearance, guard, initialize, loadSettings, report, state } from './st
 import { appearanceSystemLight, useSystemAppearance } from './appearance';
 import { call, subscribe } from './api';
 import { CHAT_INITIALIZATION_MESSAGE } from '../../../shared/chatInitialization';
-import { SHELL_SHORTCUTS_MESSAGE, SHELL_SHORTCUT_MESSAGE, matchShellShortcut } from '../../../shared/shellShortcutBridge';
-import { shellShortcuts } from './shortcuts';
+import { SHELL_SHORTCUTS_MESSAGE, SHELL_SHORTCUT_MESSAGE, matchShellShortcut, shellShortcuts } from '../../../shared/shellShortcutBridge';
 import { debugControl, debugState } from './debugging';
 import { useNavigationIntent } from './navigationIntent';
 import { shellText as t, setShellLanguage } from './i18n';
@@ -156,7 +155,7 @@ function executeShellShortcut(command: string) {
   else if (command.startsWith('debug.') && debugState.activeId) void debugControl(command.slice('debug.'.length));
 }
 function handleShellShortcut(event: KeyboardEvent) {
-  if (event.defaultPrevented || event.isComposing || event.repeat || (event.target as Element | null)?.closest?.('.monaco-editor')) return;
+  if (event.defaultPrevented || event.isComposing || event.repeat) return;
   const binding = matchShellShortcut(event, enabledShortcuts.value);
   if (!binding) return;
   event.preventDefault();
