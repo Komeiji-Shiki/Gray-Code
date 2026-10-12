@@ -11,7 +11,7 @@
  * 2. 失效机制本身——缓存被置 null 后 preloadChannelConfigs 必须真的重新发请求，
  *    否则第 1 条里的全局失效只是空转。
  */
-import { describe, expect, test, vi, beforeEach } from 'vitest'
+import { describe, expect, test, vi, beforeEach, afterEach } from 'vitest'
 import AppSource from '../../App.vue?raw'
 import ChannelSettingsSource from '../../components/settings/ChannelSettings.vue?raw'
 import McpSettingsSource from '../../components/settings/McpSettings.vue?raw'
@@ -79,6 +79,38 @@ describe('渠道预加载缓存的失效语义（刷新接线的依赖机制）'
     vi.resetAllMocks()
     mockListConfigIds.mockResolvedValue(['cfg-1'])
     mockGetConfig.mockImplementation((id: string) => Promise.resolve({ id, name: id }))
+  })
+
+  afterEach(() => vi.restoreAllMocks())
+
+  test.each(['single', 'list'])('%s 预加载因应用关闭拒绝时保留失败结果，不记录错误日志', async source => {
+    const log = vi.spyOn(console, 'error').mockImplementation(() => {})
+    const message = '请求已拒绝：应用正在关闭，请稍后重新打开。'
+    if (source === 'single') {
+      mockListConfigIds.mockResolvedValue(['cfg-1', 'cfg-2'])
+      mockGetConfig.mockRejectedValueOnce(new Error(message))
+    } else {
+      mockListConfigIds.mockRejectedValueOnce(message)
+    }
+
+    const result = await preloadChannelConfigs()
+    const expectedConfigs = source === 'single' ? [{ id: 'cfg-2', name: 'cfg-2' }] : null
+    expect(result).toEqual({ configs: expectedConfigs, error: message })
+    expect(getChannelConfigsCache()).toEqual(expectedConfigs)
+    expect(log).not.toHaveBeenCalled()
+  })
+
+  test.each(['single', 'list'])('%s 预加载的普通错误仍记录原始错误日志', async source => {
+    const log = vi.spyOn(console, 'error').mockImplementation(() => {})
+    const error = new Error('服务暂时不可用')
+    if (source === 'single') mockGetConfig.mockRejectedValueOnce(error)
+    else mockListConfigIds.mockRejectedValueOnce(error)
+
+    expect(await preloadChannelConfigs()).toEqual({ configs: source === 'single' ? [] : null, error: error.message })
+    expect(log).toHaveBeenCalledOnce()
+    expect(log).toHaveBeenCalledWith(
+      source === 'single' ? 'Failed to preload config cfg-1:' : 'Failed to preload channel configs:', error
+    )
   })
 
   test('缓存失效后再次 preload 会重新发请求，不复用陈旧列表', async () => {

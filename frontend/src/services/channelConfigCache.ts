@@ -6,7 +6,7 @@
  *
  * 设计要点：
  * - 幂等：已有缓存直接返回；加载中复用同一在途请求，避免重复请求；
- * - 静默失败：预加载失败只 console.error，不弹用户可见错误，缓存保持未加载可重试；
+ * - 静默失败：关闭拒绝不记录，其他预加载失败只 console.error，不弹用户可见错误，缓存保持未加载可重试；
  * - 超时保护：预加载请求 30s 超时（PRELOAD_TIMEOUT_MS），避免 sendToExtension 兜底超时（180s）
  *   期间渠道页 await 同一注定失败的在途请求、长时间显示误导性空态；
  * - 部分失败容忍：单条 config.getConfig 失败只跳过该项，保留首个错误供输入区提示；
@@ -54,8 +54,11 @@ async function loadAllConfigs(): Promise<ChannelConfigLoadResult> {
       return await getConfig(id)
     } catch (error) {
       // 单条配置获取失败不拖垮整批预加载：跳过该项，后续打开设置页仍可看到其余配置
-      console.error(`Failed to preload config ${id}:`, error)
-      firstError ||= error instanceof Error ? error.message : String(error)
+      const message = error instanceof Error ? error.message : String(error)
+      if (!message.includes('应用正在关闭，请稍后重新打开。')) {
+        console.error(`Failed to preload config ${id}:`, error)
+      }
+      firstError ||= message
       return null
     }
   }))
@@ -71,8 +74,11 @@ async function fetchAndCache(): Promise<ChannelConfigLoadResult> {
     return snapshot
   } catch (error) {
     // 预加载失败（含超时）静默处理：不弹错误提示，缓存保持 null，后续打开设置页会重新加载
-    console.error('Failed to preload channel configs:', error)
-    return { configs: null, error: error instanceof Error ? error.message : String(error) }
+    const message = error instanceof Error ? error.message : String(error)
+    if (!message.includes('应用正在关闭，请稍后重新打开。')) {
+      console.error('Failed to preload channel configs:', error)
+    }
+    return { configs: null, error: message }
   } finally {
     // 仅当自己仍是最新在途任务时才清空标记，避免误清新发起的在途任务
     if (generation === cacheGeneration) {
