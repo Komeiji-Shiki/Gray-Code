@@ -1027,7 +1027,7 @@ const sharedJa = {
             chooseFolder: "フォルダーを選択",
             close: "閉じる",
             closePanel: "サイドパネルを隠す",
-            code: "コード",
+            code: "開発",
             codeDetail: "プロジェクトの編集と開発作業",
             connecting: "ローカルコアに接続中…",
             connectionTimeout: "接続がタイムアウトしました。ネットワークを確認して再試行してください。",

@@ -147,7 +147,7 @@ const en: BackendLanguageMessages = {
                 "awaitingApproval": "Awaiting confirmation",
                 "chat": "Chat",
                 "chatDetail": "Conversation and everyday tasks",
-                "code": "Code",
+                "code": "Develop",
                 "codeDetail": "Edit projects and run development tasks",
                 "character": "Character",
                 "characterDetail": "Character profiles and story conversations",

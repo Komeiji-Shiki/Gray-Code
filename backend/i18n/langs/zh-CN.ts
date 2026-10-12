@@ -150,7 +150,7 @@ const zhCN = {
                 "awaitingApproval": "等待确认",
                 "chat": "对话",
                 "chatDetail": "自由交流与日常任务",
-                "code": "代码",
+                "code": "开发",
                 "codeDetail": "编辑项目与执行开发任务",
                 "character": "角色",
                 "characterDetail": "角色资料与故事对话",

@@ -29,7 +29,7 @@ const companion = {
   companionGreetingObjective: 'Greet me naturally using this conversation’s companion settings. Offer a brief, specific message of care informed by recent conversation. Do not invent what I am doing without evidence.',
   companionAutomationHint: 'Scheduled greetings use automations and continue in this conversation. Save a new conversation before choosing a greeting time. Sound and system notifications follow notification quiet hours.',
   companionSaveDefault: 'Also save as the default for new conversations',
-  companionDefaultHint: 'Existing defaults stay unchanged unless selected. These settings do not apply to code mode, character mode, shared Bot channels or other accounts.',
+  companionDefaultHint: 'Existing defaults stay unchanged unless selected. These settings do not apply to Develop mode, character mode, shared Bot channels or other accounts.',
   companionClearDefault: 'Clear defaults for new conversations',
   companionDefaultsCleared: 'New conversation defaults cleared. The current conversation keeps its settings.',
   companionUnsaved: 'Unsaved changes',

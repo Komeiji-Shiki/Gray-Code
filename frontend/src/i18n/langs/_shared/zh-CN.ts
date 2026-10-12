@@ -1027,7 +1027,7 @@ const sharedZhCN = {
             chooseFolder: "选择电脑文件夹",
             close: "关闭",
             closePanel: "隐藏侧边面板",
-            code: "代码",
+            code: "开发",
             codeDetail: "编辑项目与执行开发任务",
             connecting: "正在连接本地核心…",
             connectionTimeout: "连接超时，请检查网络后重试。",

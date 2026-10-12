@@ -1027,7 +1027,7 @@ const sharedEn = {
             chooseFolder: "Choose a folder",
             close: "Close",
             closePanel: "Hide side panel",
-            code: "Code",
+            code: "Develop",
             codeDetail: "Edit projects and run development tasks",
             connecting: "Connecting to the local core…",
             connectionTimeout: "The connection timed out. Check the network and try again.",

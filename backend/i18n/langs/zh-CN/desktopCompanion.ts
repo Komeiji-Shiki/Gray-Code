@@ -29,7 +29,7 @@ const companion = {
   companionGreetingObjective: '按照这段对话的陪伴配置自然地问候我，结合最近的交流给一句简短、有具体内容的关心；没有依据时不要编造我正在做什么。',
   companionAutomationHint: '定时问候复用自动任务并继续在当前对话中交流。先保存新对话，再设置问候时间。声音和系统通知遵循通知设置里的免打扰。',
   companionSaveDefault: '同时保存为以后新建对话的默认配置',
-  companionDefaultHint: '未勾选时保留已有默认配置。此配置不用于代码模式、角色模式、Bot 共享频道或其他账号。',
+  companionDefaultHint: '未勾选时保留已有默认配置。此配置不用于开发模式、角色模式、Bot 共享频道或其他账号。',
   companionClearDefault: '清除新对话默认配置',
   companionDefaultsCleared: '已清除新对话默认配置，当前对话保持原有配置。',
   companionUnsaved: '有未保存的更改',

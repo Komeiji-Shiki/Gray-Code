@@ -29,7 +29,7 @@ const companion = {
   companionGreetingObjective: 'この会話のコンパニオン設定に沿って自然に挨拶してください。最近の会話に基づく短く具体的な気遣いを伝え、根拠なく私の行動を想像しないでください。',
   companionAutomationHint: '定期的な挨拶は自動タスクを使い、この会話で続けます。新しい会話を保存してから時間を設定してください。音とシステム通知は通知設定の静音時間に従います。',
   companionSaveDefault: '今後の新しい会話の初期設定としても保存',
-  companionDefaultHint: '選択しなければ既存の初期設定を維持します。コードモード、キャラクターモード、Bot の共有チャンネル、他のアカウントには適用されません。',
+  companionDefaultHint: '選択しなければ既存の初期設定を維持します。開発モード、キャラクターモード、Bot の共有チャンネル、他のアカウントには適用されません。',
   companionClearDefault: '新しい会話の初期設定を解除',
   companionDefaultsCleared: '新しい会話の初期設定を解除しました。現在の会話の設定は維持されます。',
   companionUnsaved: '未保存の変更があります',

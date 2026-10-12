@@ -147,7 +147,7 @@ const ja: BackendLanguageMessages = {
                 "awaitingApproval": "確認待ち",
                 "chat": "チャット",
                 "chatDetail": "会話と日常の作業",
-                "code": "コード",
+                "code": "開発",
                 "codeDetail": "プロジェクトの編集と開発作業",
                 "character": "キャラクター",
                 "characterDetail": "キャラクター設定と物語の会話",
