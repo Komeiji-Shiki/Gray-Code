@@ -203,7 +203,7 @@ async function runCompanionWorkflow({ window, rpc, evaluate, chat, until, output
     assert.equal(view.petVocabulary.updated, true);
     // 普通保存仍走正式配置写入，不能悄悄替换已经绑定的动作说明。
     await openSetup();
-    await evaluate('document.querySelector(".companion-setup > footer button.primary").click()');
+    await evaluate('document.querySelector(".companion-step[data-step=pet] .companion-profile-save button.primary").click()');
     await until(async () => (await rpc('companion.get', { conversationId })).metadataToken !== view.metadataToken,
       'save current companion through UI');
     assert(await evaluate('!!document.querySelector(".companion-setup")'), 'Saving must retain the companion workflow.');

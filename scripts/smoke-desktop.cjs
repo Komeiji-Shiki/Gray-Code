@@ -309,9 +309,13 @@ async function main() {
   await chat('const editor=document.querySelector(".input-editor"); editor.focus(); editor.textContent="创建验证文件并询问标签。"; editor.dispatchEvent(new InputEvent("input",{bubbles:true,inputType:"insertText",data:editor.textContent}));');
   await chat('document.querySelector(".send-button").click()');
   const question = await until(async () => (await rpc('questions.list'))[0], 'async question');
-  await until(() => chat('!!document.querySelector(".async-question input")'), 'question input');
-  await chat('const field=document.querySelector(".async-question input"); field.value="已验证"; field.dispatchEvent(new Event("input",{bubbles:true}));');
-  await chat('document.querySelector(".async-question button").click()');
+  await until(() => chat('!!document.querySelector(".async-question .free-answer")'), 'question input');
+  await chat('document.querySelector(".async-question input[type=radio]").click()');
+  assert.equal(await chat('document.querySelector(".async-question .free-answer").value'), '', 'Selecting an answer must not fill the text field.');
+  await chat('const field=document.querySelector(".async-question .free-answer"); field.value="已验证"; field.dispatchEvent(new Event("input",{bubbles:true}));');
+  assert.equal(await chat('document.querySelectorAll(".async-question input[type=radio]:checked").length'), 0,
+    'Writing an answer must clear the selected suggestion.');
+  await chat('document.querySelector(".async-question .submit-answer").click()');
   const approval = await until(async () => (await rpc('approvals.list'))[0], 'operation approval');
   // 通过真实工具卡提交审批，才能覆盖审批身份在 parts 与界面投影之间的传递。
   await until(() => chat('!!document.querySelector(".reject-btn:not([disabled])")'), 'tool-card reject button');
