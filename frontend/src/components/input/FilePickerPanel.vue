@@ -302,7 +302,13 @@ defineExpose({
           >
             <i :class="getFileIcon(file)" aria-hidden="true"></i>
             <span class="file-path" v-html="file.highlightedPath"></span>
-            <span v-if="file.isOpen" class="open-badge">•</span>
+            <span
+              v-if="file.isOpen"
+              class="open-badge"
+              role="img"
+              :title="t('desktop.inputUi.fileAlreadyOpen')"
+              :aria-label="t('desktop.inputUi.fileAlreadyOpen')"
+            >•</span>
           </div>
         </template>
         </div>

@@ -234,43 +234,50 @@ function truncate(text: string, maxLen = 80): string {
           @dragstart="handleDragStart(item.queueIndex, $event)"
           @dragend="handleDragEnd"
         >
-          <i class="codicon codicon-gripper"></i>
+          <i class="codicon codicon-gripper" aria-hidden="true"></i>
         </span>
-        <span v-else class="queue-drag-handle" :title="t('components.input.queue.waitingForModel')">
-          <i class="codicon codicon-clock"></i>
+        <span v-else class="queue-drag-handle" role="img" :title="t('components.input.queue.waitingForModel')"
+          :aria-label="t('components.input.queue.waitingForModel')">
+          <i class="codicon codicon-clock" aria-hidden="true"></i>
         </span>
 
         <span class="queue-item-index">{{ index + 1 }}</span>
         <span class="queue-item-content" :title="item.content">
           {{ truncate(item.content) }}
           <span v-if="item.attachments.length > 0" class="queue-item-attachments">
-            <i class="codicon codicon-attach"></i>{{ item.attachments.length }}
+            <i class="codicon codicon-attach" aria-hidden="true"></i>{{ t('desktop.inputUi.queuedAttachmentCount', { count: item.attachments.length }) }}
           </span>
         </span>
         <div class="queue-item-actions">
           <button
+            type="button"
             class="queue-action-btn edit-btn"
             :title="t('components.input.queue.edit')"
+            :aria-label="t('components.input.queue.edit')"
             :disabled="busyInputs.has(item.id)"
             @click="handleStartEdit(item.id)"
           >
-            <i class="codicon codicon-edit"></i>
+            <i class="codicon codicon-edit" aria-hidden="true"></i>
           </button>
           <button
             v-if="!item.pendingInput"
+            type="button"
             class="queue-action-btn send-now-btn"
             :title="t('components.input.queue.sendNow')"
+            :aria-label="t('components.input.queue.sendNow')"
             @click="handleSendNow(item.id)"
           >
-            <i class="codicon codicon-play"></i>
+            <i class="codicon codicon-play" aria-hidden="true"></i>
           </button>
           <button
+            type="button"
             class="queue-action-btn remove-btn"
             :title="t(item.pendingInput ? 'components.input.queue.withdraw' : 'components.input.queue.remove')"
+            :aria-label="t(item.pendingInput ? 'components.input.queue.withdraw' : 'components.input.queue.remove')"
             :disabled="busyInputs.has(item.id)"
             @click="handleRemove(item.id)"
           >
-            <i class="codicon codicon-close"></i>
+            <i class="codicon codicon-close" aria-hidden="true"></i>
           </button>
         </div>
       </div>

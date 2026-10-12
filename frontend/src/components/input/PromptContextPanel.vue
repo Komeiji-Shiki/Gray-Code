@@ -270,21 +270,24 @@ const enabledCount = computed(() => props.items.filter(i => i.enabled).length)
     <!-- 头部 -->
     <div class="panel-header">
       <span class="panel-title">
-        <i class="codicon codicon-symbol-parameter"></i>
+        <i class="codicon codicon-symbol-parameter" aria-hidden="true"></i>
         {{ t('components.input.promptContext.title') }}
-        <span v-if="enabledCount > 0" class="count-badge">{{ enabledCount }}</span>
+        <span v-if="enabledCount > 0" class="count-badge">{{ t('desktop.inputUi.promptContextCount', { count: enabledCount }) }}</span>
       </span>
       <div class="header-actions">
         <IconButton
           icon="codicon-add"
           size="small"
           @click="startAddText"
-          :title="t('components.input.promptContext.addText')"
+          :tooltip="t('components.input.promptContext.addText')"
+          :aria-label="t('components.input.promptContext.addText')"
         />
         <IconButton
           v-if="props.closable"
           icon="codicon-close"
           size="small"
+          :tooltip="t('desktop.inputUi.closePromptContext')"
+          :aria-label="t('desktop.inputUi.closePromptContext')"
           @click="emit('close')"
         />
       </div>
@@ -343,10 +346,12 @@ const enabledCount = computed(() => props.items.filter(i => i.enabled).length)
             <input
               type="checkbox"
               :checked="item.enabled"
+              :title="t('desktop.inputUi.enablePromptContext', { title: item.title })"
+              :aria-label="t('desktop.inputUi.enablePromptContext', { title: item.title })"
               @change="handleToggle(item.id, !item.enabled)"
               class="item-checkbox"
             />
-            <i :class="getTypeIcon(item)"></i>
+            <i :class="getTypeIcon(item)" aria-hidden="true"></i>
             <span class="item-title" :title="item.title">{{ item.title }}</span>
             <span class="item-type-badge">{{ getTypeLabel(item.type) }}</span>
             <div class="item-actions">
@@ -355,13 +360,15 @@ const enabledCount = computed(() => props.items.filter(i => i.enabled).length)
                 icon="codicon-edit"
                 size="small"
                 @click="startEdit(item)"
-                :title="t('common.edit')"
+                :tooltip="t('desktop.inputUi.editPromptContext', { title: item.title })"
+                :aria-label="t('desktop.inputUi.editPromptContext', { title: item.title })"
               />
               <IconButton
                 icon="codicon-close"
                 size="small"
                 @click="handleRemove(item.id)"
-                :title="t('common.remove')"
+                :tooltip="t('desktop.inputUi.removePromptContext', { title: item.title })"
+                :aria-label="t('desktop.inputUi.removePromptContext', { title: item.title })"
               />
             </div>
           </div>

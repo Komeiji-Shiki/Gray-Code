@@ -1,4 +1,5 @@
 import desktopWorkspaceUi from './en/desktopWorkspaceUi';
+import inputUi from './en/inputUi';
 import desktopAutomationUi from './en/desktopAutomationUi';
 import desktopBrowserUi from './en/desktopBrowserUi';
 import desktopEditorUi from './en/desktopEditorUi';
@@ -282,7 +283,8 @@ const en: BackendLanguageMessages = {
         "unknownDate": "Unknown date",
         "updateReadyDescription": "The update is downloaded and verified. Save your changes before restarting. Current data will be backed up before installation.",
         "applying": "Preparing to restart and install…",
-        "retryUpdate": "Retry update"
+        "retryUpdate": "Retry update",
+        inputUi,
     },
     modules: {
         diff: {

@@ -32,6 +32,7 @@ export function createContextChipElement(
   const title = document.createElement('span')
   title.className = 'context-chip__text'
   title.textContent = ctx.title
+  title.title = ctx.title
   title.tabIndex = 0
   title.setAttribute('role', 'button')
   title.setAttribute('aria-label', ctx.title)
@@ -50,6 +51,7 @@ export function createContextChipElement(
   const removeBtn = document.createElement('button')
   removeBtn.className = 'context-chip__remove'
   removeBtn.type = 'button'
+  removeBtn.title = `${t('common.remove')}: ${ctx.title}`
   removeBtn.setAttribute('aria-label', `${t('common.remove')}: ${ctx.title}`)
   removeBtn.innerHTML = '<i class="codicon codicon-close" aria-hidden="true"></i>'
   removeBtn.onclick = (e) => {

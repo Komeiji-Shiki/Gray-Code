@@ -8,20 +8,47 @@ const emit = defineEmits<{ 'update:modelValue': [value: string] }>();
 const { t } = useI18n();
 const labels: Record<string, string> = { none: 'effortNone', minimal: 'effortMinimal', low: 'effortLow', medium: 'effortMedium', high: 'effortHigh', xhigh: 'effortXHigh', max: 'effortMax', ultra: 'effortUltra' };
 const options = computed(() => [
-  { value: '', label: '跟随渠道设置', description: '使用渠道原有配置，新对话默认使用此项。' },
+  { value: '', label: t('desktop.inputUi.followChannel'), description: t('desktop.inputUi.followChannelDescription') },
   ...props.levels.map(value => ({ value, label: labels[value] ? t(`components.channels.openai.thinking.${labels[value]}`) : value, description: value })),
 ]);
 </script>
 
 <template>
-  <div class="reasoning-selector" title="思考强度仅用于当前对话，不修改渠道设置">
-    <span class="reasoning-caption">思考</span>
-    <CustomSelect :model-value="modelValue" :options="options" aria-label="当前对话思考强度" :placeholder="modelValue ? `${modelValue}（当前模型不可用）` : undefined" :disabled="disabled" drop-up dropdown-fit-content
-      @update:model-value="emit('update:modelValue', $event)" />
+  <div class="reasoning-selector" :title="t('desktop.inputUi.reasoningTitle')">
+    <span class="reasoning-caption">{{ t('desktop.inputUi.reasoning') }}</span>
+    <CustomSelect
+      :model-value="modelValue"
+      :options="options"
+      :aria-label="t('desktop.inputUi.reasoningLabel')"
+      :title="t('desktop.inputUi.reasoningTitle')"
+      :placeholder="modelValue ? t('desktop.inputUi.reasoningUnavailable', { value: modelValue }) : undefined"
+      :disabled="disabled"
+      drop-up
+      dropdown-fit-content
+      @update:model-value="emit('update:modelValue', $event)"
+    />
   </div>
 </template>
 
 <style scoped>
-.reasoning-selector{display:flex;align-items:center;gap:5px;min-width:0;flex:0 0 auto}.reasoning-caption{color:var(--gc-text-muted);font-size:11px;white-space:nowrap}
-.reasoning-selector :deep(.custom-select){width:auto;min-width:0;max-width:155px}
+.reasoning-selector {
+  display: flex;
+  align-items: center;
+  gap: var(--gc-space-1);
+  margin-left: var(--gc-space-2);
+  min-width: 0;
+  flex: 0 0 auto;
+}
+
+.reasoning-caption {
+  color: var(--gc-text-muted);
+  font-size: var(--gc-font-size-caption);
+  white-space: nowrap;
+}
+
+.reasoning-selector :deep(.custom-select) {
+  width: auto;
+  min-width: 0;
+  max-width: 155px;
+}
 </style>

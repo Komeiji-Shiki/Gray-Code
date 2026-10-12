@@ -70,7 +70,12 @@ vi.mock('../../i18n', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../../i18n')>()
   return {
     ...actual,
-    useI18n: () => ({ t: (key: string) => key })
+    useI18n: () => ({
+      // 计数断言使用真实词条和参数插值，其余断言继续使用原有的词条名桩。
+      t: (key: string, params?: Record<string, unknown>) => key === 'desktop.inputUi.queuedAttachmentCount'
+        ? actual.translate('zh-CN', key, params)
+        : key
+    })
   }
 })
 
@@ -413,7 +418,7 @@ describe('InputArea 发送失败恢复', () => {
     wrapper = mount(MessageQueue, { global: { stubs: { EditDialog: EditDialogStub } } })
     await flushPromises()
     expect(wrapper.find('.queue-item').text()).toContain('等待接收的插话')
-    expect(wrapper.find('.queue-item-attachments').text()).toContain('1')
+    expect(wrapper.find('.queue-item-attachments').text()).toBe('1 个附件')
     expect(wrapper.find('.send-now-btn').exists()).toBe(false)
     await wrapper.find('.edit-btn').trigger('click')
     const editor = wrapper.findComponent(EditDialogStub)

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from 'vue'
+import { computed, getCurrentInstance, nextTick, onMounted, ref, watch } from 'vue'
 import { IconButton, Tooltip, CustomScrollbar } from '../common'
 import { useI18n } from '../../i18n'
 import { showNotification } from '../../utils/vscode'
@@ -20,6 +20,9 @@ const chatStore = useChatStore()
 
 const skills = ref<SkillItem[]>([])
 const showSkillsPanel = ref(false)
+const skillsButtonRef = ref<HTMLButtonElement>()
+const skillsPanelRef = ref<HTMLElement>()
+const skillsPanelId = `gc-input-skills-${getCurrentInstance()?.uid ?? 0}`
 
 const loadingCount = ref(0)
 const isLoadingSkills = computed(() => loadingCount.value > 0)
@@ -119,6 +122,7 @@ async function handleRefreshSkills() {
 async function toggleSkillsPanel() {
   showSkillsPanel.value = !showSkillsPanel.value
   if (showSkillsPanel.value) {
+    await nextTick(() => skillsPanelRef.value?.focus())
     await withLoading(async () => {
       await loadSkills()
       await refreshSkillsExistence()
@@ -127,6 +131,12 @@ async function toggleSkillsPanel() {
 }
 
 const enabledSkillsCount = computed(() => skills.value.filter(s => s.enabled && s.exists !== false).length)
+const skillsButtonLabel = computed(() => t('desktop.inputUi.skillsButton', { count: enabledSkillsCount.value }))
+
+function closeSkillsPanel() {
+  showSkillsPanel.value = false
+  skillsButtonRef.value?.focus()
+}
 
 onMounted(() => {
   void withLoading(loadSkills)
@@ -141,25 +151,36 @@ watch(() => chatStore.currentConversationId, async () => {
 </script>
 
 <template>
-  <Tooltip :content="t('components.input.skills')" placement="top">
-    <div class="skills-button-wrapper">
-      <IconButton
-        icon="codicon-lightbulb"
-        size="small"
-        :class="{ 'has-skills': enabledSkillsCount > 0 }"
-        class="skills-button"
-        @click="toggleSkillsPanel"
-      />
-      <span v-if="enabledSkillsCount > 0" class="skills-badge">
-        {{ enabledSkillsCount }}
-      </span>
-    </div>
+  <Tooltip :content="skillsButtonLabel" placement="top">
+    <button
+      ref="skillsButtonRef"
+      type="button"
+      :class="{ 'has-skills': enabledSkillsCount > 0 }"
+      class="gc-button gc-button--ghost skills-button"
+      :title="skillsButtonLabel"
+      :aria-label="skillsButtonLabel"
+      :aria-expanded="showSkillsPanel"
+      :aria-controls="showSkillsPanel ? skillsPanelId : undefined"
+      @click="toggleSkillsPanel"
+    >
+      <i class="codicon codicon-lightbulb" aria-hidden="true"></i>
+      <span>{{ enabledSkillsCount > 0 ? t('desktop.inputUi.skillsCount', { count: enabledSkillsCount }) : t('desktop.inputUi.skills') }}</span>
+    </button>
   </Tooltip>
 
-  <div v-if="showSkillsPanel" class="skills-panel">
+  <div
+    v-if="showSkillsPanel"
+    :id="skillsPanelId"
+    ref="skillsPanelRef"
+    class="skills-panel"
+    role="region"
+    tabindex="-1"
+    :aria-label="t('components.input.skillsPanel.title')"
+    @keydown.esc.stop.prevent="closeSkillsPanel"
+  >
     <div class="skills-header">
       <span class="skills-title">
-        <i class="codicon codicon-lightbulb"></i>
+        <i class="codicon codicon-lightbulb" aria-hidden="true"></i>
         {{ t('components.input.skillsPanel.title') }}
       </span>
       <div class="skills-header-actions">
@@ -169,17 +190,21 @@ watch(() => chatStore.currentConversationId, async () => {
           :disabled="isLoadingSkills"
           @click="handleRefreshSkills"
           :tooltip="t('components.input.skillsPanel.refresh')"
+          :aria-label="t('components.input.skillsPanel.refresh')"
         />
         <IconButton
           icon="codicon-folder-opened"
           size="small"
           @click="handleOpenSkillsDirectory"
           :tooltip="t('components.input.skillsPanel.openDirectory')"
+          :aria-label="t('components.input.skillsPanel.openDirectory')"
         />
         <IconButton
           icon="codicon-close"
           size="small"
-          @click="showSkillsPanel = false"
+          :tooltip="t('desktop.inputUi.closeSkills')"
+          :aria-label="t('desktop.inputUi.closeSkills')"
+          @click="closeSkillsPanel"
         />
       </div>
     </div>
@@ -188,11 +213,11 @@ watch(() => chatStore.currentConversationId, async () => {
     </div>
     <CustomScrollbar class="skills-content" :maxHeight="200">
       <div v-if="isLoadingSkills" class="skills-loading">
-        <i class="codicon codicon-loading codicon-modifier-spin"></i>
+        <i class="codicon codicon-loading codicon-modifier-spin" aria-hidden="true"></i>
         <span>{{ t('components.input.skillsPanel.loading') }}</span>
       </div>
       <div v-else-if="skills.length === 0" class="skills-empty">
-        <i class="codicon codicon-info"></i>
+        <i class="codicon codicon-info" aria-hidden="true"></i>
         <span>{{ t('components.input.skillsPanel.empty') }}</span>
       </div>
       <div v-else class="skills-list">
@@ -202,17 +227,18 @@ watch(() => chatStore.currentConversationId, async () => {
           class="skill-item"
           :class="{ disabled: !skill.enabled, 'not-exists': skill.exists === false }"
         >
-          <label class="skill-checkbox-wrapper" :title="t('components.input.skillsPanel.enableTooltip')">
+          <label class="skill-checkbox-wrapper" :title="t('desktop.inputUi.enableSkill', { name: skill.name })">
             <input
               type="checkbox"
               :checked="skill.enabled"
+              :aria-label="t('desktop.inputUi.enableSkill', { name: skill.name })"
               @change="handleToggleSkillEnabled(skill.id, !skill.enabled)"
               :disabled="skill.exists === false"
             />
             <span class="skill-checkbox-custom"></span>
           </label>
           <div class="skill-info">
-            <i :class="['codicon', skill.exists === false ? 'codicon-warning' : 'codicon-lightbulb']"></i>
+            <i :class="['codicon', skill.exists === false ? 'codicon-warning' : 'codicon-lightbulb']" aria-hidden="true"></i>
             <span class="skill-name" :title="skill.description">{{ skill.name }}</span>
             <span v-if="skill.exists === false" class="skill-not-exists-hint">{{ t('components.input.skillsPanel.notExists') }}</span>
           </div>
@@ -222,7 +248,8 @@ watch(() => chatStore.currentConversationId, async () => {
               icon="codicon-close"
               size="small"
               @click="handleRemoveSkillConfig(skill.id)"
-              :title="t('components.input.remove')"
+              :tooltip="t('desktop.inputUi.removeSkill', { name: skill.name })"
+              :aria-label="t('desktop.inputUi.removeSkill', { name: skill.name })"
             />
           </div>
         </div>
@@ -230,7 +257,7 @@ watch(() => chatStore.currentConversationId, async () => {
     </CustomScrollbar>
     <div class="skills-footer">
       <div class="skills-hint">
-        <i class="codicon codicon-info"></i>
+        <i class="codicon codicon-info" aria-hidden="true"></i>
         <span>{{ t('components.input.skillsPanel.hint') }}</span>
       </div>
     </div>
@@ -238,33 +265,19 @@ watch(() => chatStore.currentConversationId, async () => {
 </template>
 
 <style scoped>
-.skills-button-wrapper {
-  position: relative;
-  display: inline-flex;
+.skills-button {
+  min-height: var(--gc-control-height-sm);
+  padding: 0 var(--gc-space-1);
+  font-size: var(--gc-font-size-caption);
+  white-space: nowrap;
 }
 
-.skills-button :deep(i.codicon) {
+.skills-button .codicon {
   font-size: 16px;
 }
 
-.skills-button.has-skills :deep(i.codicon) {
+.skills-button.has-skills .codicon {
   color: var(--gc-chart-yellow);
-}
-
-.skills-badge {
-  position: absolute;
-  top: -4px;
-  right: -4px;
-  min-width: 14px;
-  height: 14px;
-  padding: 0 3px;
-  font-size: 10px;
-  font-weight: 500;
-  line-height: 14px;
-  text-align: center;
-  color: var(--gc-badge-fg);
-  background: var(--gc-badge-bg);
-  border-radius: var(--gc-radius-md);
 }
 
 .skills-panel {
@@ -276,7 +289,7 @@ watch(() => chatStore.currentConversationId, async () => {
   background: var(--gc-surface-raised);
   border: 1px solid var(--gc-border-subtle);
   border-radius: var(--gc-radius-sm);
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+  box-shadow: var(--gc-shadow-sm);
   z-index: 100;
   max-height: 300px;
   display: flex;
@@ -398,6 +411,11 @@ watch(() => chatStore.currentConversationId, async () => {
   border-color: var(--gc-badge-bg);
 }
 
+.skill-checkbox-wrapper input:focus-visible + .skill-checkbox-custom {
+  outline: 2px solid var(--gc-focus-border);
+  outline-offset: 2px;
+}
+
 .skill-checkbox-wrapper input:checked + .skill-checkbox-custom::after {
   content: '';
   width: 4px;
@@ -437,7 +455,7 @@ watch(() => chatStore.currentConversationId, async () => {
   font-size: 10px;
   color: var(--gc-warning);
   padding: 1px 4px;
-  background: rgba(255, 200, 0, 0.1);
+  background: var(--gc-warning-bg);
   border-radius: var(--gc-radius-xs);
   flex-shrink: 0;
 }

@@ -829,6 +829,7 @@ defineExpose({
       class="input-resize-handle"
       role="separator"
       aria-orientation="horizontal"
+      :title="t('components.input.resizeInput')"
       :aria-label="t('components.input.resizeInput')"
       tabindex="0"
       @mousedown="handleEditorResizeMouseDown"

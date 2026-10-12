@@ -193,10 +193,14 @@ function cancelRename(): void {
     <button
       v-if="triggerVisible"
       class="branch-tree-trigger"
+      type="button"
       :title="t('components.message.branchTree.open')"
+      :aria-label="t('components.message.branchTree.open')"
+      :aria-expanded="panelOpen"
+      aria-haspopup="dialog"
       @click="panelOpen ? closePanel() : openPanel()"
     >
-      <i class="codicon codicon-git-branch"></i>
+      <i class="codicon codicon-git-branch" aria-hidden="true"></i>
     </button>
 
     <div v-if="panelOpen" class="branch-tree-overlay">
@@ -211,8 +215,9 @@ function cancelRename(): void {
           <span v-if="chatStore.isSwitchingBranch" class="branch-tree-busy">
             <i class="codicon codicon-loading codicon-modifier-spin"></i>
           </span>
-          <button class="branch-tree-close" :title="t('components.message.branchTree.close')" @click="closePanel">
-            <i class="codicon codicon-close"></i>
+          <button type="button" class="branch-tree-close" :title="t('components.message.branchTree.close')"
+            :aria-label="t('components.message.branchTree.close')" @click="closePanel">
+            <i class="codicon codicon-close" aria-hidden="true"></i>
           </button>
         </header>
 
@@ -268,7 +273,7 @@ function cancelRename(): void {
                 :style="{ '--lane': row.lane }"
               >
                 <span class="branch-tree-rail"></span>
-                <span class="branch-tree-collapsed-dot">•••</span>
+                <span class="branch-tree-collapsed-dot" aria-hidden="true">•••</span>
                 <span>{{ t('components.message.branchTree.collapsedMessages', { count: row.count }) }}</span>
               </div>
 
@@ -319,11 +324,13 @@ function cancelRename(): void {
                         @keydown.enter.prevent="commitRename"
                         @keydown.esc="cancelRename"
                       />
-                      <button class="branch-tree-action" :title="t('components.message.branchTree.save')" :disabled="chatStore.isSwitchingBranch" @click="commitRename">
-                        <i class="codicon codicon-check"></i>
+                      <button type="button" class="branch-tree-action" :title="t('components.message.branchTree.save')"
+                        :aria-label="t('components.message.branchTree.save')" :disabled="chatStore.isSwitchingBranch" @click="commitRename">
+                        <i class="codicon codicon-check" aria-hidden="true"></i>
                       </button>
-                      <button class="branch-tree-action" :title="t('components.message.branchTree.cancel')" @click="cancelRename">
-                        <i class="codicon codicon-close"></i>
+                      <button type="button" class="branch-tree-action" :title="t('components.message.branchTree.cancel')"
+                        :aria-label="t('components.message.branchTree.cancel')" @click="cancelRename">
+                        <i class="codicon codicon-close" aria-hidden="true"></i>
                       </button>
                     </template>
                     <template v-else>
@@ -331,29 +338,32 @@ function cancelRename(): void {
                         v-if="row.node.deleted"
                         class="branch-tree-action"
                         :title="t('components.message.branchTree.restore')"
+                        :aria-label="t('components.message.branchTree.restore')"
                         :disabled="chatStore.isSwitchingBranch"
                         @click="restore(row.node.id)"
                       >
-                        <i class="codicon codicon-undo"></i>
+                        <i class="codicon codicon-undo" aria-hidden="true"></i>
                       </button>
                       <button
                         v-if="!row.node.deleted"
                         class="branch-tree-action"
                         :title="t('components.message.branchTree.rename')"
+                        :aria-label="t('components.message.branchTree.rename')"
                         :disabled="chatStore.isSwitchingBranch"
                         @click="startRename(row.node)"
                       >
-                        <i class="codicon codicon-edit"></i>
+                        <i class="codicon codicon-edit" aria-hidden="true"></i>
                       </button>
                       <button
                         v-if="!row.active && !row.node.deleted"
                         class="branch-tree-action"
                         :class="{ confirming: pendingDeleteNodeId === row.node.id }"
                         :title="pendingDeleteNodeId === row.node.id ? t('components.message.branch.deleteConfirm') : t('components.message.branch.delete')"
+                        :aria-label="t(pendingDeleteNodeId === row.node.id ? 'components.message.branch.deleteConfirm' : 'components.message.branch.delete')"
                         :disabled="chatStore.isSwitchingBranch"
                         @click="toggleDelete(row.node.id)"
                       >
-                        <i class="codicon" :class="pendingDeleteNodeId === row.node.id ? 'codicon-check' : 'codicon-trash'"></i>
+                        <i class="codicon" :class="pendingDeleteNodeId === row.node.id ? 'codicon-check' : 'codicon-trash'" aria-hidden="true"></i>
                       </button>
                     </template>
                   </div>
@@ -371,7 +381,7 @@ function cancelRename(): void {
               >
                 <div class="branch-track-graph" :style="{ '--track-count': trackGraph.laneCount }">
                   <div class="branch-track-cell" :style="{ '--lane': row.lane }">
-                    <span class="branch-track-collapsed-dot">•••</span>
+                    <span class="branch-track-collapsed-dot" aria-hidden="true">•••</span>
                   </div>
                   <div
                     v-for="line in row.lines"
@@ -450,11 +460,13 @@ function cancelRename(): void {
                         @keydown.enter.prevent="commitRename"
                         @keydown.esc="cancelRename"
                       />
-                      <button class="branch-tree-action" :title="t('components.message.branchTree.save')" :disabled="chatStore.isSwitchingBranch" @click="commitRename">
-                        <i class="codicon codicon-check"></i>
+                      <button type="button" class="branch-tree-action" :title="t('components.message.branchTree.save')"
+                        :aria-label="t('components.message.branchTree.save')" :disabled="chatStore.isSwitchingBranch" @click="commitRename">
+                        <i class="codicon codicon-check" aria-hidden="true"></i>
                       </button>
-                      <button class="branch-tree-action" :title="t('components.message.branchTree.cancel')" @click="cancelRename">
-                        <i class="codicon codicon-close"></i>
+                      <button type="button" class="branch-tree-action" :title="t('components.message.branchTree.cancel')"
+                        :aria-label="t('components.message.branchTree.cancel')" @click="cancelRename">
+                        <i class="codicon codicon-close" aria-hidden="true"></i>
                       </button>
                     </template>
                     <template v-else>
@@ -462,29 +474,32 @@ function cancelRename(): void {
                         v-if="row.node.deleted"
                         class="branch-tree-action"
                         :title="t('components.message.branchTree.restore')"
+                        :aria-label="t('components.message.branchTree.restore')"
                         :disabled="chatStore.isSwitchingBranch"
                         @click="restore(row.node.id)"
                       >
-                        <i class="codicon codicon-undo"></i>
+                        <i class="codicon codicon-undo" aria-hidden="true"></i>
                       </button>
                       <button
                         v-if="!row.node.deleted"
                         class="branch-tree-action"
                         :title="t('components.message.branchTree.rename')"
+                        :aria-label="t('components.message.branchTree.rename')"
                         :disabled="chatStore.isSwitchingBranch"
                         @click="startRename(row.node)"
                       >
-                        <i class="codicon codicon-edit"></i>
+                        <i class="codicon codicon-edit" aria-hidden="true"></i>
                       </button>
                       <button
                         v-if="!row.active && !row.node.deleted"
                         class="branch-tree-action"
                         :class="{ confirming: pendingDeleteNodeId === row.node.id }"
                         :title="pendingDeleteNodeId === row.node.id ? t('components.message.branch.deleteConfirm') : t('components.message.branch.delete')"
+                        :aria-label="t(pendingDeleteNodeId === row.node.id ? 'components.message.branch.deleteConfirm' : 'components.message.branch.delete')"
                         :disabled="chatStore.isSwitchingBranch"
                         @click="toggleDelete(row.node.id)"
                       >
-                        <i class="codicon" :class="pendingDeleteNodeId === row.node.id ? 'codicon-check' : 'codicon-trash'"></i>
+                        <i class="codicon" :class="pendingDeleteNodeId === row.node.id ? 'codicon-check' : 'codicon-trash'" aria-hidden="true"></i>
                       </button>
                     </template>
                   </div>

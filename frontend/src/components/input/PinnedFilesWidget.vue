@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from 'vue'
+import { computed, getCurrentInstance, nextTick, onMounted, ref, watch } from 'vue'
 import { IconButton, Tooltip } from '../common'
 import { getFileIcon } from '../../utils/fileIcons'
 import { showNotification } from '../../utils/vscode'
@@ -21,6 +21,9 @@ const chatStore = useChatStore()
 
 const pinnedFiles = ref<PinnedFileItem[]>([])
 const showPinnedFilesPanel = ref(false)
+const pinnedFilesButtonRef = ref<HTMLButtonElement>()
+const pinnedFilesPanelRef = ref<HTMLElement>()
+const pinnedFilesPanelId = `gc-input-pinned-files-${getCurrentInstance()?.uid ?? 0}`
 const isLoadingPinnedFiles = ref(false)
 const isDraggingOver = ref(false)
 
@@ -175,12 +178,19 @@ async function handleTogglePinnedFile(id: string, enabled: boolean) {
 async function togglePinnedFilesPanel() {
   showPinnedFilesPanel.value = !showPinnedFilesPanel.value
   if (showPinnedFilesPanel.value) {
+    await nextTick(() => pinnedFilesPanelRef.value?.focus())
     await loadPinnedFiles()
     await refreshPinnedFilesExistence()
   }
 }
 
 const enabledPinnedFilesCount = computed(() => pinnedFiles.value.filter(f => f.enabled).length)
+const pinnedFilesButtonLabel = computed(() => t('desktop.inputUi.pinnedFilesButton', { count: enabledPinnedFilesCount.value }))
+
+function closePinnedFilesPanel() {
+  showPinnedFilesPanel.value = false
+  pinnedFilesButtonRef.value?.focus()
+}
 
 function getPinnedFileIcon(file: PinnedFileItem): string {
   if (file.exists === false) return 'codicon codicon-warning'
@@ -200,39 +210,53 @@ watch(() => chatStore.currentConversationId, async () => {
 </script>
 
 <template>
-  <Tooltip :content="t('components.input.pinnedFiles')" placement="top">
-    <div class="pinned-files-button-wrapper">
-      <IconButton
-        icon="codicon-pin"
-        size="small"
-        :class="{ 'has-files': enabledPinnedFilesCount > 0 }"
-        class="pinned-files-button"
-        @click="togglePinnedFilesPanel"
-      />
-      <span v-if="enabledPinnedFilesCount > 0" class="pinned-files-badge">
-        {{ enabledPinnedFilesCount }}
+  <Tooltip :content="pinnedFilesButtonLabel" placement="top">
+    <button
+      ref="pinnedFilesButtonRef"
+      type="button"
+      :class="{ 'has-files': enabledPinnedFilesCount > 0 }"
+      class="gc-button gc-button--ghost pinned-files-button"
+      :title="pinnedFilesButtonLabel"
+      :aria-label="pinnedFilesButtonLabel"
+      :aria-expanded="showPinnedFilesPanel"
+      :aria-controls="showPinnedFilesPanel ? pinnedFilesPanelId : undefined"
+      @click="togglePinnedFilesPanel"
+    >
+      <i class="codicon codicon-pin" aria-hidden="true"></i>
+      <span>
+        {{ enabledPinnedFilesCount > 0
+          ? t('desktop.inputUi.pinnedFilesCount', { count: enabledPinnedFilesCount })
+          : t('components.input.pinnedFiles') }}
       </span>
-    </div>
+    </button>
   </Tooltip>
 
   <div
     v-if="showPinnedFilesPanel"
+    :id="pinnedFilesPanelId"
+    ref="pinnedFilesPanelRef"
     class="pinned-files-panel"
+    role="region"
+    tabindex="-1"
+    :aria-label="t('components.input.pinnedFilesPanel.title')"
     :class="{ 'drag-over': isDraggingOver }"
     @dragenter="handleDragEnter"
     @dragover="handleDragOver"
     @dragleave="handleDragLeave"
     @drop="handleDrop"
+    @keydown.esc.stop.prevent="closePinnedFilesPanel"
   >
     <div class="pinned-files-header">
       <span class="pinned-files-title">
-        <i class="codicon codicon-pin"></i>
+        <i class="codicon codicon-pin" aria-hidden="true"></i>
         {{ t('components.input.pinnedFilesPanel.title') }}
       </span>
       <IconButton
         icon="codicon-close"
         size="small"
-        @click="showPinnedFilesPanel = false"
+        :tooltip="t('desktop.inputUi.closePinnedFiles')"
+        :aria-label="t('desktop.inputUi.closePinnedFiles')"
+        @click="closePinnedFilesPanel"
       />
     </div>
     <div class="pinned-files-description">
@@ -240,11 +264,11 @@ watch(() => chatStore.currentConversationId, async () => {
     </div>
     <div class="pinned-files-content">
       <div v-if="isLoadingPinnedFiles" class="pinned-files-loading">
-        <i class="codicon codicon-loading codicon-modifier-spin"></i>
+        <i class="codicon codicon-loading codicon-modifier-spin" aria-hidden="true"></i>
         <span>{{ t('components.input.pinnedFilesPanel.loading') }}</span>
       </div>
       <div v-else-if="pinnedFiles.length === 0" class="pinned-files-empty">
-        <i class="codicon codicon-info"></i>
+        <i class="codicon codicon-info" aria-hidden="true"></i>
         <span>{{ t('components.input.pinnedFilesPanel.empty') }}</span>
       </div>
       <div v-else class="pinned-files-list">
@@ -257,11 +281,13 @@ watch(() => chatStore.currentConversationId, async () => {
           <input
             type="checkbox"
             :checked="file.enabled"
+            :title="t('desktop.inputUi.enablePinnedFile', { path: file.path })"
+            :aria-label="t('desktop.inputUi.enablePinnedFile', { path: file.path })"
             @change="handleTogglePinnedFile(file.id, !file.enabled)"
             class="pinned-file-checkbox"
             :disabled="file.exists === false"
           />
-          <i :class="getPinnedFileIcon(file)"></i>
+          <i :class="getPinnedFileIcon(file)" aria-hidden="true"></i>
           <span
             class="pinned-file-path"
             :title="file.exists === false ? `${t('components.input.fileNotExists')}: ${file.path}` : file.path"
@@ -273,52 +299,39 @@ watch(() => chatStore.currentConversationId, async () => {
             icon="codicon-close"
             size="small"
             @click="handleRemovePinnedFile(file.id)"
-            :title="t('components.input.remove')"
+            :tooltip="t('desktop.inputUi.removePinnedFile', { path: file.path })"
+            :aria-label="t('desktop.inputUi.removePinnedFile', { path: file.path })"
           />
         </div>
       </div>
     </div>
     <div class="pinned-files-footer">
       <div class="drag-hint">
-        <i class="codicon codicon-info"></i>
+        <i class="codicon codicon-info" aria-hidden="true"></i>
         <span>{{ t('components.input.pinnedFilesPanel.dragHint') }}</span>
       </div>
     </div>
     <div v-if="isDraggingOver" class="drag-overlay">
-      <i class="codicon codicon-cloud-upload"></i>
+      <i class="codicon codicon-cloud-upload" aria-hidden="true"></i>
       <span>{{ t('components.input.pinnedFilesPanel.dropHint') }}</span>
     </div>
   </div>
 </template>
 
 <style scoped>
-.pinned-files-button-wrapper {
-  position: relative;
-  display: inline-flex;
+.pinned-files-button {
+  min-height: var(--gc-control-height-sm);
+  padding: 0 var(--gc-space-1);
+  font-size: var(--gc-font-size-caption);
+  white-space: nowrap;
 }
 
-.pinned-files-button :deep(i.codicon) {
+.pinned-files-button .codicon {
   transform: rotate(-90deg);
 }
 
-.pinned-files-button.has-files :deep(i.codicon) {
+.pinned-files-button.has-files .codicon {
   color: var(--gc-link);
-}
-
-.pinned-files-badge {
-  position: absolute;
-  top: -4px;
-  right: -4px;
-  min-width: 14px;
-  height: 14px;
-  padding: 0 3px;
-  font-size: 10px;
-  font-weight: 500;
-  line-height: 14px;
-  text-align: center;
-  color: var(--gc-badge-fg);
-  background: var(--gc-badge-bg);
-  border-radius: var(--gc-radius-md);
 }
 
 .pinned-files-panel {
@@ -330,7 +343,7 @@ watch(() => chatStore.currentConversationId, async () => {
   background: var(--gc-surface-raised);
   border: 1px solid var(--gc-border-subtle);
   border-radius: var(--gc-radius-sm);
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+  box-shadow: var(--gc-shadow-sm);
   z-index: 100;
   max-height: 300px;
   display: flex;
@@ -403,8 +416,8 @@ watch(() => chatStore.currentConversationId, async () => {
 }
 
 .pinned-file-item.not-exists {
-  background: rgba(255, 100, 100, 0.1);
-  border: 1px solid rgba(255, 100, 100, 0.3);
+  background: var(--gc-danger-bg);
+  border: 1px solid var(--gc-danger);
 }
 
 .pinned-file-item.not-exists .codicon-warning {
@@ -416,7 +429,7 @@ watch(() => chatStore.currentConversationId, async () => {
   color: var(--gc-danger);
   flex-shrink: 0;
   padding: 1px 4px;
-  background: rgba(255, 100, 100, 0.15);
+  background: var(--gc-danger-bg);
   border-radius: var(--gc-radius-xs);
 }
 

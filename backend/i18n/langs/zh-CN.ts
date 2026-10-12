@@ -1,4 +1,5 @@
 import desktopWorkspaceUi from './zh-CN/desktopWorkspaceUi';
+import inputUi from './zh-CN/inputUi';
 import desktopAutomationUi from './zh-CN/desktopAutomationUi';
 import desktopBrowserUi from './zh-CN/desktopBrowserUi';
 import desktopEditorUi from './zh-CN/desktopEditorUi';
@@ -285,7 +286,8 @@ const zhCN = {
         "unknownDate": "时间未知",
         "updateReadyDescription": "更新包已下载并校验。保存编辑后，可重启安装；安装前会备份当前数据。",
         "applying": "正在准备重启安装…",
-        "retryUpdate": "重试更新"
+        "retryUpdate": "重试更新",
+        inputUi,
     },
     modules: {
         diff: {

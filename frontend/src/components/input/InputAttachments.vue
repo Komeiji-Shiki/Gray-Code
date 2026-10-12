@@ -62,11 +62,12 @@ function isMediaTile(attachment: Attachment): boolean {
             class="tile-img"
           />
           <div v-else class="tile-img media-placeholder">
-            <i :class="['codicon', getAttachmentIconClass(attachment.type), 'tile-icon']"></i>
+            <i :class="['codicon', getAttachmentIconClass(attachment.type), 'tile-icon']" aria-hidden="true"></i>
           </div>
           <i
             v-if="attachment.type === 'video'"
             class="codicon codicon-play tile-overlay"
+            aria-hidden="true"
           ></i>
         </button>
         <IconButton
@@ -74,14 +75,15 @@ function isMediaTile(attachment: Attachment): boolean {
           icon="codicon-close"
           size="small"
           :disabled="props.uploading"
-          :tooltip="t('components.message.attachment.removeAttachment')"
+          :tooltip="t('desktop.inputUi.removeAttachment', { name: attachment.name })"
+          :aria-label="t('desktop.inputUi.removeAttachment', { name: attachment.name })"
           @click.stop="emit('remove', attachment.id)"
         />
       </template>
 
       <!-- 非媒体：紧凑 chip -->
       <template v-else>
-        <i :class="['codicon', getAttachmentIconClass(attachment.type), 'chip-icon']"></i>
+        <i :class="['codicon', getAttachmentIconClass(attachment.type), 'chip-icon']" aria-hidden="true"></i>
         <span class="chip-name" :title="attachment.name">{{ attachment.name }}</span>
         <span class="chip-size">{{ formatFileSize(attachment.size) }}</span>
         <IconButton
@@ -89,7 +91,8 @@ function isMediaTile(attachment: Attachment): boolean {
           icon="codicon-close"
           size="small"
           :disabled="props.uploading"
-          :tooltip="t('components.message.attachment.removeAttachment')"
+          :tooltip="t('desktop.inputUi.removeAttachment', { name: attachment.name })"
+          :aria-label="t('desktop.inputUi.removeAttachment', { name: attachment.name })"
           @click.stop="emit('remove', attachment.id)"
         />
       </template>
@@ -107,7 +110,7 @@ function isMediaTile(attachment: Attachment): boolean {
   max-height: 148px; /* 约两行 64px 缩略图块，超出滚动，避免挤占输入框 */
   overflow-y: auto;
   background: var(--gc-surface-hover);
-  border-radius: var(--radius-sm, 2px);
+  border-radius: var(--gc-radius-sm);
 }
 
 /* ---------- 媒体缩略图块 ---------- */
@@ -160,8 +163,8 @@ function isMediaTile(attachment: Attachment): boolean {
   bottom: 4px;
   right: 4px;
   font-size: 12px;
-  color: white;
-  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.5);
+  color: var(--gc-text-primary);
+  text-shadow: var(--gc-shadow-sm);
   pointer-events: none;
 }
 
@@ -172,7 +175,7 @@ function isMediaTile(attachment: Attachment): boolean {
   opacity: 0;
   transition: opacity 0.15s;
   background: var(--gc-surface-base);
-  border-radius: 50%;
+  border-radius: var(--gc-radius-xs);
 }
 
 .attachment-tile.is-media:hover .tile-remove,

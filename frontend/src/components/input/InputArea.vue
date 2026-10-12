@@ -16,6 +16,7 @@ import SkillsWidget from './SkillsWidget.vue'
 import TpsBar from './TpsBar.vue'
 import BranchTreePanel from '../message/BranchTreePanel.vue'
 import InputSelectorBar from './InputSelectorBar.vue'
+import InputActionsMenu, { type InputActionItem } from './InputActionsMenu.vue'
 import ChannelSetupNotice, { type ChannelSetupStatus } from './ChannelSetupNotice.vue'
 import ContextDetailDialog from './ContextDetailDialog.vue'
 import PromptPreviewDialog from './PromptPreviewDialog.vue'
@@ -692,6 +693,44 @@ function openContextDetail() {
   showContextDetail.value = true
 }
 
+const additionalActions = computed<InputActionItem[]>(() => [
+  {
+    id: 'checkpoint',
+    label: t('desktop.inputUi.createCheckpoint'),
+    title: t('components.input.createCheckpoint'),
+    icon: 'codicon-save',
+    disabled: !chatStore.currentConversationId || chatStore.isWaitingForResponse,
+    loading: isCreatingCheckpoint.value
+  },
+  {
+    id: 'summarize',
+    label: t('components.input.summarizeContext'),
+    icon: 'codicon-fold',
+    disabled: chatStore.isWaitingForResponse || chatStore.usedTokens === 0,
+    loading: isSummarizing.value
+  },
+  ...(promptPreviewAvailable ? [{
+    id: 'preview' as const,
+    label: t('desktop.inputUi.previewPrompt'),
+    icon: 'codicon-open-preview',
+    disabled: !currentModel.value || props.uploading
+  }] : []),
+  ...(!chatStore.isWaitingForResponse ? [{
+    id: 'preserve-send' as const,
+    label: t('desktop.inputUi.sendPreserveContext'),
+    title: t('components.input.sendPreserveDynamicContext'),
+    icon: 'codicon-pinned',
+    disabled: !canSend.value
+  }] : [])
+])
+
+function handleAdditionalAction(id: InputActionItem['id']) {
+  if (id === 'checkpoint') void handleCreateCheckpoint()
+  else if (id === 'summarize') void handleSummarize()
+  else if (id === 'preview') showPromptPreview.value = true
+  else if (id === 'preserve-send') handlePreserveDynamicContextSend()
+}
+
 // ========== lifecycle ==========
 
 onMounted(() => {
@@ -790,59 +829,37 @@ watch(() => settingsStore.promptModesVersion, () => {
 
     <div class="bottom-toolbar">
       <div class="toolbar-left">
-        <Tooltip :content="t('components.input.attachFile')" placement="top-left">
-          <IconButton
-            icon="codicon-attach"
-            size="small"
-            :aria-label="t('components.input.attachFile')"
-            :disabled="props.uploading"
-            class="attach-button"
-            @click="handleAttachFile"
-          />
-        </Tooltip>
-
-        <PinnedFilesWidget />
-        <SkillsWidget />
-        <BranchTreePanel />
-
-        <Tooltip :content="t('components.input.createCheckpoint')" placement="top-left">
-          <IconButton
-            icon="codicon-save"
-            size="small"
-            :aria-label="t('components.input.createCheckpoint')"
-            :loading="isCreatingCheckpoint"
-            :disabled="!chatStore.currentConversationId || isCreatingCheckpoint || chatStore.isWaitingForResponse"
-            class="checkpoint-button"
-            @click="handleCreateCheckpoint"
-          />
-        </Tooltip>
+        <div class="toolbar-group" role="group" :aria-label="t('desktop.inputUi.contextActions')">
+          <Tooltip :content="t('components.input.attachFile')" placement="top-left">
+            <IconButton
+              icon="codicon-attach"
+              size="small"
+              :tooltip="t('components.input.attachFile')"
+              :aria-label="t('components.input.attachFile')"
+              :disabled="props.uploading"
+              class="attach-button"
+              @click="handleAttachFile"
+            />
+          </Tooltip>
+          <PinnedFilesWidget />
+          <SkillsWidget />
+        </div>
+        <div class="toolbar-group" role="group" :aria-label="t('desktop.inputUi.conversationActions')">
+          <BranchTreePanel />
+          <InputActionsMenu :items="additionalActions" @select="handleAdditionalAction" />
+        </div>
       </div>
 
-      <!-- TPS 实时可视化：总结上下文按钮左侧（最底部一行）；可在外观设置中关闭 -->
+      <!-- TPS 保留在中间弹性区，与发送操作分组。 -->
       <TpsBar v-if="settingsStore.tpsBarEnabled" class="tps-slot" />
 
-      <div class="toolbar-right">
-        <Tooltip v-if="promptPreviewAvailable" content="预览当前完整提示词" placement="top">
-          <IconButton icon="codicon-open-preview" size="small" aria-label="预览当前完整提示词" class="prompt-preview-button"
-            :disabled="!currentModel || props.uploading" @click="showPromptPreview = true" />
-        </Tooltip>
-        <Tooltip :content="t('components.input.summarizeContext')" placement="top">
-          <IconButton
-            icon="codicon-fold"
-            size="small"
-            :aria-label="t('components.input.summarizeContext')"
-            :disabled="chatStore.isWaitingForResponse || chatStore.usedTokens === 0 || isSummarizing"
-            :loading="isSummarizing"
-            class="summarize-button"
-            @click="handleSummarize"
-          />
-        </Tooltip>
-
+      <div class="toolbar-right" role="group" :aria-label="t('desktop.inputUi.sendActions')">
         <!-- 上下文统计详情入口：用量区域旁，只读展示 describeConversation -->
         <Tooltip :content="t('components.input.contextDetail.open')" placement="top">
           <IconButton
             icon="codicon-info"
             size="small"
+            :tooltip="t('components.input.contextDetail.open')"
             :aria-label="t('components.input.contextDetail.open')"
             :disabled="!chatStore.currentConversationId"
             class="context-detail-button"
@@ -854,6 +871,7 @@ watch(() => settingsStore.promptModesVersion, () => {
           class="token-ring-wrapper"
           role="img"
           tabindex="0"
+          :title="tokenUsageAriaLabel"
           :aria-label="tokenUsageAriaLabel"
           aria-describedby="token-usage-tooltip"
         >
@@ -896,7 +914,6 @@ watch(() => settingsStore.promptModesVersion, () => {
           :loading="chatStore.isWaitingForResponse"
           :cancelling="chatStore.isCancellingStream"
           @click="handleSend"
-          @preserve-dynamic-context-click="handlePreserveDynamicContextSend"
           @cancel="handleCancel"
         />
       </div>
@@ -945,7 +962,7 @@ watch(() => settingsStore.promptModesVersion, () => {
   padding: var(--gc-space-2);
   background: var(--gc-surface-raised);
   border: 1px solid var(--gc-border-subtle);
-  border-radius: var(--gc-radius-lg);
+  border-radius: var(--gc-radius-sm);
   transition: border-color var(--gc-duration-fast) var(--gc-ease-standard);
 }
 
@@ -967,6 +984,7 @@ watch(() => settingsStore.promptModesVersion, () => {
 
 .bottom-toolbar {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   justify-content: space-between;
   gap: var(--gc-space-2);
@@ -974,15 +992,33 @@ watch(() => settingsStore.promptModesVersion, () => {
 }
 
 .toolbar-left,
-.toolbar-right {
+.toolbar-right,
+.toolbar-group {
   display: flex;
   align-items: center;
   flex-shrink: 0;
   gap: var(--gc-space-1);
 }
 
-/* TPS 实时可视化条：占据底部行中间弹性区，总结上下文按钮左侧 */
+.toolbar-left {
+  min-width: 0;
+  flex-shrink: 1;
+  flex-wrap: wrap;
+  gap: var(--gc-space-3);
+}
+
+.toolbar-group {
+  flex-wrap: wrap;
+  max-width: 100%;
+}
+
+.toolbar-right {
+  margin-left: auto;
+}
+
+/* 各用途组之间留白，状态与发送共用右侧区域。 */
 .tps-slot {
+  flex-basis: 120px;
   justify-content: center;
   padding: 0 8px;
 }
@@ -999,14 +1035,6 @@ watch(() => settingsStore.promptModesVersion, () => {
 }
 
 @media (max-width: 360px) {
-  .bottom-toolbar {
-    flex-wrap: wrap;
-  }
-
-  .toolbar-right {
-    margin-left: auto;
-  }
-
   .tps-slot {
     order: 1;
     flex-basis: 100%;
@@ -1021,10 +1049,6 @@ watch(() => settingsStore.promptModesVersion, () => {
 
 .attach-button :deep(i.codicon) {
   font-size: 17px !important;
-}
-
-.summarize-button :deep(i.codicon) {
-  font-size: 15px !important;
 }
 
 .context-detail-button :deep(i.codicon) {

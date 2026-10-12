@@ -40,6 +40,7 @@ const emit = defineEmits<{
       <a href="https://chatgpt.com/#settings/Usage" target="_blank" rel="noopener noreferrer">{{ t('desktop.chatgpt.usage') }}</a>
     </div>
     <div class="mode-selector-wrapper">
+      <span class="selector-caption">{{ t('desktop.inputUi.mode') }}</span>
       <ModeSelector
         :model-value="props.currentModeId"
         :options="props.modeOptions"
@@ -51,6 +52,7 @@ const emit = defineEmits<{
     </div>
 
     <div class="channel-selector-wrapper">
+      <span class="selector-caption">{{ t('desktop.inputUi.channel') }}</span>
       <ChannelSelector
         :model-value="props.configId"
         :options="props.channelOptions"
@@ -62,6 +64,7 @@ const emit = defineEmits<{
     </div>
 
     <div class="model-selector-wrapper">
+      <span class="selector-caption">{{ t('desktop.inputUi.model') }}</span>
       <ModelSelector
         :models="props.modelOptions"
         :model-value="props.currentModelId"
@@ -81,19 +84,28 @@ const emit = defineEmits<{
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: var(--gc-space-1);
+  column-gap: var(--gc-space-3);
+  row-gap: var(--gc-space-2);
   min-width: 0;
 }
 
 .mode-selector-wrapper,
 .channel-selector-wrapper,
 .model-selector-wrapper {
+  display: flex;
+  align-items: center;
+  gap: var(--gc-space-1);
   min-width: 0;
   max-width: 100%;
 }
-.model-selector-wrapper { display: flex; align-items: center; gap: var(--gc-space-1); }
 
-/* 胶囊：宽度随内容，过长时截断；下拉面板位置沿用组件自身逻辑。 */
+.selector-caption {
+  flex-shrink: 0;
+  color: var(--gc-text-muted);
+  font-size: var(--gc-font-size-caption);
+}
+
+/* 选择器宽度随内容，标签之间以留白分组；下拉位置沿用组件自身逻辑。 */
 .selector-bar :deep(.mode-trigger),
 .selector-bar :deep(.selector-trigger),
 .selector-bar :deep(.model-trigger),

@@ -167,10 +167,12 @@ onBeforeUnmount(() => {
     <span
       v-if="source && barActive"
       class="tps-source"
+      role="img"
       :class="`is-${source}`"
       :title="source === 'tokenizer' ? t('components.input.tpsTokenizerReal') : t('components.input.tpsTokenizerEstimate')"
+      :aria-label="source === 'tokenizer' ? t('components.input.tpsTokenizerReal') : t('components.input.tpsTokenizerEstimate')"
     >
-      <i class="codicon" :class="source === 'tokenizer' ? 'codicon-check' : 'codicon-warning'"></i>
+      <i class="codicon" :class="source === 'tokenizer' ? 'codicon-check' : 'codicon-warning'" aria-hidden="true"></i>
     </span>
   </div>
 </template>

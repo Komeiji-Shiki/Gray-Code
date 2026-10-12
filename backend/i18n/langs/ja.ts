@@ -1,4 +1,5 @@
 import desktopWorkspaceUi from './ja/desktopWorkspaceUi';
+import inputUi from './ja/inputUi';
 import desktopAutomationUi from './ja/desktopAutomationUi';
 import desktopBrowserUi from './ja/desktopBrowserUi';
 import desktopEditorUi from './ja/desktopEditorUi';
@@ -282,7 +283,8 @@ const ja: BackendLanguageMessages = {
         "unknownDate": "日時不明",
         "updateReadyDescription": "更新のダウンロードと検証が完了しました。変更を保存してから再起動してください。インストール前に現在のデータをバックアップします。",
         "applying": "再起動とインストールを準備中…",
-        "retryUpdate": "更新を再試行"
+        "retryUpdate": "更新を再試行",
+        inputUi,
     },
     modules: {
         diff: {
