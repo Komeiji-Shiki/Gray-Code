@@ -564,7 +564,6 @@ const unsubscribe = subscribe((event) => {
   }
   if (event.type === 'workspace.diff.open') {
     const workspaceId = typeof event.workspaceId === 'string' ? event.workspaceId : state.workspaceId;
-    if (workspaceId !== state.workspaceId) state.workspaceId = workspaceId;
     diffTarget.value = event.id || event.path || event.toolCallId ? { workspaceId, id: event.id, path: event.path, toolCallId: event.toolCallId } : undefined;
     activatePanel('diff');
     return;
@@ -771,7 +770,7 @@ onUnmounted(() => {
         :flush="flushDocuments"
         @open="(path, workspaceId) => guard(() => open(path, workspaceId))"
       />
-      <DiffPanel v-if="pane === 'diff'" :workspace-id="state.workspaceId" :target="diffTarget" />
+      <DiffPanel v-if="pane === 'diff'" :workspace-id="diffTarget?.workspaceId ?? state.workspaceId" :target="diffTarget" />
       <SearchPanel
         v-if="openedPanels.includes('search')"
         v-show="pane === 'search'"

@@ -8,6 +8,54 @@ async function screenshot(window, output, name) {
   return name;
 }
 
+async function runProjectSwitchWorkflow({ rpc, ui, evaluate, chat, until, getRequests }) {
+  const ordinary = await ui('ui.mode.new', { mode: 'chat', automaticWorkspace: true });
+  await evaluate(`window.__projectSwitchFocus = null;
+    window.graycode.subscribe(event => {
+      if (event.type === 'ui.conversation.focused') window.__projectSwitchFocus = event;
+    }); undefined`);
+  await rpc('ui.command', { command: 'platform.openModeConversation', data: { conversationId: ordinary.conversationId } });
+  await until(() => evaluate(`window.__projectSwitchFocus?.conversationId === ${JSON.stringify(ordinary.conversationId)}`),
+    'ordinary conversation before project switch');
+  const ordinaryWorkspaceId = await evaluate('window.__projectSwitchFocus.workspaceId');
+  assert(ordinaryWorkspaceId && ordinaryWorkspaceId !== 'smoke');
+
+  async function send(message, conversationId) {
+    await until(() => chat('!!document.querySelector(".input-editor")'),
+      'project switch chat input');
+    await chat(`const editor = document.querySelector('.input-editor'); editor.focus(); editor.textContent = ${JSON.stringify(message)};
+      editor.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertText', data: editor.textContent }));`);
+    await until(() => chat('!!document.querySelector(".send-button:not([disabled])")'), 'project switch send enabled');
+    await chat('document.querySelector(".send-button").click()');
+    await until(async () => {
+      const run = (await rpc('runs.list')).find(item => item.conversationId === conversationId);
+      if (run?.status === 'failed') throw new Error(run.error || 'Project switch model request failed.');
+      return run?.status === 'completed';
+    }, 'project switch request completed');
+  }
+  await send('workspace-switch-general-smoke', ordinary.conversationId);
+  const navigation = await ui('conversation.navigation', { scope: 'personal' });
+  assert(![...navigation.items, ...navigation.pinned].some(item => item.workspaceId === 'smoke'), 'The project must start without a conversation.');
+  await until(() => evaluate('Array.from(document.querySelectorAll(".navigation-project-select")).some(node => node.textContent.includes("桌面验证项目"))'),
+    'empty project navigation');
+  await evaluate('Array.from(document.querySelectorAll(".navigation-project-select")).find(node => node.textContent.includes("桌面验证项目")).click()');
+  const focus = await until(async () => {
+    const event = await evaluate('window.__projectSwitchFocus');
+    return event?.workspaceId === 'smoke' && event.conversationId !== ordinary.conversationId && event;
+  }, 'empty project creates and focuses a bound conversation');
+  assert.equal(focus.mode, 'code');
+  const metadata = await ui('conversation.getConversationMetadata', { conversationId: focus.conversationId });
+  assert.equal(metadata.workspaceId, 'smoke');
+  await send('workspace-switch-read-smoke', focus.conversationId);
+  const readResult = getRequests().flatMap(request => request.messages)
+    .find(message => message.role === 'tool' && message.tool_call_id === 'workspace-switch-read');
+  assert(readResult && JSON.stringify(readResult.content).includes('Hello GrayCode'), 'read_file must read the selected project fixture.');
+  const originalMetadata = await ui('conversation.getConversationMetadata', { conversationId: ordinary.conversationId });
+  assert.equal(originalMetadata.workspaceId, ordinaryWorkspaceId, 'The original ordinary conversation must retain its workspace binding.');
+  return { ordinaryConversationId: ordinary.conversationId, projectConversationId: focus.conversationId,
+    emptyProjectCreatesConversation: true, selectedProjectReadFile: true, ordinaryConversationPreserved: true };
+}
+
 async function runCompanionWorkflow({ window, rpc, evaluate, chat, until, output, configId, getRequests }) {
   const resource = (await rpc('pets.list'))[0];
   assert(resource?.actions.length, 'The existing pet smoke must provide an annotated resource.');
@@ -242,4 +290,4 @@ async function verifyInputToolbar({ window, chat, until, output }) {
   return { actions, icons, screenshots: pictures, keyboardNavigation: true, keyboardCloseAndFocusRestore: true, tabClosesMenu: true };
 }
 
-module.exports = { runCompanionWorkflow, verifyInputToolbar, screenshot };
+module.exports = { runProjectSwitchWorkflow, runCompanionWorkflow, verifyInputToolbar, screenshot };

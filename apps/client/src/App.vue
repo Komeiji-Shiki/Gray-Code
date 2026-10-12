@@ -26,6 +26,7 @@ const CompanionSetup = defineAsyncComponent(() => import('./components/Companion
 import PetSurface from './components/PetSurface.vue';
 import ScreenSenseStatus from './components/ScreenSenseStatus.vue';
 const productChatFrame = ref<HTMLIFrameElement>();
+const conversationSidebar = ref<InstanceType<typeof ConversationSidebar>>();
 function jumpToMessage(target: { conversationId: string; messageIndex: number; messageId?: string }) {
   productChatFrame.value?.contentWindow?.postMessage(
     { type: 'graycode.jumpToMessage', ...target },
@@ -197,7 +198,7 @@ async function addWorkspace() {
     if (!selected) return;
     const workspace = await call<{ id: string }>('workspaces.add', selected);
     await loadSettings();
-    if (intent.current()) state.workspaceId = workspace.id;
+    if (intent.current()) await conversationSidebar.value?.selectWorkspace(workspace.id);
   } finally {
     choosingWorkspace.value = false;
   }
@@ -306,7 +307,6 @@ useSystemAppearance();
 watch(
   () => state.workspaceId,
   (id) => {
-    localStorage.setItem('graycode.workspaceId', id);
     if (state.ready) void guard(() => call('ui.context.set', { workspaceId: id, mode: state.mode }));
   },
 );
@@ -318,6 +318,8 @@ onMounted(() => {
   unsubscribeHost = subscribe((event) => {
     if (lifetime.signal.aborted) return;
     if (event.type === 'ui.ready') chatReady.value = true;
+    if (event.type === 'workspace.selected' && event.source === 'desktop')
+      void guard(() => conversationSidebar.value!.selectWorkspace(event.workspaceId));
     if (event.type === 'transport.resumed' && !state.ready && !booting.value) void bootstrap();
     if (event.type === 'pets.open') openCompanionSettings('pet');
     if (event.type === 'screenSense.open') openCompanionSettings('screen');
@@ -404,12 +406,7 @@ onUnmounted(() => {
         <span class="subtle">{{ t('workspace') }}</span>
         <WorkspaceSelector
           :model-value="state.workspaceId"
-          @update:model-value="
-            (id) => {
-              navigate({ workspaceId: id });
-              state.workspaceId = id;
-            }
-          "
+          @update:model-value="(id) => guard(() => conversationSidebar!.selectWorkspace(id))"
           :workspaces="state.snapshot?.settings.workspaces ?? []"
           @browse="guard(addWorkspace)"
         />
@@ -536,6 +533,7 @@ onUnmounted(() => {
         :aria-busy="!chatReady"
       >
         <ConversationSidebar
+          ref="conversationSidebar"
           v-model:collapsed="navigationCollapsed"
           @automations="
             finishNavigation();

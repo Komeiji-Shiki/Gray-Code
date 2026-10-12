@@ -7,7 +7,7 @@ export const state = reactive({ panelResizing: false, panelObscured: false, pane
   conversationId: null as string | null, mode: 'chat' as 'chat' | 'code' | 'character',
   conversationViews: [] as ConversationViewInfo[],
   navigationDialogOpen: false, fileDialogOpen: false,
-  snapshot: null as SettingsSnapshot | null, workspaceId: localStorage.getItem('graycode.workspaceId') ?? '' });
+  snapshot: null as SettingsSnapshot | null, workspaceId: '' });
 export const appearance = computed(() => state.snapshot?.settings.appearance);
 let settingsRequestSequence = 0;
 let settingsLoad: { sequence: number; completion: Promise<void> } | undefined;
@@ -42,11 +42,11 @@ export async function initialize(signal?: AbortSignal) {
       else void guard(() => loadSettings(signal));
     }
     if (event.source === 'desktop' && ['workspace.file.open', 'workspace.selected'].includes(event.type)) {
-      state.workspaceId = event.workspaceId; state.chatFocused = false; state.settingsOpen = false;
+      state.chatFocused = false; state.settingsOpen = false;
     }
     if (event.type === 'ui.conversation.focused') {
       state.conversationId = event.conversationId; if (['chat', 'code', 'character'].includes(event.mode)) state.mode = event.mode;
-      if (event.conversationId && !event.resynchronized) state.workspaceId = typeof event.workspaceId === 'string' ? event.workspaceId : '';
+      state.workspaceId = typeof event.workspaceId === 'string' ? event.workspaceId : '';
     }
     if (event.type === 'ui.conversation.views') state.conversationViews = event.views;
     if (event.type === 'notification') {

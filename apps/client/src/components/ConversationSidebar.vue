@@ -235,27 +235,39 @@ async function selectProject(group: (typeof groups.value)[number]) {
     toggleGroup(group.key);
     return;
   }
-  const intent = navigate({ workspaceId: group.workspace?.id });
-  const candidates = [...group.items, ...navigation.value.pinned.filter((item) => group.workspace && item.workspaceId === group.workspace.id)].sort(
+  await selectWorkspace(group.workspace?.id ?? '', group);
+}
+async function selectWorkspace(workspaceId: string, group?: NavigationGroup) {
+  const intent = navigate({ workspaceId });
+  // 选择器和新加项目也沿用侧栏的会话导航，工作区只由实际聚焦的对话更新。
+  const source = group ? navigation.value : await uiRequest('conversation.navigation', { scope: 'personal' });
+  if (!intent.current()) return;
+  const matchesWorkspace = (item: ConversationNavigationItem) => workspaceId
+    ? item.workspaceId === workspaceId && !item.automaticWorkspace
+    : !item.workspaceUri || item.automaticWorkspace;
+  const candidates = [
+    ...(group?.items ?? source.items.filter(matchesWorkspace)),
+    ...source.pinned.filter((item) => (!group || !!workspaceId) && matchesWorkspace(item)),
+  ].sort(
     (left, right) => right.updatedAt - left.updatedAt,
   );
   const selected = candidates.find((item) => item.id === state.conversationId) ?? candidates[0];
   if (selected) await command('platform.openModeConversation', { conversationId: selected.id }, intent);
+  else await newConversation(workspaceId || undefined, intent);
   if (!intent.current()) return;
-  if (group.workspace) state.workspaceId = group.workspace.id;
   const next = new Set(collapsedGroups.value);
-  next.delete(group.key);
+  next.delete(group?.key ?? workspaceId);
   collapsedGroups.value = next;
-  state.chatFocused = false;
-  emit('navigate', 'workbench');
+  state.chatFocused = !workspaceId && !group?.uri;
+  emit('navigate', state.chatFocused ? undefined : 'workbench');
 }
-async function newConversation(workspaceId?: string) {
-  const intent = navigate({ workspaceId });
+async function newConversation(workspaceId?: string, intent = navigate({ workspaceId })) {
   if (workspaceId) {
     const result = await uiRequest('ui.mode.new', { mode: 'code', workspaceId });
     if (intent.current()) await command('platform.openModeConversation', { conversationId: result.conversationId }, intent);
   } else await command('newChat', undefined, intent);
 }
+defineExpose({ selectWorkspace, newConversation });
 function openSettings(event: MouseEvent) {
   settingsTrigger = event.currentTarget as HTMLButtonElement;
   void guard(() => command('showSettings'));

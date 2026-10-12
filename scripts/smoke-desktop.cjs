@@ -21,6 +21,7 @@ const petOnly = process.argv.includes('--pet-only');
 let petReply = '';
 const petRequests = [];
 const workflowRequests = [];
+const projectSwitchRequests = [];
 async function until(check, label, timeout = 20000) {
   const deadline = Date.now() + timeout;
   while (Date.now() < deadline) { const result = await check(); if (result) return result; await sleep(100); }
@@ -207,6 +208,18 @@ async function main() {
       res.end(JSON.stringify({ choices: [{ message: { role: 'assistant', content: '陪伴流程烟测完成。' }, finish_reason: 'stop' }] }));
       return;
     }
+    const lastUserMessage = body.messages.findLast(message => message.role === 'user');
+    if (JSON.stringify(lastUserMessage?.content ?? '').includes('workspace-switch-')) {
+      projectSwitchRequests.push(body);
+      const reading = JSON.stringify(lastUserMessage.content).includes('workspace-switch-read-smoke');
+      const readResult = body.messages.find(message => message.role === 'tool' && message.tool_call_id === 'workspace-switch-read');
+      const tool = reading && !readResult ? { id: 'workspace-switch-read', type: 'function',
+        function: { name: 'read_file', arguments: JSON.stringify({ files: [{ path: 'hello.ts' }] }) } } : undefined;
+      res.setHeader('Content-Type', 'application/json');
+      res.end(JSON.stringify({ choices: [{ message: { role: 'assistant', content: tool ? null : '项目切换流程已完成。',
+        ...(tool ? { tool_calls: [tool] } : {}) }, finish_reason: tool ? 'tool_calls' : 'stop' }] }));
+      return;
+    }
     if (rendererBenchmark?.streamRendererWorkload(body, res)) return;
     const answerReceived = body.messages.some(message => typeof message.content === 'string' && message.content.includes('Answer to optional question'));
     const call = (id, name, args) => ({ id, type: 'function', function: { name, arguments: JSON.stringify(args) } });
@@ -274,9 +287,10 @@ async function main() {
   const workflowSmoke = require('./smoke-workflows.cjs');
   const companionWorkflow = await workflowSmoke.runCompanionWorkflow({ window, rpc, evaluate, chat, until, output, configId,
     getRequests: () => workflowRequests });
+  const projectSwitchWorkflow = await workflowSmoke.runProjectSwitchWorkflow({ rpc, ui, evaluate, chat, until,
+    getRequests: () => projectSwitchRequests });
   await until(() => evaluate('Array.from(document.querySelectorAll(".navigation-project-select")).some(node => node.textContent.includes("桌面验证项目"))'), 'project navigation');
-  await evaluate('Array.from(document.querySelectorAll(".navigation-project-select")).find(node => node.textContent.includes("桌面验证项目")).click()');
-  // 选择项目只切换工作台；通过项目新建按钮明确建立绑定该工作区的代码任务。
+  // 工作区切换已覆盖自动创建；后续工具循环使用另一条空白项目对话。
   await evaluate('window.__smokeProjectFocused = false; window.graycode.subscribe(event => { if (event.type === "ui.conversation.focused" && event.workspaceId === "smoke" && event.conversationId) window.__smokeProjectFocused = true; }); undefined');
   await evaluate('Array.from(document.querySelectorAll(".navigation-project-select")).find(node => node.textContent.includes("桌面验证项目")).closest(".navigation-group-heading").querySelector(".navigation-project-add").click()');
   await until(() => evaluate('window.__smokeProjectFocused'), 'project conversation focused');
@@ -421,7 +435,7 @@ async function main() {
   await ui('platform.settings.update', { settings: closingSettings });
   const shutdownRetryVerified = await verifyShutdownRetry(rpc, window);
   const report = { ok: true, electron: process.versions.electron, node: process.versions.node, requests, regexSearchVerified: true, editorFlowVerified: true,
-    chatLayout, rendererPerformance, pets: petSmoke, workflows: { companion: companionWorkflow, inputToolbar,
+    chatLayout, rendererPerformance, pets: petSmoke, workflows: { companion: companionWorkflow, projectSwitch: projectSwitchWorkflow, inputToolbar,
       settings: { screenshots: ['settings-context.png', 'settings-context-prompts.png', 'settings-context-count.png', 'settings-companion.png'],
         unifiedContextAndCompanion: true } },
     verified: ['SQLite worker', 'encrypted settings', 'Monaco', 'native PTY', 'HTTP model/tool loop', 'partial read yellow warning', 'on-demand context status', 'user retention immediate save', 'async question', 'approval denial', 'HTML preview', 'original tabs and input', 'full-width user messages', 'tool header layout at 760/320/240px', 'straight selection markers', 'centered channel checkbox ticks', '20 settings sections', 'system fonts', 'shared settings draft', 'MCP JSON draft and encrypted configuration', 'original UI reroll and branch switching', 'background import preview, discard and atomic save', ...(shutdownRetryVerified ? ['shutdown failure and retry with owned process'] : [])], fontCount: fonts.length, errors, output };
