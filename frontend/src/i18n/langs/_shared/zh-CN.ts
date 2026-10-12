@@ -216,6 +216,16 @@ const sharedZhCN = {
                 status_waiting: "已启用，等待任务事件",
                 title: "Clawd 独立桌宠联动",
             },
+            companionSettings: {
+                description: "配置全局 Cubism Core、桌宠显示与缩放，以及默认识图渠道和模型。当前聊天的陪伴内容在聊天页中设置。",
+                discardAndLeave: "放弃更改并离开",
+                runtime: "Cubism Core 与桌宠显示",
+                saveHint: "Core 导入立即生效，显示设置与识图默认值分别使用各自的保存按钮。",
+                title: "陪伴",
+                unsavedDescription: "此页还有未保存的显示设置或识图默认值。继续编辑并保存，或放弃本次更改后离开。",
+                unsavedTitle: "陪伴设置尚未保存",
+                visionDefaults: "默认识图渠道与模型",
+            },
             contextSettings: {
                 diagnostics: {
                     severity: {

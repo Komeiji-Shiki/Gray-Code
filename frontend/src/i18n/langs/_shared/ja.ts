@@ -216,6 +216,16 @@ const sharedJa = {
                 status_waiting: "有効、タスクの開始待ち",
                 title: "Clawd デスクトップペット連携",
             },
+            companionSettings: {
+                description: "全体の Cubism Core、ペットの表示と倍率、既定の画像認識チャネルとモデルを設定します。現在の会話のコンパニオンはチャット画面で設定します。",
+                discardAndLeave: "変更を破棄して移動",
+                runtime: "Cubism Core とペット表示",
+                saveHint: "Core の読み込みはすぐに反映されます。表示設定と画像認識の既定値は、それぞれの保存ボタンで保存します。",
+                title: "コンパニオン",
+                unsavedDescription: "未保存の表示設定または画像認識の既定値があります。編集を続けて保存するか、今回の変更を破棄して移動してください。",
+                unsavedTitle: "未保存のコンパニオン設定",
+                visionDefaults: "既定の画像認識チャネルとモデル",
+            },
             contextSettings: {
                 diagnostics: {
                     severity: {

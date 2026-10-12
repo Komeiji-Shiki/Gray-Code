@@ -16,6 +16,8 @@ import { trackPreferenceRequest, desktopSettingsDraft, saveDesktopSettings } fro
 
 const bridge = (window.parent as unknown as { graycode: DesktopBridge }).graycode;
 if (!bridge) throw new Error('The desktop host is unavailable.');
+// 仅给尚无桥接的 iframe 补上原始句柄；Electron contextBridge 提供的只读属性必须保留。
+if (!window.graycode) window.graycode = bridge;
 const desktop: DesktopBridge = { ...bridge, call: (method, params) => callDesktopBridge(bridge, method, params) };
 const viewQuery = new URLSearchParams(window.location.search);
 const isMonitorView = viewQuery.get('view') === 'subagents';

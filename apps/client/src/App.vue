@@ -23,9 +23,7 @@ import NavigationIcon from './components/navigation/NavigationIcon.vue';
 import { useNavigationFocus } from './components/navigation/useNavigationFocus';
 import ComputerStatus from './components/ComputerStatus.vue';
 const CompanionSetup = defineAsyncComponent(() => import('./components/CompanionSetup.vue'));
-const PetManager = defineAsyncComponent(() => import('./components/PetManager.vue'));
 import PetSurface from './components/PetSurface.vue';
-const ScreenSenseSettings = defineAsyncComponent(() => import('./components/ScreenSenseSettings.vue'));
 import ScreenSenseStatus from './components/ScreenSenseStatus.vue';
 const productChatFrame = ref<HTMLIFrameElement>();
 function jumpToMessage(target: { conversationId: string; messageIndex: number; messageId?: string }) {
@@ -46,12 +44,17 @@ function openWorkspacePanel(event: MessageEvent) {
   }
   const panel = readWorkspacePanelMessage(event, productChatFrame.value?.contentWindow, window.location.origin);
   if (panel === 'memory') openLibrary('memory');
-  else if (panel === 'pets') petManagerOpen.value = true;
-  else if (panel === 'screenSense') screenSenseOpen.value = true;
+  else if (panel === 'pets') openCompanionSettings('pet');
+  else if (panel === 'screenSense') openCompanionSettings('screen');
 }
-const screenSenseOpen = ref(false);
-const petManagerOpen = ref(false);
 const companionOpen = ref(false);
+const companionStep = ref<'character' | 'pet' | 'screen' | 'greeting'>('character');
+const companionConversationId = ref<string>();
+function openCompanionSettings(step: typeof companionStep.value = 'character') {
+  companionStep.value = step;
+  companionConversationId.value = state.mode === 'chat' ? state.conversationId || undefined : undefined;
+  companionOpen.value = true;
+}
 const characterSetup = ref<{ characterId?: string } | null>(null);
 const libraryOpen = ref(false);
 const libraryInitialTab = ref<'resources' | 'memory'>('resources');
@@ -90,6 +93,12 @@ function reloadChat() {
   chatFrameVersion.value++;
   void nextTick().then(watchChatReady);
 }
+function autoStartScreenSense(conversationId: string | null) {
+  // 正常恢复的陪伴对话要等聊天初始化完成；启动失败页和重新加载期间不采集。
+  if (!conversationId || !state.ready || !chatInitialized.value || chatLoadFailed.value || state.initializationError) return;
+  void guard(() => call('screenSense.conversationOpened', { conversationId }));
+}
+watch([() => state.ready, chatInitialized], () => autoStartScreenSense(state.conversationId));
 watch(
   () => state.ready,
   (ready) => {
@@ -235,8 +244,6 @@ watch(
     automationsOpen,
     characterSetup,
     companionOpen,
-    petManagerOpen,
-    screenSenseOpen,
     () => state.navigationDialogOpen,
     () => state.fileDialogOpen,
     () => state.panelMenuOpen,
@@ -247,8 +254,6 @@ watch(
       automationsOpen.value ||
       !!characterSetup.value ||
       companionOpen.value ||
-      petManagerOpen.value ||
-      screenSenseOpen.value ||
       state.navigationDialogOpen ||
       state.fileDialogOpen ||
       state.panelMenuOpen;
@@ -314,8 +319,9 @@ onMounted(() => {
     if (lifetime.signal.aborted) return;
     if (event.type === 'ui.ready') chatReady.value = true;
     if (event.type === 'transport.resumed' && !state.ready && !booting.value) void bootstrap();
-    if (event.type === 'pets.open') petManagerOpen.value = true;
-    if (event.type === 'screenSense.open') screenSenseOpen.value = true;
+    if (event.type === 'pets.open') openCompanionSettings('pet');
+    if (event.type === 'screenSense.open') openCompanionSettings('screen');
+    if (event.type === 'ui.conversation.focused' && !event.resynchronized) autoStartScreenSense(event.conversationId);
     if (event.type === 'ui.view.changed') state.settingsOpen = event.view === 'settings';
     if (event.type === 'settings.open') void guard(() => call('ui.command', { command: 'showSettings' }));
     if (event.type === 'ui.message' && event.message?.command === 'channels.configChanged') void guard(() => loadSettings(lifetime.signal));
@@ -430,7 +436,7 @@ onUnmounted(() => {
       </button>
       <button v-if="!compactViewport" class="quiet-button" @click="openLibrary()">{{ t('library') }}</button>
       <button v-if="!compactViewport && state.mode === 'character'" class="quiet-button" @click="characterSetup = {}">{{ t('characterSetup') }}</button>
-      <button v-if="!compactViewport && !state.settingsOpen && state.mode === 'chat'" class="quiet-button" @click="companionOpen = true">
+      <button v-if="!compactViewport && !state.settingsOpen && state.mode === 'chat'" class="quiet-button" @click="openCompanionSettings()">
         {{ t('uiAppCompanionSettings') }}
       </button>
       <button v-if="isWeb && !compactViewport" class="quiet-button" @click="guard(() => call('web.logout'))">{{ t('uiAppSignOut') }}</button>
@@ -443,7 +449,7 @@ onUnmounted(() => {
           <button :disabled="choosingWorkspace" @click="guard(addWorkspace)">{{ isWeb ? t('chooseFolder') : t('addWorkspace') }}</button>
           <button @click="automationsOpen = true">{{ t('uiConversationSidebarAutomations') }}</button>
           <button @click="openLibrary()">{{ t('library') }}</button>
-          <button v-if="state.mode === 'chat'" @click="companionOpen = true">{{ t('uiAppCompanionSettings') }}</button>
+          <button v-if="state.mode === 'chat'" @click="openCompanionSettings()">{{ t('uiAppCompanionSettings') }}</button>
           <button v-if="state.mode === 'character'" @click="characterSetup = {}">{{ t('characterSetup') }}</button>
           <button v-if="isWeb" @click="guard(() => call('web.logout'))">{{ t('uiAppSignOut') }}</button>
         </div>
@@ -462,12 +468,12 @@ onUnmounted(() => {
       <button @click="reloadChat">{{ t('retryChat') }}</button>
     </div>
     <ComputerStatus v-if="state.ready" />
-    <ScreenSenseStatus v-if="state.ready" @manage="screenSenseOpen = true" />
-    <ScreenSenseSettings v-if="screenSenseOpen" @close="screenSenseOpen = false" />
+    <ScreenSenseStatus v-if="state.ready" @manage="openCompanionSettings('screen')" />
     <CharacterSetup v-if="characterSetup" :character-id="characterSetup.characterId" @close="characterSetup = null" />
     <CompanionSetup
       v-if="companionOpen"
-      :conversation-id="state.conversationId || undefined"
+      :conversation-id="companionConversationId"
+      :initial-step="companionStep"
       @close="companionOpen = false"
       @memory="openLibrary('memory')"
       @reminders="automationsOpen = true"
@@ -482,7 +488,7 @@ onUnmounted(() => {
       v-if="libraryOpen"
       :initial-tab="libraryInitialTab"
       @close="libraryOpen = false"
-      @pets="petManagerOpen = true"
+      @pets="openCompanionSettings('pet')"
       @play="
         (id) => {
           libraryOpen = false;
@@ -490,12 +496,11 @@ onUnmounted(() => {
         }
       "
     />
-    <PetManager v-if="petManagerOpen" @close="petManagerOpen = false" @screen-sense="screenSenseOpen = true" />
     <PetSurface
       v-if="state.ready"
       surface="app"
       :conversation-id="state.conversationId || undefined"
-      @manage="petManagerOpen = true"
+      @manage="openCompanionSettings('pet')"
       @open="(id) => guard(() => call('ui.command', { command: 'platform.openModeConversation', data: { conversationId: id } }))"
     />
     <ContentPreview />

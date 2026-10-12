@@ -22,6 +22,7 @@ import desktopTerminalUi from './en/desktopTerminalUi';
 import type { BackendLanguageMessages } from '../types';
 import desktopScreenSense from './en/desktopScreenSense';
 import desktopCompanion from './en/desktopCompanion';
+import desktopCompanionFlow from './en/desktopCompanionFlow';
 import desktopPets from './en/desktopPets';
 import desktopMaintenance from './en/desktopMaintenance';
 
@@ -98,6 +99,7 @@ const en: BackendLanguageMessages = {
             "shell": {
                 ...desktopScreenSense,
                 ...desktopCompanion,
+                ...desktopCompanionFlow,
                 ...desktopPets,
                 ...desktopMaintenance,
                 ...desktopWorkspaceUi,
@@ -543,7 +545,17 @@ const en: BackendLanguageMessages = {
                 skillRestoreError: 'Skill "{name}" enabled state restore: {error}',
                 skillRestoreFailuresSummary: 'Failed to restore enabled state for {count} skill(s) (files already imported): {detail}',
                 partialSkillsImportFailed: 'Some skills failed to import: {detail}'
-            }
+            },
+            companionSettings: {
+                title: 'Companion',
+                description: 'Configure the global Cubism Core, pet visibility and scale, and the default vision channel and model. Configure companionship for the current conversation from the chat page.',
+                runtime: 'Cubism Core and pet display',
+                visionDefaults: 'Default vision channel and model',
+                saveHint: 'Core imports apply immediately. Save display settings and vision defaults with their respective save buttons.',
+                unsavedTitle: 'Unsaved companion settings',
+                unsavedDescription: 'This page has unsaved display settings or vision defaults. Continue editing to save them, or discard these changes and leave.',
+                discardAndLeave: 'Discard changes and leave',
+            },
         },
 
         update: {

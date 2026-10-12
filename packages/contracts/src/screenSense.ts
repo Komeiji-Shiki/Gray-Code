@@ -16,8 +16,13 @@ export interface ScreenSenseConfiguration {
   visionProviderId?: string;
   visionModelId?: string;
   allowSilent?: boolean;
+  /** 仅在绑定的陪伴对话完成界面初始化后自动开启，旧配置默认关闭。 */
+  autoStartOnOpen?: boolean;
   prices?: ScreenSensePrices;
 }
+export type ScreenSenseVisionDefaults = Pick<ScreenSenseConfiguration, 'visionProviderId' | 'visionModelId'>;
+/** 尚未选择采集范围时，同一配置记录只保存默认识图选择。 */
+export type ScreenSenseStoredConfiguration = ScreenSenseConfiguration | (ScreenSenseVisionDefaults & { target?: never });
 export interface ScreenSenseRecord {
   id: string;
   sessionId: string;
@@ -56,6 +61,7 @@ export interface ScreenSenseStatus {
 export interface ScreenSenseSnapshot {
   revision: number | null;
   configuration?: ScreenSenseConfiguration;
+  visionDefaults: ScreenSenseVisionDefaults;
   status: ScreenSenseStatus;
   preview?: { id: string; capture: ComputerCapture; target: string; summary?: string };
   history: (ScreenSenseRecord & { status?: RunStatus; usage: ScreenSenseUsage; mainUsage?: ScreenSenseUsage })[];
@@ -69,8 +75,10 @@ export interface ScreenSenseOptions {
 export interface ScreenSenseRpcMethods {
   'screenSense.status': { params: Record<string, never>; result: ScreenSenseStatus };
   'screenSense.get': { params: Record<string, never>; result: ScreenSenseSnapshot };
-  'screenSense.options': { params: Record<string, never>; result: ScreenSenseOptions };
+  'screenSense.options': { params: { includeTargets?: boolean }; result: ScreenSenseOptions };
   'screenSense.configure': { params: { configuration: ScreenSenseConfiguration; revision: number | null }; result: ScreenSenseSnapshot };
+  'screenSense.defaults.save': { params: { defaults: ScreenSenseVisionDefaults; revision: number | null }; result: ScreenSenseSnapshot };
+  'screenSense.conversationOpened': { params: { conversationId: string }; result: ScreenSenseStatus };
   'screenSense.start': { params: Record<string, never>; result: ScreenSenseStatus };
   'screenSense.stop': { params: Record<string, never>; result: ScreenSenseStatus };
   'screenSense.capture': { params: Record<string, never>; result: ScreenSenseSnapshot };

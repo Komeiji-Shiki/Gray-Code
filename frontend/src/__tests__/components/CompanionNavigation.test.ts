@@ -1,9 +1,10 @@
 import { mount, flushPromises } from '@vue/test-utils';
 import { afterEach, beforeEach, expect, test, vi } from 'vitest';
+import type { CompanionView, PetSnapshot, ScreenSenseSnapshot } from '@graycode/contracts';
 import CompanionSetup from '../../../../apps/client/src/components/CompanionSetup.vue';
 import CharacterSetup from '../../../../apps/client/src/components/CharacterSetup.vue';
 const mocks = vi.hoisted(() => ({ call: vi.fn(), state: { conversationId: 'original', mode: 'character', chatFocused: false } }));
-vi.mock('../../../../apps/client/src/api', () => ({ call: mocks.call, rpc: mocks.call,
+vi.mock('../../../../apps/client/src/api', () => ({ call: mocks.call, rpc: mocks.call, subscribe: () => () => {},
   uiRequest: (type: string, data?: object) => mocks.call('ui.request', { type, data: data ?? {} }) }));
 vi.mock('../../../../apps/client/src/state', () => ({ state: mocks.state }));
 const wrappers: ReturnType<typeof mount>[] = [];
@@ -14,7 +15,23 @@ beforeEach(() => {
     if (method === 'companion.get') return {
       configuration: { enabled: true, name: '伙伴', userName: '', tone: '' },
       defaultsRevision: null, hasDefaults: false, characters: [], pets: [], petHostAvailable: false,
-    };
+    } satisfies CompanionView;
+    if (method === 'automations.list' || method === 'pets.list') return [];
+    if (method === 'screenSense.get') return {
+      revision: null,
+      visionDefaults: {},
+      status: { active: false, capturing: false, captures: 0 },
+      history: [],
+    } satisfies ScreenSenseSnapshot;
+    if (method === 'pets.status') return {
+      revision: null,
+      configuration: {
+        visible: false, surface: 'app', scale: 1, reducedMotion: false, stopped: false,
+        taskAnimations: true, mappings: {},
+      },
+      state: { generation: 'test', phase: 'unloaded', parameters: [] },
+      floatingAvailable: false,
+    } satisfies PetSnapshot;
     if (method === 'ui.request' && params.type === 'characters.list') return [];
     if (method === 'ui.request' && params.type === 'characters.conversation.get') return { config: { kind: 'character', userName: '用户', persona: '', worldbookIds: [], regexIds: [], scanDepth: 2 }, mode: 'character', metadataToken: 'original-revision' };
     return {};
@@ -24,7 +41,12 @@ afterEach(() => { wrappers.splice(0).forEach(wrapper => wrapper.unmount()); });
 async function open(component: typeof CompanionSetup | typeof CharacterSetup) { const wrapper = mount(component); wrappers.push(wrapper); await flushPromises(); return wrapper; }
 
 test('陪伴配置打开记忆前先关闭原模态窗口', async () => {
-  const wrapper = await open(CompanionSetup); await button(wrapper, '查看与纠正长期记忆').trigger('click');
+  const wrapper = await open(CompanionSetup);
+  expect(wrapper.findAll('.companion-step').map(step => step.attributes('data-step')))
+    .toEqual(['character', 'pet', 'screen', 'greeting']);
+  expect(wrapper.findAll('.companion-step-status').map(status => status.text()))
+    .toEqual(['已配置', '未配置', '未配置', '未配置']);
+  await button(wrapper, '查看与纠正长期记忆').trigger('click');
   expect(wrapper.emitted('close')).toHaveLength(1); expect(wrapper.emitted('memory')).toHaveLength(1);
 });
 test('陪伴配置跳转时保护草稿，并记住原来的跳转目标', async () => {

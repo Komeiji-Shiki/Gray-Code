@@ -34,7 +34,9 @@ import PlatformSettingsFooter from './PlatformSettingsFooter.vue'
 import { desktopSettingsDraft, markDesktopSettingsDirty, prepareDesktopSettingsNavigation, useDesktopSettingsDraft } from '@/platform/settingsDraft'
 const isDesktopHost = Boolean(window.__GRAYCODE_HOST)
 const platformFooter = ref<InstanceType<typeof PlatformSettingsFooter>>()
-function closeSettings() {
+const companionSettings = ref<{ prepareNavigation: () => Promise<boolean> }>()
+async function closeSettings() {
+  if (companionSettings.value && !await companionSettings.value.prepareNavigation()) return
   if (isDesktopHost) void platformFooter.value?.requestClose()
   else settingsStore.showChat()
 }
@@ -61,6 +63,8 @@ const PlatformMigrationSettings = defineAsyncComponent(() => import('./PlatformM
 const DiscordSettings = defineAsyncComponent(() => import('./DiscordSettings.vue'))
 const PlatformRemoteSettings = defineAsyncComponent(() => import('./PlatformRemoteSettings.vue'))
 const AppearanceSettings = defineAsyncComponent(() => import('./AppearanceSettings.vue'))
+const CompanionSettings = defineAsyncComponent(() => import('./CompanionSettings.vue'))
+const ClawdSettings = defineAsyncComponent(() => import('./ClawdSettings.vue'))
 const SoundSettings = defineAsyncComponent(() => import('./SoundSettings.vue'))
 const GeneralSettingsSection = defineAsyncComponent(() => import('./panel/GeneralSettingsSection.vue'))
 const UsageTimeSection = defineAsyncComponent(() => import('../usage/UsageTimeSection.vue'))
@@ -73,6 +77,7 @@ useSettingsFocus(panelElement, () => settingsStore.currentView === 'settings', c
 
 async function selectSettingsTab(tab: SettingsTab): Promise<boolean> {
   if (tab === settingsStore.activeTab) return true
+  if (companionSettings.value && !await companionSettings.value.prepareNavigation()) return false
   if (isDesktopHost && !await prepareDesktopSettingsNavigation()) return false
   settingsStore.setActiveTab(tab)
   return true
@@ -115,10 +120,12 @@ const tabGroups = computed<TabGroup[]>(() => [
     { id: 'discord' as const, label: 'Discord Bot', icon: 'codicon-comment-discussion' },
     { id: 'onebot' as const, label: 'NapCat / OneBot', icon: 'codicon-radio-tower' },
     { id: 'accounts' as const, label: '账号与授权', icon: 'codicon-account' },
+    { id: 'clawd' as const, label: 'Clawd', icon: 'codicon-link' },
   ] }] : []),
   { id: 'application', label: t('components.settings.settingsPanel.groups.application'), tabs: [
     { id: 'general', label: t('components.settings.tabs.general'), icon: 'codicon-settings-gear' },
     { id: 'appearance', label: t('components.settings.tabs.appearance'), icon: 'codicon-paintcan' },
+    ...(isDesktopHost ? [{ id: 'companion' as const, label: t('components.settings.companionSettings.title'), icon: 'codicon-heart' }] : []),
     { id: 'sound', label: t('components.settings.tabs.sound'), icon: 'codicon-bell' },
     { id: 'usage', label: t('components.settings.tabs.usage'), icon: 'codicon-graph' },
   ] },
@@ -504,6 +511,17 @@ useDesktopSettingsDraft(saveProxySettings, () => settingsStore.activeTab === 'ge
             <p class="settings-description">{{ t('components.settings.settingsPanel.sections.appearance.description') }}</p>
 
             <AppearanceSettings />
+          </div>
+
+          <!-- 陪伴的运行资源和默认值使用各自的保存流程。 -->
+          <div v-if="isDesktopHost && settingsStore.activeTab === 'companion'" class="settings-section" data-search-anchor="companion-settings">
+            <h4>{{ t('components.settings.companionSettings.title') }}</h4>
+            <p class="settings-description">{{ t('components.settings.companionSettings.description') }}</p>
+            <CompanionSettings ref="companionSettings" />
+          </div>
+
+          <div v-if="isDesktopHost && settingsStore.activeTab === 'clawd'" class="settings-section">
+            <ClawdSettings />
           </div>
 
           <!-- 记忆设置 -->

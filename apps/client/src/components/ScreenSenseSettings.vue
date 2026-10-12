@@ -1,10 +1,15 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, reactive, ref } from 'vue';
+import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue';
 import type { ScreenSenseConfiguration, ScreenSenseOptions, ScreenSensePrices, ScreenSenseSnapshot, ScreenSenseTarget } from '@graycode/contracts';
 import { rpc, subscribe } from '../api';
 import { shellText as t } from '../i18n';
 
-const emit = defineEmits<{ close: [] }>();
+const props = withDefaults(defineProps<{
+  embedded?: boolean;
+  section?: 'conversation' | 'defaults';
+  conversationId?: string;
+}>(), { section: 'conversation' });
+const emit = defineEmits<{ close: []; changed: [snapshot: ScreenSenseSnapshot]; dirty: [value: boolean] }>();
 const dialog = ref<HTMLDialogElement>();
 const snapshot = ref<ScreenSenseSnapshot>();
 const options = ref<ScreenSenseOptions>();
@@ -15,15 +20,16 @@ const confirmClose = ref(false);
 const form = reactive({
   target: '', trigger: '' as ScreenSenseConfiguration['trigger'] | '', interval: '',
   delivery: '' as ScreenSenseConfiguration['delivery'] | '', maximum: '', conversationId: '',
-  visionProviderId: '', visionModelId: '', prompt: '', allowSilent: false,
+  visionProviderId: '', visionModelId: '', prompt: '', allowSilent: false, autoStartOnOpen: false,
   currency: '', input: '', output: '', cacheRead: '', cacheWrite: '',
 });
-let saved = '';
+const saved = ref('');
 let unsubscribe: (() => void) | undefined;
 let timer: ReturnType<typeof setTimeout> | undefined;
 let sequence = 0;
 let disposed = false;
-const dirty = computed(() => !!saved && JSON.stringify(form) !== saved);
+const dirty = computed(() => !!saved.value && JSON.stringify(form) !== saved.value);
+watch(dirty, value => emit('dirty', value), { immediate: true });
 const provider = computed(() => options.value?.providers.find(item => item.id === form.visionProviderId));
 const targets = computed(() => options.value ? [
   ...options.value.targets.windows.map(window => ({
@@ -44,15 +50,22 @@ function loadForm(configuration?: ScreenSenseConfiguration) {
   if (configuration) Object.assign(form, {
     target: configuration.target.kind === 'window' ? `window:${configuration.target.window.id}` : `display:${configuration.target.display.id}`,
     trigger: configuration.trigger, interval: String(configuration.intervalSeconds ?? ''), delivery: configuration.delivery,
-    maximum: String(configuration.maxCaptures), conversationId: configuration.conversationId,
+    maximum: String(configuration.maxCaptures), conversationId: props.conversationId || configuration.conversationId,
     visionProviderId: configuration.visionProviderId ?? '', visionModelId: configuration.visionModelId ?? '',
     prompt: configuration.prompt, allowSilent: configuration.allowSilent === true,
+    autoStartOnOpen: configuration.conversationId === (props.conversationId || configuration.conversationId)
+      && configuration.autoStartOnOpen === true,
     currency: configuration.prices?.currency ?? '',
     ...Object.fromEntries(['input', 'output', 'cacheRead', 'cacheWrite'].map(key => [key,
       String(configuration.prices?.[key as keyof ScreenSensePrices] ?? ''),
     ])),
   });
-  saved = JSON.stringify(form);
+  if (!configuration) Object.assign(form, {
+    visionProviderId: snapshot.value?.visionDefaults.visionProviderId ?? '',
+    visionModelId: snapshot.value?.visionDefaults.visionModelId ?? '',
+    conversationId: props.conversationId || '',
+  });
+  saved.value = JSON.stringify(form);
 }
 
 async function refresh() {
@@ -61,11 +74,12 @@ async function refresh() {
   const value = await rpc('screenSense.get');
   if (disposed || request !== sequence) return;
   snapshot.value = value;
-  if (!saved) loadForm(value.configuration);
+  emit('changed', value);
+  if (!saved.value) loadForm(value.configuration);
 }
 
 async function refreshOptions() {
-  const value = await rpc('screenSense.options');
+  const value = await rpc('screenSense.options', { includeTargets: props.section !== 'defaults' });
   if (!disposed) options.value = value;
 }
 
@@ -95,6 +109,18 @@ async function stop() {
 }
 
 async function save() {
+  if (props.section === 'defaults') {
+    const value = await rpc('screenSense.defaults.save', {
+      defaults: { visionProviderId: form.visionProviderId, visionModelId: form.visionModelId || undefined },
+      revision: snapshot.value?.revision ?? null,
+    });
+    if (disposed) return;
+    snapshot.value = value;
+    loadForm(value.configuration);
+    emit('changed', value);
+    notice.value = t('screenDefaultsSaved');
+    return;
+  }
   const target = targets.value.find(item => item.key === form.target)?.value;
   if (!target) throw new Error(t('screenSelectTargetError'));
   if (!form.trigger || !form.delivery) throw new Error(t('screenSelectModesError'));
@@ -104,7 +130,7 @@ async function save() {
     target, trigger: form.trigger, intervalSeconds: form.interval ? Number(form.interval) : undefined, delivery: form.delivery,
     maxCaptures: Number(form.maximum), conversationId: form.conversationId,
     visionProviderId: form.visionProviderId, visionModelId: form.visionModelId || undefined,
-    prompt: form.prompt, allowSilent: form.allowSilent,
+    prompt: form.prompt, allowSilent: form.allowSilent, autoStartOnOpen: form.autoStartOnOpen,
     ...(pricing.some(Boolean) ? { prices: {
       currency: form.currency, input: Number(form.input), output: Number(form.output),
       cacheRead: Number(form.cacheRead), cacheWrite: Number(form.cacheWrite),
@@ -115,7 +141,8 @@ async function save() {
   sequence++;
   snapshot.value = value;
   loadForm(value.configuration);
-  notice.value = t('screenSaved');
+  emit('changed', value);
+  notice.value = t(form.autoStartOnOpen ? 'screenSavedAutomatic' : 'screenSaved');
 }
 
 function close() {
@@ -125,7 +152,7 @@ function close() {
 }
 
 onMounted(() => {
-  dialog.value?.showModal();
+  if (!props.embedded) dialog.value?.showModal();
   void perform(async () => { await refresh(); if (!disposed) await refreshOptions(); });
   unsubscribe = subscribe(event => {
     if (event.type === 'screenSense.changed' || event.type === 'transport.resumed'
@@ -139,18 +166,25 @@ onMounted(() => {
 });
 
 onBeforeUnmount(() => { disposed = true; sequence++; unsubscribe?.(); clearTimeout(timer); });
+defineExpose({
+  async discard() {
+    await refresh();
+    loadForm(snapshot.value?.configuration);
+  },
+});
 </script>
 
 <template>
-  <dialog ref="dialog" class="screen-sense-settings" aria-labelledby="sense-title" @cancel.prevent="close">
-    <header>
+  <component :is="embedded ? 'section' : 'dialog'" ref="dialog" class="screen-sense-settings" :class="{ embedded }"
+    :aria-labelledby="embedded ? undefined : 'sense-title'" :aria-label="embedded ? t('screenTitle') : undefined" @cancel.prevent="close">
+    <header v-if="!embedded">
       <div><h2 id="sense-title">{{ t('screenTitle') }}</h2><p>{{ t('screenIntro') }}</p></div>
       <button :disabled="busy" @click="close">{{ t('close') }}</button>
     </header>
     <div class="sense-content">
       <p v-if="error" role="alert" class="error">{{ error }}</p>
       <p v-if="notice" role="status">{{ notice }}</p>
-      <section class="sense-current">
+      <section v-if="section !== 'defaults'" class="sense-current">
         <strong>{{ t(snapshot?.status.active ? 'screenActive' : 'screenInactive') }}</strong>
         <p v-if="snapshot?.status.active">
           {{ snapshot.status.target }} · {{ t('screenCaptureCount', { count: snapshot.status.captures, max: snapshot.status.maxCaptures ?? 0 }) }}
@@ -159,7 +193,8 @@ onBeforeUnmount(() => { disposed = true; sequence++; unsubscribe?.(); clearTimeo
         </p>
         <p v-if="snapshot?.status.error">{{ snapshot.status.error }}</p>
         <button v-if="snapshot?.status.active" @click="stop">{{ t('screenStop') }}</button>
-        <button v-else :disabled="busy || !snapshot?.configuration || dirty" @click="perform(() => rpc('screenSense.start'))">
+        <button v-else :disabled="busy || !snapshot?.configuration || dirty
+          || !!conversationId && snapshot.configuration.conversationId !== conversationId" @click="perform(() => rpc('screenSense.start'))">
           {{ t('screenStart') }}
         </button>
         <button v-if="snapshot?.status.active"
@@ -168,7 +203,7 @@ onBeforeUnmount(() => { disposed = true; sequence++; unsubscribe?.(); clearTimeo
         <button v-if="snapshot?.status.lastRunId" @click="perform(() => rpc('screenSense.cancelRun'))">{{ t('screenCancelRun') }}</button>
         <p>{{ t('screenStopHelp') }}</p>
       </section>
-      <section v-if="snapshot?.preview" class="sense-preview">
+      <section v-if="section !== 'defaults' && snapshot?.preview" class="sense-preview">
         <h3>{{ t('screenPreview') }} · {{ snapshot.preview.target }}</h3>
         <p>{{ new Date(snapshot.preview.capture.capturedAt).toLocaleString() }}</p>
         <img :src="previewUrl" :alt="t('screenPreviewAlt')">
@@ -176,48 +211,58 @@ onBeforeUnmount(() => { disposed = true; sequence++; unsubscribe?.(); clearTimeo
         <button :disabled="busy || snapshot.status.capturing"
           @click="perform(() => rpc('screenSense.send', { previewId: snapshot!.preview!.id }))">{{ t('screenSend') }}</button>
       </section>
-      <div class="settings-guide"><strong>{{ t('screenPipelineTitle') }}</strong><p>{{ t('screenPipelineHelp') }}</p></div>
+      <div v-if="section !== 'defaults'" class="settings-guide"><strong>{{ t('screenPipelineTitle') }}</strong><p>{{ t('screenPipelineHelp') }}</p></div>
       <form @submit.prevent="perform(save)">
         <fieldset :disabled="busy">
-          <legend>{{ t('screenSettings') }}</legend>
-          <label>{{ t('screenTarget') }}
-            <select v-model="form.target" required>
-              <option value="">{{ t('screenSelect') }}</option>
-              <option v-for="target in targets" :key="target.key" :value="target.key">{{ target.label }}</option>
-            </select>
-          </label>
-          <button type="button" @click="perform(refreshOptions)">{{ t('screenRefreshTargets') }}</button>
-          <p>{{ t('screenTargetHelp') }}</p>
-          <div class="sense-grid">
-            <label>{{ t('screenTrigger') }}
-              <select v-model="form.trigger" required>
+          <legend>{{ t(section === 'defaults' ? 'screenDefaultsTitle' : 'screenSettings') }}</legend>
+          <template v-if="section !== 'defaults'">
+            <label>{{ t('screenTarget') }}
+              <select v-model="form.target" required>
                 <option value="">{{ t('screenSelect') }}</option>
-                <option value="manual">{{ t('screenManual') }}</option>
-                <option value="interval">{{ t('screenInterval') }}</option>
+                <option v-for="target in targets" :key="target.key" :value="target.key">{{ target.label }}</option>
               </select>
             </label>
-            <label v-if="form.trigger === 'interval'">{{ t('screenIntervalSeconds') }}
-              <input v-model="form.interval" type="number" min="1" max="86400" required>
-              <small>{{ t('screenIntervalHelp') }}</small>
-            </label>
-            <label>{{ t('screenDelivery') }}
-              <select v-model="form.delivery" required>
+            <button type="button" @click="perform(refreshOptions)">{{ t('screenRefreshTargets') }}</button>
+            <p>{{ t('screenTargetHelp') }}</p>
+            <div class="sense-grid">
+              <label>{{ t('screenTrigger') }}
+                <select v-model="form.trigger" required>
+                  <option value="">{{ t('screenSelect') }}</option>
+                  <option value="manual">{{ t('screenManual') }}</option>
+                  <option value="interval">{{ t('screenInterval') }}</option>
+                </select>
+              </label>
+              <label v-if="form.trigger === 'interval'">{{ t('screenIntervalSeconds') }}
+                <input v-model="form.interval" type="number" min="1" max="86400" required>
+                <small>{{ t('screenIntervalHelp') }}</small>
+              </label>
+              <label>{{ t('screenDelivery') }}
+                <select v-model="form.delivery" required>
+                  <option value="">{{ t('screenSelect') }}</option>
+                  <option value="preview">{{ t('screenPreviewFirst') }}</option>
+                  <option value="automatic">{{ t('screenAutomatic') }}</option>
+                </select>
+              </label>
+              <label>{{ t('screenMaximum') }}
+                <input v-model="form.maximum" type="number" min="1" max="10000" required>
+                <small>{{ t('screenMaximumHelp') }}</small>
+              </label>
+            </div>
+            <p v-if="conversationId" class="sense-bound-conversation">
+              {{ t('screenBoundConversation', { title: options?.conversations.find(item => item.id === conversationId)?.title || conversationId }) }}
+            </p>
+            <label v-else>{{ t('screenConversation') }}
+              <select v-model="form.conversationId" required>
                 <option value="">{{ t('screenSelect') }}</option>
-                <option value="preview">{{ t('screenPreviewFirst') }}</option>
-                <option value="automatic">{{ t('screenAutomatic') }}</option>
+                <option v-for="conversation in options?.conversations" :key="conversation.id" :value="conversation.id">{{ conversation.title }}</option>
               </select>
             </label>
-            <label>{{ t('screenMaximum') }}
-              <input v-model="form.maximum" type="number" min="1" max="10000" required>
-              <small>{{ t('screenMaximumHelp') }}</small>
-            </label>
-          </div>
-          <label>{{ t('screenConversation') }}
-            <select v-model="form.conversationId" required>
-              <option value="">{{ t('screenSelect') }}</option>
-              <option v-for="conversation in options?.conversations" :key="conversation.id" :value="conversation.id">{{ conversation.title }}</option>
-            </select>
-          </label>
+            <label class="check"><input v-model="form.autoStartOnOpen" data-testid="screen-auto-start" type="checkbox">{{ t('screenAutoStart') }}</label>
+            <small>{{ t('screenAutoStartHelp') }}</small>
+            <p v-if="conversationId && snapshot?.configuration && snapshot.configuration.conversationId !== conversationId">
+              {{ t('screenRebindHelp') }}
+            </p>
+          </template>
           <div class="sense-grid">
             <label>{{ t('screenVisionProvider') }}
               <select v-model="form.visionProviderId" required @change="form.visionModelId = ''">
@@ -233,23 +278,25 @@ onBeforeUnmount(() => { disposed = true; sequence++; unsubscribe?.(); clearTimeo
             </label>
           </div>
           <p>{{ t('screenModelHelp') }}</p>
-          <label>{{ t('screenPrompt') }}<textarea v-model="form.prompt" rows="3" required maxlength="10000" /></label>
-          <label class="check"><input v-model="form.allowSilent" type="checkbox">{{ t('screenAllowSilent') }}</label>
-          <details>
-            <summary>{{ t('screenPriceTitle') }}</summary><p>{{ t('screenPriceHelp') }}</p>
-            <label>{{ t('screenCurrency') }}<input v-model="form.currency" maxlength="20" placeholder="USD"></label>
-            <div class="sense-grid">
-              <label>{{ t('screenInput') }}<input v-model="form.input" type="number" min="0" step="any"></label>
-              <label>{{ t('screenOutput') }}<input v-model="form.output" type="number" min="0" step="any"></label>
-              <label>{{ t('screenCacheRead') }}<input v-model="form.cacheRead" type="number" min="0" step="any"></label>
-              <label>{{ t('screenCacheWrite') }}<input v-model="form.cacheWrite" type="number" min="0" step="any"></label>
-            </div>
-          </details>
-          <button class="primary">{{ t('screenSave') }}</button>
+          <template v-if="section !== 'defaults'">
+            <label>{{ t('screenPrompt') }}<textarea v-model="form.prompt" rows="3" required maxlength="10000" /></label>
+            <label class="check"><input v-model="form.allowSilent" type="checkbox">{{ t('screenAllowSilent') }}</label>
+            <details>
+              <summary>{{ t('screenPriceTitle') }}</summary><p>{{ t('screenPriceHelp') }}</p>
+              <label>{{ t('screenCurrency') }}<input v-model="form.currency" maxlength="20" placeholder="USD"></label>
+              <div class="sense-grid">
+                <label>{{ t('screenInput') }}<input v-model="form.input" type="number" min="0" step="any"></label>
+                <label>{{ t('screenOutput') }}<input v-model="form.output" type="number" min="0" step="any"></label>
+                <label>{{ t('screenCacheRead') }}<input v-model="form.cacheRead" type="number" min="0" step="any"></label>
+                <label>{{ t('screenCacheWrite') }}<input v-model="form.cacheWrite" type="number" min="0" step="any"></label>
+              </div>
+            </details>
+          </template>
+          <button class="primary">{{ t(section === 'defaults' ? 'screenSaveDefaults' : 'screenSave') }}</button>
           <p v-if="snapshot?.status.active">{{ t('screenSaveHelp') }}</p>
         </fieldset>
       </form>
-      <section class="sense-history">
+      <section v-if="section !== 'defaults'" class="sense-history">
         <h3>{{ t('screenHistory') }}</h3><p v-if="!snapshot?.history.length">{{ t('screenEmptyHistory') }}</p>
         <article v-for="record in snapshot?.history" :key="record.id">
           <strong>{{ record.target }}</strong>
@@ -275,7 +322,7 @@ onBeforeUnmount(() => { disposed = true; sequence++; unsubscribe?.(); clearTimeo
       <button @click="confirmClose = false">{{ t('screenContinueEditing') }}</button>
       <button @click="emit('close')">{{ t('screenDiscard') }}</button>
     </footer>
-  </dialog>
+  </component>
 </template>
 
 <style scoped>
@@ -292,6 +339,9 @@ onBeforeUnmount(() => { disposed = true; sequence++; unsubscribe?.(); clearTimeo
 }
 .screen-sense-settings[open] { display: flex; flex-direction: column; }
 .screen-sense-settings::backdrop { background: var(--gc-backdrop); }
+.screen-sense-settings.embedded { width: 100%; height: auto; overflow: visible; border: 0; }
+.embedded .sense-content { padding: 0; overflow: visible; }
+.embedded fieldset { margin: 12px 0; padding: 0; border: 0; }
 header, footer { padding: 16px 20px; border-bottom: 1px solid var(--gc-border-subtle); }
 header { display: flex; justify-content: space-between; gap: 20px; }
 header > button { flex-shrink: 0; white-space: nowrap; align-self: flex-start; }

@@ -25,6 +25,7 @@ import desktopTerminalUi from './zh-CN/desktopTerminalUi';
 
 import desktopScreenSense from './zh-CN/desktopScreenSense';
 import desktopCompanion from './zh-CN/desktopCompanion';
+import desktopCompanionFlow from './zh-CN/desktopCompanionFlow';
 import desktopPets from './zh-CN/desktopPets';
 import desktopMaintenance from './zh-CN/desktopMaintenance';
 
@@ -101,6 +102,7 @@ const zhCN = {
             "shell": {
                 ...desktopScreenSense,
                 ...desktopCompanion,
+                ...desktopCompanionFlow,
                 ...desktopPets,
                 ...desktopMaintenance,
                 ...desktopWorkspaceUi,
@@ -546,7 +548,17 @@ const zhCN = {
                 skillRestoreError: 'Skill "{name}" 启用状态恢复：{error}',
                 skillRestoreFailuresSummary: '{count} 个 Skill 启用状态恢复失败（文件已导入）：{detail}',
                 partialSkillsImportFailed: '部分 Skill 导入失败：{detail}'
-            }
+            },
+            companionSettings: {
+                title: '陪伴',
+                description: '配置全局 Cubism Core、桌宠显示与缩放，以及默认识图渠道和模型。当前聊天的陪伴内容在聊天页中设置。',
+                runtime: 'Cubism Core 与桌宠显示',
+                visionDefaults: '默认识图渠道与模型',
+                saveHint: 'Core 导入立即生效，显示设置与识图默认值分别使用各自的保存按钮。',
+                unsavedTitle: '陪伴设置尚未保存',
+                unsavedDescription: '此页还有未保存的显示设置或识图默认值。继续编辑并保存，或放弃本次更改后离开。',
+                discardAndLeave: '放弃更改并离开',
+            },
         },
 
         update: {

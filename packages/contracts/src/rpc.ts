@@ -93,13 +93,15 @@ const renderer = { rendererId: text, generation: text };
 
 // 字段表受方法参数类型约束；新增字段时，遗漏入口检查会触发编译错误。
 const checks: { [M in RpcMethod]: { [K in keyof RpcParams<M>]-?: Check } } = {
-  'screenSense.status': {}, 'screenSense.get': {}, 'screenSense.options': {},
+  'screenSense.status': {}, 'screenSense.get': {}, 'screenSense.options': { includeTargets: optional(boolean) },
   'screenSense.configure': { configuration: object, revision },
+  'screenSense.defaults.save': { defaults: object, revision },
+  'screenSense.conversationOpened': { conversationId: text },
   'screenSense.start': {}, 'screenSense.stop': {}, 'screenSense.capture': {},
   'screenSense.send': { previewId: text }, 'screenSense.cancelRun': {},
   'companion.get': { conversationId: optional(text) },
   'companion.save': { action: optional(oneOf('save', 'syncPetVocabulary')), conversationId: optional(text),
-    defaultsRevision: optional(revision), saveAsDefault: optional(boolean) },
+    configuration: optional(object), metadataToken: optional(text), defaultsRevision: optional(revision), saveAsDefault: optional(boolean) },
   'companion.defaults.clear': { defaultsRevision: revision },
   'pets.position': { position: object }, 'pets.list': {}, 'pets.status': {},
   'pets.import': { entry: text, files: array, name: optional(text), source: optional(text), license: optional(text) },

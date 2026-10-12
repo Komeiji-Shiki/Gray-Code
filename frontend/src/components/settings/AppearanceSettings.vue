@@ -1,6 +1,5 @@
 <script setup lang="ts">
 import { useDesktopSettingsDraft } from '@/platform/settingsDraft'
-import WorkspaceFeatureLinks from './panel/WorkspaceFeatureLinks.vue'
 import { MESSAGE_NAMES } from '@shared/protocol'
 import { ref, computed, onMounted } from 'vue'
 import { sendToExtension } from '@/utils/vscode'
@@ -9,7 +8,6 @@ import { useSettingsStore } from '@/stores'
 import type { SmoothMode } from '@/utils/smoothStream'
 import { CustomSwitch } from '@/components/common'
 import PlatformAppearanceSettings from './PlatformAppearanceSettings.vue'
-import ClawdSettings from './ClawdSettings.vue'
 const desktopHost = Boolean(window.__GRAYCODE_HOST)
 
 const { t } = useI18n()
@@ -136,8 +134,6 @@ useDesktopSettingsDraft(saveConfig, () => !isLoading.value)
 
 <template>
   <div class="appearance-settings">
-    <WorkspaceFeatureLinks area="companions" data-search-anchor="companion-settings" />
-    <ClawdSettings v-if="desktopHost" />
     <PlatformAppearanceSettings v-if="desktopHost" />
     <div v-if="isLoading" class="loading">
       <i class="codicon codicon-loading codicon-modifier-spin"></i>

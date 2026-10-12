@@ -8,8 +8,8 @@ import { eventForm, eventConfiguration } from './automationEventForm';
 import { reasoningLevelsForModel } from '../../../../shared/reasoningEffort';
 import { shellText as t, shellLocale } from '../i18n';
 
-const props = defineProps<{ open: boolean; companionRequest?: { conversationId: string } }>();
-const emit = defineEmits<{ close: [] }>();
+const props = defineProps<{ open: boolean; embedded?: boolean; companionRequest?: { conversationId: string } }>();
+const emit = defineEmits<{ close: []; changed: [rows: AutomationView[]]; dirty: [value: boolean] }>();
 const dialog = ref<HTMLDialogElement>();
 const rows = ref<AutomationView[]>([]);
 const options = ref<AutomationOptions>();
@@ -20,6 +20,7 @@ const busy = ref(false);
 const error = ref('');
 const filter = ref<'all' | AutomationCreate['kind']>('all');
 const confirmRemove = ref(false);
+const savedForm = ref('');
 let refreshEpoch = 0;
 let formEpoch = 0;
 let refreshTimer: ReturnType<typeof setTimeout> | undefined;
@@ -44,7 +45,9 @@ const form = reactive({
   event: eventForm(),
 });
 const selected = computed(() => rows.value.find((row) => row.id === selectedId.value));
-const visibleRows = computed(() => rows.value.filter((row) => filter.value === 'all' || row.kind === filter.value));
+const visibleRows = computed(() => rows.value.filter((row) => (!props.embedded || row.conversationId === props.companionRequest?.conversationId)
+  && (filter.value === 'all' || row.kind === filter.value)));
+watch(() => creating.value && !!savedForm.value && JSON.stringify(form) !== savedForm.value, value => emit('dirty', value));
 const profile = computed(() => options.value?.providers.find((provider) => provider.id === form.providerId));
 const modelChoices = computed(() => [...new Set([profile.value?.model, ...(profile.value?.models.map((model) => model.id) ?? [])].filter(Boolean))]);
 const reasoningLevels = computed(() => (profile.value ? reasoningLevelsForModel(profile.value, form.modelId) : []));
@@ -87,7 +90,8 @@ async function refresh() {
     const result = await call<AutomationView[]>('automations.list');
     if (epoch !== refreshEpoch) return;
     rows.value = result;
-    if (!selectedId.value || !result.some((row) => row.id === selectedId.value)) select(result[0]);
+    emit('changed', result);
+    if (!selectedId.value || !result.some((row) => row.id === selectedId.value)) select(visibleRows.value[0]);
   } catch (cause) {
     if (epoch === refreshEpoch) error.value = (cause as Error).message;
   }
@@ -120,6 +124,7 @@ async function newTask(targetConversationId?: string) {
       workspaceId: options.value.workspaces.some((workspace) => workspace.id === current.workspaceId) ? current.workspaceId : '',
     });
   creating.value = true;
+  savedForm.value = JSON.stringify(form);
 }
 async function editTask(row: AutomationView) {
   const epoch = ++formEpoch;
@@ -150,13 +155,22 @@ async function editTask(row: AutomationView) {
     event: eventForm(row.event),
   });
   creating.value = true;
+  savedForm.value = JSON.stringify(form);
 }
 async function opened() {
   await nextTick();
   if (!props.open) return;
-  if (!dialog.value?.open) dialog.value?.showModal();
+  if (!props.embedded && !dialog.value?.open) dialog.value?.showModal();
   await refresh();
   if (props.companionRequest) {
+    const existing = rows.value.find(row => row.conversationId === props.companionRequest!.conversationId && row.status !== 'completed');
+    if (props.embedded && existing) {
+      creating.value = false;
+      select(existing);
+      options.value = await call<AutomationOptions>('automations.options', { conversationId: existing.conversationId });
+      if (existing.kind !== 'schedule') error.value = t('companionGreetingOccupied');
+      return;
+    }
     form.objective = '';
     form.name = '';
     editingId.value = '';
@@ -176,6 +190,7 @@ async function opened() {
       name: t('companionGreetingTaskName'),
       objective: t('companionGreetingObjective'),
     });
+    savedForm.value = JSON.stringify(form);
     return;
   }
   if (rows.value.length && !creating.value) {
@@ -200,7 +215,7 @@ watch(
     else {
       refreshEpoch++;
       formEpoch++;
-      dialog.value?.close();
+      if (!props.embedded) dialog.value?.close();
       if (refreshTimer) clearTimeout(refreshTimer);
       refreshTimer = undefined;
     }
@@ -297,8 +312,10 @@ function providerChanged() {
 </script>
 
 <template>
-  <dialog ref="dialog" class="automations-dialog" aria-labelledby="automations-title" @cancel.prevent="emit('close')">
-    <header class="automations-header">
+  <component :is="embedded ? 'section' : 'dialog'" ref="dialog" class="automations-dialog" :class="{ embedded }"
+    :aria-labelledby="embedded ? undefined : 'automations-title'" :aria-label="embedded ? t('companionFlowGreeting') : undefined"
+    @cancel.prevent="emit('close')">
+    <header v-if="!embedded" class="automations-header">
       <div>
         <h2 id="automations-title">{{ t('uiConversationSidebarAutomations') }}</h2>
         <p>{{ t('uiAutomationsPanelAutomationsHelp') }}</p>
@@ -307,7 +324,7 @@ function providerChanged() {
     </header>
     <div v-if="error" class="automations-error" role="alert">{{ error }}</div>
     <div class="automations-layout">
-      <aside class="automations-list">
+      <aside v-if="!embedded" class="automations-list">
         <button class="primary new-automation" :disabled="busy" @click="action(newTask)">{{ t('uiAutomationsPanelNewAutomation') }}</button>
         <select v-model="filter" :aria-label="t('uiAutomationsPanelFilterAutomations')">
           <option value="all">{{ t('uiAutomationsPanelAllTasks') }}</option>
@@ -346,9 +363,11 @@ function providerChanged() {
         </p>
       </aside>
       <main class="automation-detail">
+        <button v-if="embedded && !creating && (!selected || selected.status === 'completed')" class="primary"
+          :disabled="busy" @click="action(opened)">{{ t('companionGreeting') }}</button>
         <form v-if="creating && options" class="automation-form" @submit.prevent="action(create)">
           <h3>{{ editingId ? t('uiAutomationsPanelEditAutomation') : t('uiAutomationsPanelNewAutomation') }}</h3>
-          <label>
+          <label v-if="!embedded">
             {{ t('uiAutomationsPanelExecutionMode') }}
             <select v-model="form.kind" :disabled="!!editingId" :aria-label="t('uiAutomationsPanelAutomationExecutionMode')">
               <option value="goal">{{ t('uiAutomationsPanelLongTermGoalOption') }}</option>
@@ -373,7 +392,7 @@ function providerChanged() {
           <div class="automation-fields">
             <label>
               {{ t('uiAutomationsPanelLinkedConversation') }}
-              <select v-model="form.target" :disabled="!!editingId">
+              <select v-model="form.target" :disabled="embedded || !!editingId">
                 <option value="current" :disabled="!options.current.conversationId || (currentOccupied && !editingId)">
                   {{ t('uiAutomationsPanelCurrentConversation') }}{{ currentOccupied && !editingId ? t('uiAutomationsPanelUnfinishedAutomationSuffix') : '' }}
                 </option>
@@ -594,7 +613,7 @@ function providerChanged() {
         <p v-else class="muted empty-automations">{{ t('uiAutomationsPanelSelectAutomationHelp') }}</p>
       </main>
     </div>
-  </dialog>
+  </component>
 </template>
 
 <style scoped>
@@ -617,6 +636,10 @@ function providerChanged() {
   display: flex;
   flex-direction: column;
 }
+.automations-dialog.embedded { width: 100%; height: auto; border: 0; border-radius: 0; background: var(--gc-surface-base); }
+.embedded .automations-layout { display: block; }
+.embedded .automation-detail { padding: 0; overflow: visible; }
+.embedded .automation-form > .automation-actions { position: static; background: var(--gc-surface-base); }
 .automations-header {
   display: flex;
   align-items: start;

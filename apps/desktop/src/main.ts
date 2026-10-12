@@ -86,6 +86,7 @@ let application: PlatformApplication;
 let backups: ApplicationBackups | undefined;
 let window: BrowserWindow | undefined;
 let tray: Tray | undefined;
+let trayScreenActive = false;
 let browser: DesktopBrowser;
 let exitPhase: 'idle' | 'confirming' | 'closing' | 'ready' = 'idle';
 let exitOperation: Promise<void> | undefined;
@@ -174,25 +175,47 @@ function quit(relaunch = false, beforeExit?: () => void): Promise<void> {
   return exitOperation;
 }
 function updateTrayStatus(): void {
-  tray?.setToolTip(t(closePending ? 'desktop.trayWaiting' : 'desktop.trayResident'));
+  if (!tray) return;
+  const sense = application?.screenSense.status();
+  const active = sense?.active === true;
+  if (active !== trayScreenActive) {
+    tray.setImage(trayIcon(active));
+    trayScreenActive = active;
+  }
+  tray.setToolTip(sense?.active
+    ? `${t('desktop.shell.screenActive')} · ${sense.target ?? ''}`
+    : t(closePending ? 'desktop.trayWaiting' : 'desktop.trayResident'));
+  tray.setContextMenu(Menu.buildFromTemplate([
+    ...(sense?.active ? [
+      { label: `${t('desktop.shell.screenActive')} · ${sense.target ?? ''}`, enabled: false },
+      { label: t('desktop.shell.screenStop'), click: () => { application.screenSense.stop(); } },
+      { type: 'separator' as const },
+    ] : []),
+    { label: t('desktop.trayOpen'), click: () => { void createWindow(); } },
+    { label: t('desktop.quit'), click: () => void confirmQuit() },
+  ]));
+}
+function trayIcon(active = false) {
+  const icon = nativeImage.createFromPath(path.resolve(__dirname, '../../../resources/icon.png')).resize({ width: 24, height: 24 });
+  if (!active) return icon;
+  const bitmap = icon.toBitmap({ scaleFactor: 1 });
+  const colors = desktopColors();
+  // Windows 托盘图标右下角常驻状态块，关闭桌宠或隐藏主窗口后仍能看到采集状态。
+  for (let y = 12; y < 24; y++) for (let x = 12; x < 24; x++) {
+    const color = x < 14 || y < 14 ? colors.background : colors.success;
+    const offset = (y * 24 + x) * 4;
+    bitmap[offset] = Number.parseInt(color.slice(5, 7), 16);
+    bitmap[offset + 1] = Number.parseInt(color.slice(3, 5), 16);
+    bitmap[offset + 2] = Number.parseInt(color.slice(1, 3), 16);
+    bitmap[offset + 3] = 255;
+  }
+  return nativeImage.createFromBitmap(bitmap, { width: 24, height: 24 });
 }
 function ensureTray(): void {
   if (tray) { updateTrayStatus(); return; }
-  const icon = nativeImage
-    .createFromPath(path.resolve(__dirname, "../../../resources/icon.png"))
-    .resize({ width: 24, height: 24 });
-  tray = new Tray(icon);
+  tray = new Tray(trayIcon());
   updateTrayStatus();
   tray.on("double-click", () => { void createWindow(); });
-  tray.setContextMenu(
-    Menu.buildFromTemplate([
-      {
-        label: t('desktop.trayOpen'),
-        click: () => { void createWindow(); },
-      },
-      { label: t('desktop.quit'), click: () => void confirmQuit() },
-    ]),
-  );
 }
 function minimizeToTray(): void {
   if (!window || window.isDestroyed()) return;
@@ -423,6 +446,10 @@ async function main(): Promise<void> {
   application.subscribe((event) => {
     notify(event);
     if (event.type === 'settings.changed') updateTrayStatus();
+    if (event.type === 'screenSense.changed') {
+      if (application.screenSense.keepsAlive) ensureTray();
+      else updateTrayStatus();
+    }
     if (closePending && exitPhase === 'idle' && (event.type === 'runtime.preparation.changed' || event.type === 'chat.preparation.changed' || event.type === "file.activity" || event.type === 'nodes.changed' || event.type === 'processes.changed' || event.type === "remote.changed" || event.type === "bot.connection.changed" || event.type === "terminal.changed" || event.type === "event" || event.type === "automation.changed" || event.type === "background.followup.changed" || event.type === "ui.message" && ['taskEvent', 'backup.progress'].includes((event.message as { command?: string })?.command ?? '')))
       checkIdleClose();
   });

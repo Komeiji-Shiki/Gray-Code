@@ -22,6 +22,7 @@ import desktopTerminalUi from './ja/desktopTerminalUi';
 import type { BackendLanguageMessages } from '../types';
 import desktopScreenSense from './ja/desktopScreenSense';
 import desktopCompanion from './ja/desktopCompanion';
+import desktopCompanionFlow from './ja/desktopCompanionFlow';
 import desktopPets from './ja/desktopPets';
 import desktopMaintenance from './ja/desktopMaintenance';
 
@@ -98,6 +99,7 @@ const ja: BackendLanguageMessages = {
             "shell": {
                 ...desktopScreenSense,
                 ...desktopCompanion,
+                ...desktopCompanionFlow,
                 ...desktopPets,
                 ...desktopMaintenance,
                 ...desktopWorkspaceUi,
@@ -543,7 +545,17 @@ const ja: BackendLanguageMessages = {
                 skillRestoreError: 'スキル "{name}" の有効状態の復元：{error}',
                 skillRestoreFailuresSummary: '{count} 件のスキルの有効状態の復元に失敗しました（ファイルはインポート済み）：{detail}',
                 partialSkillsImportFailed: '一部のスキルのインポートに失敗しました：{detail}'
-            }
+            },
+            companionSettings: {
+                title: 'コンパニオン',
+                description: '全体の Cubism Core、ペットの表示と倍率、既定の画像認識チャネルとモデルを設定します。現在の会話のコンパニオンはチャット画面で設定します。',
+                runtime: 'Cubism Core とペット表示',
+                visionDefaults: '既定の画像認識チャネルとモデル',
+                saveHint: 'Core の読み込みはすぐに反映されます。表示設定と画像認識の既定値は、それぞれの保存ボタンで保存します。',
+                unsavedTitle: '未保存のコンパニオン設定',
+                unsavedDescription: '未保存の表示設定または画像認識の既定値があります。編集を続けて保存するか、今回の変更を破棄して移動してください。',
+                discardAndLeave: '変更を破棄して移動',
+            },
         },
 
         update: {

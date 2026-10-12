@@ -216,6 +216,16 @@ const sharedEn = {
                 status_waiting: "Enabled, waiting for task activity",
                 title: "Clawd desktop pet integration",
             },
+            companionSettings: {
+                description: "Configure the global Cubism Core, pet visibility and scale, and the default vision channel and model. Configure companionship for the current conversation from the chat page.",
+                discardAndLeave: "Discard changes and leave",
+                runtime: "Cubism Core and pet display",
+                saveHint: "Core imports apply immediately. Save display settings and vision defaults with their respective save buttons.",
+                title: "Companion",
+                unsavedDescription: "This page has unsaved display settings or vision defaults. Continue editing to save them, or discard these changes and leave.",
+                unsavedTitle: "Unsaved companion settings",
+                visionDefaults: "Default vision channel and model",
+            },
             contextSettings: {
                 diagnostics: {
                     severity: {

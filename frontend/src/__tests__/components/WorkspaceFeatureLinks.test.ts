@@ -17,13 +17,13 @@ test('长期记忆入口说明预算位置，直接导航而不提交当前表�
     await wrapper.get('button').trigger('click'); expect(openPanel).toHaveBeenCalledWith('memory');
   } finally { wrapper.unmount(); }
 });
-test('外观页提供桌宠与屏幕感知的独立入口', async () => {
-  const wrapper = mount(WorkspaceFeatureLinks, { props: { area: 'companions' } });
-  try {
-    const buttons = wrapper.findAll('button'); expect(buttons).toHaveLength(2);
-    await buttons[0].trigger('click'); await buttons[1].trigger('click');
-    expect(openPanel.mock.calls).toEqual([['pets'], ['screenSense']]);
-  } finally { wrapper.unmount(); }
+test('陪伴全局配置与 Clawd 联动分别进入陪伴和集成分类', () => {
+  const index = settingsSearchIndex(true);
+  expect(index.find(item => item.key === 'companion-features')?.tab).toBe('companion');
+  expect(index.find(item => item.key === 'companion-pet-preferences')?.anchor).toBe('[data-search-anchor="companion-pet-preferences"]');
+  expect(index.find(item => item.key === 'companion-vision-defaults')?.tab).toBe('companion');
+  expect(index.find(item => item.key === 'clawd-integration')?.tab).toBe('clawd');
+  expect(index.filter(item => item.tab === 'appearance').some(item => item.key.includes('companion') || item.key.includes('clawd'))).toBe(false);
 });
 test('旧扩展不显示没有宿主支持的跳转按钮，搜索索引也不添加这些入口', () => {
   window.__GRAYCODE_HOST = undefined;

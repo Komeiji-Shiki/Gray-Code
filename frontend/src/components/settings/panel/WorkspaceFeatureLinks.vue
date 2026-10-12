@@ -1,20 +1,16 @@
 <script setup lang="ts">
 import { useI18n } from '@/i18n';
-const props = defineProps<{ area: 'memory' | 'companions' }>();
+defineProps<{ area: 'memory' }>();
 const { t } = useI18n();
 const host = window.__GRAYCODE_HOST;
 const label = (key: string) => t(`components.settings.workspaceFeatureLinks.${key}`);
 </script>
 <template>
   <section v-if="host?.openWorkspacePanel" class="workspace-feature-links">
-    <h4>{{ label(props.area === 'memory' ? 'memoryTitle' : 'companionsTitle') }}</h4>
-    <p>{{ label(props.area === 'memory' ? 'memoryHint' : 'companionsHint') }}</p>
+    <h4>{{ label('memoryTitle') }}</h4>
+    <p>{{ label('memoryHint') }}</p>
     <div>
-      <button v-if="props.area === 'memory'" type="button" @click="host.openWorkspacePanel('memory')">{{ label('openMemory') }}</button>
-      <template v-else>
-        <button type="button" @click="host.openWorkspacePanel('pets')">{{ label('openPets') }}</button>
-        <button type="button" @click="host.openWorkspacePanel('screenSense')">{{ label('openScreenSense') }}</button>
-      </template>
+      <button type="button" @click="host.openWorkspacePanel('memory')">{{ label('openMemory') }}</button>
     </div>
   </section>
 </template>

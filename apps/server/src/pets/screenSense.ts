@@ -1,13 +1,15 @@
 import { randomUUID } from 'node:crypto';
 import type {
   ComputerCapture, ScreenSenseConfiguration, ScreenSenseOptions, ScreenSenseRecord,
-  ScreenSenseRpcMethods, ScreenSenseSnapshot, ScreenSenseStatus, ScreenSenseTarget,
+  ScreenSenseRpcMethods, ScreenSenseSnapshot, ScreenSenseStatus, ScreenSenseTarget, ScreenSenseStoredConfiguration,
+  ScreenSenseVisionDefaults, CompanionBinding,
 } from '@graycode/contracts';
 import type { PlatformApplication } from '../application';
 import type { ClientSession } from '../transport/router';
 import { requireOwnChatConversation } from '../conversations/ownChat';
 import { screenRecords, screenSenseHistory } from './screenSenseHistory';
 import { recognizeScreen, sameScreen, screenFingerprint } from './screenRecognition';
+import { t } from '../../../../backend/i18n';
 
 const configNamespace = 'screen-sense-configuration';
 const activeStatuses = new Set(['queued', 'running', 'awaiting_approval', 'awaiting_input']);
@@ -26,6 +28,7 @@ interface ScreenSession {
 /** 截图仅交给独立识图模型；主对话保存文字观察，开启状态只对当前应用会话有效。 */
 export class ScreenSenseService {
   private configuration?: ScreenSenseConfiguration;
+  private visionDefaults: ScreenSenseVisionDefaults = {};
   private revision: number | null = null;
   private session?: ScreenSession;
   private timer?: NodeJS.Timeout;
@@ -43,7 +46,9 @@ export class ScreenSenseService {
 
   async initialize() {
     const record = await this.app.storage.getVersionedRecord(configNamespace, 'local');
-    this.configuration = record.value as ScreenSenseConfiguration | undefined;
+    const saved = record.value as ScreenSenseStoredConfiguration | undefined;
+    this.configuration = saved?.target ? saved as ScreenSenseConfiguration : undefined;
+    this.visionDefaults = { visionProviderId: saved?.visionProviderId, visionModelId: saved?.visionModelId };
     this.revision = record.revision;
   }
 
@@ -95,11 +100,15 @@ export class ScreenSenseService {
 
   private async validateChat(client: ClientSession, config: ScreenSenseConfiguration) {
     const conversation = await requireOwnChatConversation(this.app, client.actorId, config.conversationId);
+    this.validateVision(config);
+    return conversation;
+  }
+
+  private validateVision(config: ScreenSenseVisionDefaults) {
     const vision = config.visionProviderId && this.app.settings.find('providers', config.visionProviderId);
     if (!vision || !(config.visionModelId || vision.model)?.trim()) {
       throw new Error('请先单独选择屏幕识图渠道和模型，再开启屏幕感知。');
     }
-    return conversation;
   }
 
   private async configure(client: ClientSession, input: ScreenSenseConfiguration, revision: number | null) {
@@ -117,6 +126,7 @@ export class ScreenSenseService {
       throw new Error('请填写希望识别的用户活动和交流方式，最多 10000 字。');
     }
     if (input.allowSilent !== undefined && typeof input.allowSilent !== 'boolean') throw new Error('静默选项格式无效。');
+    if (input.autoStartOnOpen !== undefined && typeof input.autoStartOnOpen !== 'boolean') throw new Error(t('desktop.shell.screenAutoStartInvalid'));
     if (input.prices && (typeof input.prices.currency !== 'string' || !input.prices.currency.trim()
       || input.prices.currency.length > 20 || (['input', 'output', 'cacheRead', 'cacheWrite'] as const)
         .some(key => !Number.isFinite(input.prices![key]) || input.prices![key] < 0))) {
@@ -130,6 +140,7 @@ export class ScreenSenseService {
       delivery: input.delivery, maxCaptures: input.maxCaptures, conversationId: input.conversationId,
       visionProviderId: input.visionProviderId, visionModelId: input.visionModelId || undefined,
       prompt: input.prompt.trim(), allowSilent: input.allowSilent === true,
+      autoStartOnOpen: input.autoStartOnOpen === true,
       ...(input.prices ? { prices: input.prices } : {}),
     };
     const result = await this.app.storage.commitRecords([
@@ -137,9 +148,40 @@ export class ScreenSenseService {
     ]);
     this.stop();
     this.configuration = configuration;
+    this.visionDefaults = { visionProviderId: configuration.visionProviderId, visionModelId: configuration.visionModelId };
     this.revision = result[0]!.revision;
     this.changed();
     return this.snapshot();
+  }
+
+  private async saveDefaults(input: ScreenSenseVisionDefaults, revision: number | null) {
+    this.validateVision(input);
+    const defaults = { visionProviderId: input.visionProviderId, visionModelId: input.visionModelId || undefined };
+    const saved: ScreenSenseStoredConfiguration = this.configuration ? { ...this.configuration, ...defaults } : defaults;
+    const result = await this.app.storage.commitRecords([
+      { namespace: configNamespace, id: 'local', expectedRevision: revision, value: saved },
+    ]);
+    this.stop();
+    this.visionDefaults = defaults;
+    if (this.configuration) this.configuration = { ...this.configuration, ...defaults };
+    this.revision = result[0]!.revision;
+    this.changed();
+    return this.snapshot();
+  }
+
+  private async conversationOpened(client: ClientSession, conversationId: string, epoch: number) {
+    if (epoch !== this.epoch || !this.configuration?.autoStartOnOpen
+      || this.configuration.conversationId !== conversationId || this.session) return this.status();
+    const conversation = await requireOwnChatConversation(this.app, client.actorId, conversationId);
+    const binding = (conversation.custom as { companion?: CompanionBinding } | undefined)?.companion;
+    if (epoch !== this.epoch || binding?.actorId !== client.actorId || !binding.configuration.enabled) return this.status();
+    try {
+      return await this.start(client);
+    } catch (cause) {
+      this.error = (cause as Error).message;
+      this.changed();
+      throw cause;
+    }
   }
 
   private async start(client: ClientSession) {
@@ -315,7 +357,7 @@ export class ScreenSenseService {
 
   async snapshot(): Promise<ScreenSenseSnapshot> {
     return {
-      configuration: this.configuration, revision: this.revision,
+      configuration: this.configuration, visionDefaults: this.visionDefaults, revision: this.revision,
       status: this.status(), preview: this.preview, history: await screenSenseHistory(this.app),
     };
   }
@@ -331,7 +373,10 @@ export class ScreenSenseService {
       case 'screenSense.get': return this.snapshot();
       case 'screenSense.options': {
         const [targets, recent] = await Promise.all([
-          this.app.computer.windows(client), this.app.storage.listConversations({ limit: 80 }),
+          input.includeTargets === false
+            ? { windows: [], displays: [], capturedAt: Date.now(), coordinateSystem: 'physical-screen-pixels' as const }
+            : this.app.computer.windows(client),
+          this.app.storage.listConversations({ limit: 80 }),
         ]);
         const result: ScreenSenseOptions = {
           targets,
@@ -345,6 +390,14 @@ export class ScreenSenseService {
       case 'screenSense.configure': {
         const params = input as ScreenSenseRpcMethods['screenSense.configure']['params'];
         return this.serialize(() => this.configure(client, params.configuration, params.revision));
+      }
+      case 'screenSense.defaults.save': {
+        const params = input as ScreenSenseRpcMethods['screenSense.defaults.save']['params'];
+        return this.serialize(() => this.saveDefaults(params.defaults, params.revision));
+      }
+      case 'screenSense.conversationOpened': {
+        const epoch = this.epoch;
+        return this.serialize(() => this.conversationOpened(client, input.conversationId as string, epoch));
       }
       case 'screenSense.start': return this.serialize(() => this.start(client));
       case 'screenSense.stop': return this.stop();
