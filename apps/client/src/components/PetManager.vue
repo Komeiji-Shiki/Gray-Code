@@ -1,22 +1,33 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref, watch } from 'vue';
-import { PET_DEFAULT_DURATION_MS, type PetAnimation, type PetCommandInput, type PetConfiguration,
+import { PET_DEFAULT_DURATION_MS, type PetCommandInput, type PetConfiguration,
   type PetParameter, type PetResource, type PetSnapshot } from '@graycode/contracts';
 import { rpc } from '../api';
 import { shellText } from '../i18n';
 import { collectPetImport, fileBase64, selectedPath } from '../pets/importFiles';
 import { clearPetRuntimeCache } from '../pets/assets';
-import playerNotices from '../../public/pets-notices.txt?raw';
-import { petAnimations } from '../../../../shared/petFormat';
 import PetPlayer from './PetPlayer.vue';
 import PetResourceAnnotations from './PetResourceAnnotations.vue';
+import PetRuntimeSettings from './PetRuntimeSettings.vue';
+import PetDisplaySettings from './PetDisplaySettings.vue';
 
-const emit = defineEmits<{ close: []; screenSense: [] }>();
+const props = withDefaults(defineProps<{
+  embedded?: boolean;
+  selectedResourceId?: string;
+  section?: 'resources' | 'preferences';
+}>(), { embedded: false, section: 'resources' });
+const emit = defineEmits<{
+  close: [];
+  screenSense: [];
+  selectResource: [id: string];
+  resourcesChanged: [resources: PetResource[]];
+  dirty: [value: boolean];
+}>();
 const dialog = ref<HTMLDialogElement>();
 const player = ref<InstanceType<typeof PetPlayer>>();
 const resources = ref<PetResource[]>([]);
 const snapshot = ref<PetSnapshot>();
-const selected = ref('');
+const selected = ref(props.selectedResourceId ?? '');
 const parameters = ref<PetParameter[]>([]);
 const error = ref('');
 const notice = ref('');
@@ -27,6 +38,7 @@ const confirmingRemove = ref(false);
 const previewKey = ref(0);
 const annotationsDirty = ref(false);
 const pendingFiles = ref<File[]>([]);
+const pendingRuntime = ref<File>();
 const entry = ref('');
 const source = ref('');
 const license = ref('');
@@ -42,28 +54,23 @@ const configuration = reactive<PetConfiguration>({
   taskAnimations: true, mappings: {}, soundEnabled: false, speechEnabled: false, followPointer: true,
 });
 const leaveDestination = ref<'close' | 'screenSense'>('close');
-let savedDraft = '';
-const dirty = computed(() => annotationsDirty.value || !!savedDraft && (
-  JSON.stringify(configuration) !== savedDraft ||
-  selected.value !== (configuration.resourceId ?? resources.value[0]?.id ?? '') || pendingFiles.value.length > 0
+const preferencesOnly = computed(() => props.section === 'preferences');
+const savedDraft = ref('');
+const dirty = computed(() => annotationsDirty.value || !!savedDraft.value && (
+  JSON.stringify(configuration) !== savedDraft.value ||
+  !props.embedded && selected.value !== (configuration.resourceId ?? resources.value[0]?.id ?? '') || pendingFiles.value.length > 0
 ));
 const resource = computed(() => resources.value.find(item => item.id === selected.value));
 const manifests = computed(() => pendingFiles.value.filter(file => /(?:^|\/)pet\.json$|\.model3\.json$/i.test(selectedPath(file))));
+const requiresRuntime = computed(() => /\.model3\.json$/i.test(entry.value) && !snapshot.value?.runtime);
 const selectedParameter = computed(() => parameters.value.find(parameter => parameter.id === parameterId.value));
 const previewConfiguration = computed(() => ({ ...configuration, stopped: false }));
-const taskStates = petAnimations.filter(item => ['idle', 'running', 'waiting', 'review', 'failed'].includes(item.id));
 const formatBytes = (value: number) => (value / 1024 / 1024).toFixed(2) + ' MiB';
 const text = (key: Parameters<typeof shellText>[0], fields: Record<string, string | number> = {}) => {
   let value = shellText(key);
   for (const [name, replacement] of Object.entries(fields)) value = value.replaceAll('{' + name + '}', String(replacement));
   return value;
 };
-const animationText: Record<PetAnimation, Parameters<typeof shellText>[0]> = {
-  idle: 'petAnimationIdle', 'running-right': 'petAnimationRight', 'running-left': 'petAnimationLeft',
-  waving: 'petAnimationWaving', jumping: 'petAnimationJumping', failed: 'petAnimationFailed',
-  waiting: 'petAnimationWaiting', running: 'petAnimationRunning', review: 'petAnimationReview',
-};
-
 async function perform(work: () => Promise<void>) {
   if (busy.value) return;
   busy.value = true;
@@ -72,19 +79,24 @@ async function perform(work: () => Promise<void>) {
   try { await work(); } catch (cause) { error.value = (cause as Error).message; } finally { busy.value = false; }
 }
 async function reload() {
-  const changed = !!savedDraft && JSON.stringify(configuration) !== savedDraft;
+  const changed = !!savedDraft.value && JSON.stringify(configuration) !== savedDraft.value;
   const prior = snapshot.value;
-  [resources.value, snapshot.value] = await Promise.all([rpc('pets.list'), rpc('pets.status')]);
+  [resources.value, snapshot.value] = await Promise.all([
+    preferencesOnly.value ? Promise.resolve([]) : rpc('pets.list'), rpc('pets.status'),
+  ]);
+  if (!preferencesOnly.value) emit('resourcesChanged', resources.value);
   if (!changed) {
     Object.assign(configuration, snapshot.value.configuration);
-    savedDraft = JSON.stringify(configuration);
+    savedDraft.value = JSON.stringify(configuration);
   } else if (prior) snapshot.value.revision = prior.revision;
   if (!resources.value.some(item => item.id === selected.value)) {
-    selected.value = configuration.resourceId ?? resources.value[0]?.id ?? '';
+    selected.value = props.selectedResourceId ?? configuration.resourceId ?? resources.value[0]?.id ?? '';
   }
 }
 function chooseFiles(event: Event) {
   pendingFiles.value = [...((event.target as HTMLInputElement).files ?? [])];
+  pendingRuntime.value = undefined;
+  error.value = '';
   entry.value = '';
   if (manifests.value.length === 1) entry.value = selectedPath(manifests.value[0]!);
   if (!manifests.value.length) error.value = shellText('petManifestMissing');
@@ -92,22 +104,26 @@ function chooseFiles(event: Event) {
 }
 async function importResource() {
   const bundle = await collectPetImport(pendingFiles.value, entry.value);
+  if (requiresRuntime.value) {
+    if (!pendingRuntime.value) throw new Error(shellText('petRuntimeRequired'));
+    await installRuntime(pendingRuntime.value);
+  }
   const result = await rpc('pets.import', { ...bundle, name: importName.value, source: source.value, license: license.value });
   pendingFiles.value = [];
+  pendingRuntime.value = undefined;
   entry.value = '';
-  selected.value = result.id;
+  selectResource(result.id);
   await reload();
   notice.value = shellText('petImported');
 }
-async function importRuntime(event: Event) {
-  const file = (event.target as HTMLInputElement).files?.[0];
-  (event.target as HTMLInputElement).value = '';
-  if (!file) return;
+async function installRuntime(file: File) {
+  snapshot.value = await rpc('pets.runtime.import', { name: file.name, data: await fileBase64(file) });
+  clearPetRuntimeCache();
+  previewKey.value++;
+}
+async function importRuntime(file: File) {
   await perform(async () => {
-    await rpc('pets.runtime.import', { name: file.name, data: await fileBase64(file) });
-    clearPetRuntimeCache();
-    await reload();
-    previewKey.value++;
+    await installRuntime(file);
     notice.value = shellText('petRuntimeImported');
   });
 }
@@ -118,19 +134,22 @@ async function removeRuntime() {
   previewKey.value++;
 }
 async function save() {
-  if (!snapshot.value || !resource.value) return;
+  if (!snapshot.value || !props.embedded && !preferencesOnly.value && !resource.value) return;
+  // 嵌入流程把资源绑定交给陪伴表单；这里只保存已有播放器的设置。
+  const resourceId = props.embedded || preferencesOnly.value ? configuration.resourceId : resource.value?.id;
   await rpc('pets.configure', {
     revision: snapshot.value.revision,
-    configuration: { ...configuration, resourceId: resource.value.id,
-      mappings: configuration.resourceId === resource.value.id ? configuration.mappings : {} },
+    configuration: { ...configuration, resourceId,
+      mappings: configuration.resourceId === resourceId ? configuration.mappings : {} },
   });
-  savedDraft = '';
+  savedDraft.value = '';
   await reload();
   notice.value = shellText('petConfigurationSaved');
 }
 async function remove() {
   if (!snapshot.value) return;
   await rpc('pets.remove', { id: selected.value, revision: snapshot.value.revision });
+  if (props.embedded && props.selectedResourceId === selected.value) emit('selectResource', '');
   selected.value = '';
   confirmingRemove.value = false;
   await reload();
@@ -153,10 +172,9 @@ function annotationSaved(value: PetResource) {
   annotationsDirty.value = false;
   notice.value = shellText('petAnnotationsSaved');
 }
-function setMapping(state: PetAnimation, event: Event) {
-  const id = (event.target as HTMLSelectElement).value;
-  if (id) configuration.mappings[state] = id;
-  else delete configuration.mappings[state];
+function selectResource(id: string) {
+  selected.value = id;
+  if (props.embedded) emit('selectResource', id);
 }
 function leave() {
   emit('close');
@@ -169,9 +187,9 @@ function close(destination: 'close' | 'screenSense' = 'close') {
   else leave();
 }
 async function discard() {
-  savedDraft = '';
+  savedDraft.value = '';
   await reload();
-  selected.value = configuration.resourceId ?? resources.value[0]?.id ?? '';
+  selected.value = props.selectedResourceId ?? configuration.resourceId ?? resources.value[0]?.id ?? '';
   notice.value = shellText('petConfigurationReloaded');
 }
 watch(selected, () => {
@@ -185,60 +203,77 @@ watch(selected, () => {
   parameterId.value = '';
 });
 watch(parameterId, () => { parameterValue.value = selectedParameter.value?.default ?? 0; });
+watch(() => props.selectedResourceId, value => { selected.value = value ?? ''; });
+watch(dirty, value => emit('dirty', value), { immediate: true });
+defineExpose({ discard });
 onMounted(() => {
-  dialog.value?.showModal();
+  if (!props.embedded) dialog.value?.showModal();
   void perform(reload);
 });
 </script>
 <template>
-  <dialog ref="dialog" class="pet-manager" aria-labelledby="pet-title" @cancel.prevent="close()">
-    <header>
+  <component
+    :is="embedded ? 'section' : 'dialog'" ref="dialog" class="pet-manager" :class="{ embedded, preferences: preferencesOnly }"
+    :aria-labelledby="embedded ? undefined : 'pet-title'" @cancel.prevent="close()"
+  >
+    <header v-if="!embedded">
       <div><h2 id="pet-title">{{ shellText('petManagerTitle') }}</h2><p>{{ shellText('petManagerIntro') }}</p></div>
       <button :disabled="busy" @click="close()">{{ shellText('petClose') }}</button>
     </header>
     <p v-if="error" class="error" role="alert">{{ error }}</p>
     <p v-if="notice" class="notice" role="status">{{ notice }}</p>
-    <div class="pet-columns">
+    <div v-if="preferencesOnly" class="pet-preferences">
+      <PetRuntimeSettings :runtime="snapshot?.runtime" :disabled="busy" @select="importRuntime" @remove="perform(removeRuntime)" />
+      <PetDisplaySettings
+        :configuration="configuration" :floating-available="snapshot?.floatingAvailable" :disabled="busy || !snapshot" mode="preferences"
+        @save="perform(save)" @discard="perform(discard)"
+      />
+    </div>
+    <div v-else class="pet-columns">
       <aside>
-        <button :disabled="busy" @click="close('screenSense')">{{ shellText('petScreenSenseSettings') }}</button>
-        <p>{{ shellText('petScreenSenseIntro') }}</p>
+        <template v-if="!embedded">
+          <button :disabled="busy" @click="close('screenSense')">{{ shellText('petScreenSenseSettings') }}</button>
+          <p>{{ shellText('petScreenSenseIntro') }}</p>
+        </template>
         <div class="import-buttons">
           <label>{{ shellText('petSelectDirectory') }}<input type="file" webkitdirectory multiple :disabled="busy" @change="chooseFiles"></label>
           <label>{{ shellText('petSelectFiles') }}<input type="file" multiple :disabled="busy" @change="chooseFiles"></label>
         </div>
         <form v-if="pendingFiles.length" class="import-form" @submit.prevent="perform(importResource)">
           <label>{{ shellText('petManifest') }}
-            <select v-model="entry">
+            <select v-model="entry" :disabled="busy">
               <option value="">{{ shellText('petChoose') }}</option>
               <option v-for="file in manifests" :key="selectedPath(file)" :value="selectedPath(file)">{{ selectedPath(file) }}</option>
             </select>
           </label>
-          <label>{{ shellText('petDisplayName') }}<input v-model="importName"></label>
-          <label>{{ shellText('petSource') }}<input v-model="source" :placeholder="shellText('petSourceHint')"></label>
-          <label>{{ shellText('petLicense') }}<textarea v-model="license" rows="2" :placeholder="shellText('petLicenseHint')" /></label>
-          <button :disabled="busy || !entry">{{ shellText('petImport') }}</button>
-          <button type="button" @click="pendingFiles = []">{{ shellText('petCancelImport') }}</button>
+          <label>{{ shellText('petDisplayName') }}<input v-model="importName" :disabled="busy"></label>
+          <label>{{ shellText('petSource') }}<input v-model="source" :disabled="busy" :placeholder="shellText('petSourceHint')"></label>
+          <label>{{ shellText('petLicense') }}<textarea v-model="license" :disabled="busy" rows="2" :placeholder="shellText('petLicenseHint')" /></label>
+          <PetRuntimeSettings
+            v-if="requiresRuntime" class="import-runtime" required :disabled="busy" :staged-file-name="pendingRuntime?.name"
+            @select="file => { pendingRuntime = file; }"
+          />
+          <button :disabled="busy || !entry || requiresRuntime && !pendingRuntime">{{ shellText('petImport') }}</button>
+          <button type="button" :disabled="busy" @click="pendingFiles = []; pendingRuntime = undefined">{{ shellText('petCancelImport') }}</button>
         </form>
-        <button v-for="item in resources" :key="item.id" class="pet-row" :aria-pressed="selected === item.id" @click="selected = item.id">
+        <button
+          v-for="item in resources" :key="item.id" class="pet-row" :aria-pressed="selected === item.id" :disabled="busy" @click="selectResource(item.id)"
+        >
           <strong>{{ item.name }}</strong>
           <span>{{ item.kind === 'sprite' ? text('petSpriteFormat', { version: item.sprite?.version ?? '' }) : shellText('petLive2dFormat') }}</span>
-          <b v-if="configuration.resourceId === item.id">{{ shellText('petCurrentSelection') }}</b>
+          <b v-if="(embedded ? selectedResourceId : configuration.resourceId) === item.id">{{ shellText('petCurrentSelection') }}</b>
         </button>
         <p v-if="!resources.length && !busy">{{ shellText('petEmptyLibrary') }}</p>
-        <details class="runtime">
+        <details v-if="!embedded" class="runtime">
           <summary>{{ shellText('petRuntimeTitle') }}</summary>
-          <p>{{ shellText('petRuntimeHelp') }}</p>
-          <details><summary>{{ shellText('petPlayerLicenses') }}</summary><pre>{{ playerNotices }}</pre></details>
-          <a href="https://www.live2d.com/en/sdk/download/web/" target="_blank" rel="noreferrer">{{ shellText('petOfficialSdk') }}</a>
-          <p>{{ snapshot?.runtime ? snapshot.runtime.name + ' · ' + formatBytes(snapshot.runtime.bytes) : shellText('petRuntimeMissing') }}</p>
-          <label class="file-button">
-            {{ shellText('petImportRuntime') }}<input type="file" accept=".js" :disabled="busy" @change="importRuntime">
-          </label>
-          <button v-if="snapshot?.runtime" :disabled="busy" @click="perform(removeRuntime)">{{ shellText('petRemoveRuntime') }}</button>
+          <PetRuntimeSettings :runtime="snapshot?.runtime" :disabled="busy" @select="importRuntime" @remove="perform(removeRuntime)" />
         </details>
       </aside>
       <main v-if="resource">
-        <div class="settings-guide"><strong>{{ shellText('petPreviewFirst') }}</strong><p>{{ shellText('petPreviewHelp') }}</p></div>
+        <div class="settings-guide">
+          <strong>{{ shellText('petPreviewFirst') }}</strong>
+          <p>{{ shellText(embedded ? 'petEmbeddedPreviewHelp' : 'petPreviewHelp') }}</p>
+        </div>
         <div class="pet-heading">
           <div>
             <h3>{{ resource.name }}</h3>
@@ -246,8 +281,17 @@ onMounted(() => {
               count: resource.files.length, size: formatBytes(resource.files.reduce((sum, file) => sum + file.bytes, 0)),
             }) }}</p>
           </div>
-          <button @click="confirmingRemove = true">{{ shellText('petRemoveResource') }}</button>
+          <div class="resource-actions">
+            <button v-if="embedded" :disabled="busy || selectedResourceId === resource.id" @click="selectResource(resource.id)">
+              {{ shellText('petUseResource') }}
+            </button>
+            <button :disabled="busy" @click="confirmingRemove = true">{{ shellText('petRemoveResource') }}</button>
+          </div>
         </div>
+        <PetRuntimeSettings
+          v-if="resource.kind === 'live2d' && !snapshot?.runtime" class="preview-runtime" :disabled="busy"
+          @select="importRuntime"
+        />
         <div class="preview-layout">
           <div class="pet-preview">
             <PetPlayer
@@ -336,43 +380,13 @@ onMounted(() => {
             </label>
           </div>
         </details>
-        <fieldset>
-          <legend>{{ shellText('petDisplaySettings') }}</legend>
-          <div class="control-grid">
-            <label>{{ shellText('petSurface') }}
-              <select v-model="configuration.surface">
-                <option value="app">{{ shellText('petSurfaceApp') }}</option>
-                <option value="floating" :disabled="!snapshot?.floatingAvailable">{{ shellText('petSurfaceFloating') }}</option>
-              </select>
-            </label>
-            <label>{{ text('petScale', { scale: configuration.scale.toFixed(1) }) }}
-              <input v-model.number="configuration.scale" type="range" min="0.4" max="3" step="0.1" :aria-label="shellText('petScaleLabel')">
-              <small class="settings-help">{{ shellText('petScaleHelp') }}</small>
-            </label>
-          </div>
-          <label class="check"><input v-model="configuration.visible" type="checkbox">{{ shellText('petVisible') }}</label>
-          <label class="check"><input v-model="configuration.reducedMotion" type="checkbox">{{ shellText('petReducedMotion') }}</label>
-          <p class="settings-help">{{ shellText('petReducedMotionHelp') }}</p>
-          <label class="check"><input v-model="configuration.stopped" type="checkbox">{{ shellText('petStopped') }}</label>
-          <label class="check"><input v-model="configuration.taskAnimations" type="checkbox">{{ shellText('petTaskAnimations') }}</label>
-          <p class="settings-help">{{ shellText('petTaskAnimationsHelp') }}</p>
-          <div v-if="resource.kind === 'live2d' && configuration.resourceId === resource.id" class="control-grid">
-            <label v-for="state in taskStates" :key="state.id">
-              {{ shellText(animationText[state.id]) }}
-              <select :value="configuration.mappings[state.id] ?? ''" @change="setMapping(state.id, $event)">
-                <option value="">{{ shellText('petNoMapping') }}</option>
-                <option v-for="item in resource.actions" :key="item.id" :value="item.id">{{ item.description || item.name }} · {{ item.id }}</option>
-              </select>
-            </label>
-          </div>
-          <label class="check"><input v-model="configuration.followPointer" type="checkbox">{{ shellText('petFollowPointer') }}</label>
-          <label class="check"><input v-model="configuration.soundEnabled" type="checkbox">{{ shellText('petSoundEnabled') }}</label>
-          <label class="check"><input v-model="configuration.speechEnabled" type="checkbox">{{ shellText('petSpeechEnabled') }}</label>
-          <p class="settings-help">{{ shellText('petSpeechHelp') }}</p>
-          <button class="primary" :disabled="busy" @click="perform(save)">{{ shellText('petSaveConfiguration') }}</button>
-          <button :disabled="busy" @click="perform(discard)">{{ shellText('petDiscardConfiguration') }}</button>
-          <p>{{ shellText('petPriorityHelp') }}</p>
-        </fieldset>
+        <component :is="embedded ? 'details' : 'section'" class="display-section">
+          <summary v-if="embedded">{{ shellText('petInteractionSettings') }}</summary>
+          <PetDisplaySettings
+            :configuration="configuration" :resource="resource" :floating-available="snapshot?.floatingAvailable" :disabled="busy"
+            :mode="embedded ? 'interaction' : 'all'" @save="perform(save)" @discard="perform(discard)"
+          />
+        </component>
         <details>
           <summary>{{ shellText('petSourceLicenseFiles') }}</summary>
           <p>{{ resource.source || shellText('petSourceMissing') }}</p>
@@ -392,7 +406,7 @@ onMounted(() => {
       <button @click="confirmLeave = false">{{ shellText('petContinueEditing') }}</button>
       <button @click="leave">{{ shellText('petDiscardContinue') }}</button>
     </footer>
-  </dialog>
+  </component>
 </template>
 <style scoped>
 .pet-manager {
@@ -408,6 +422,14 @@ onMounted(() => {
   overflow: hidden;
 }
 .pet-manager[open] { display: flex; flex-direction: column; }
+.pet-manager.embedded { display: block; width: 100%; height: auto; margin: 0; border: 0; overflow: visible; }
+.pet-manager.embedded .pet-columns { grid-template-columns: minmax(200px, .8fr) minmax(0, 2fr); }
+.pet-manager.embedded .pet-columns > aside, .pet-manager.embedded .pet-columns > main { overflow: visible; padding: 0 16px; }
+.pet-manager.embedded .pet-columns > aside { padding-left: 0; }
+.pet-manager.embedded .pet-columns > main { padding-right: 0; }
+.pet-manager.embedded .preview-layout { grid-template-columns: minmax(0, 1fr); }
+.pet-preferences { padding: 20px; overflow: auto; }
+.embedded .pet-preferences { padding: 0; overflow: visible; }
 .pet-manager::backdrop { background: color-mix(in srgb, var(--gc-surface-sunken) 70%, transparent); }
 header, .pet-heading { display: flex; justify-content: space-between; align-items: center; gap: 18px; }
 header { padding: 16px 20px; border-bottom: 1px solid var(--gc-border-subtle); }
@@ -440,6 +462,8 @@ a { color: var(--gc-accent); font-size: 12px; }
 .import-buttons label { margin: 0; }
 .import-buttons input, .file-button input { display: none; }
 .import-form { border-block: 1px solid var(--gc-border-subtle); padding: 8px 0 16px; margin: 16px 0; }
+.import-runtime, .preview-runtime { padding: 14px; margin: 14px 0; background: var(--gc-surface-raised); }
+.resource-actions { display: flex; flex-wrap: wrap; gap: 8px; }
 .pet-row { display: flex; flex-direction: column; width: 100%; text-align: left; gap: 7px; margin: 12px 0; }
 .pet-row[aria-pressed=true] { border-left: 3px solid var(--gc-accent); }
 .pet-row span { font-size: 11px; color: var(--gc-text-muted); }
@@ -456,9 +480,6 @@ a { color: var(--gc-accent); font-size: 12px; }
 .control-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 0 18px; min-width: 0; }
 .check { flex-direction: row; align-items: center; }
 .pet-manager details { margin: 16px 0; padding-top: 12px; border-top: 1px solid var(--gc-border-subtle); }
-fieldset { margin: 24px 0; border: 1px solid var(--gc-border-subtle); padding: 14px 18px; }
-legend { padding: 0 6px; font-size: 13px; }
-.primary { background: var(--gc-button-primary); color: var(--gc-text-on-primary); margin-top: 12px; }
 pre { white-space: pre-wrap; overflow-wrap: anywhere; }
 .error, .notice { margin: 10px 20px 0; }
 .error { color: var(--gc-danger); }
@@ -472,6 +493,7 @@ pre { white-space: pre-wrap; overflow-wrap: anywhere; }
   .pet-columns { overflow: auto; display: block; }
   .pet-columns > aside { border-right: 0; border-bottom: 1px solid var(--gc-border-subtle); }
   .pet-columns > aside, .pet-columns > main { overflow: visible; padding: 14px; }
+  .pet-manager.embedded .pet-columns > aside, .pet-manager.embedded .pet-columns > main { padding: 14px 0; }
   .preview-layout, .control-grid { grid-template-columns: 1fr; }
   .pet-preview { height: 280px; }
   .pet-heading { align-items: flex-start; }
