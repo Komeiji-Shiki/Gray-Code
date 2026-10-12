@@ -1,34 +1,31 @@
 import type { ToolContext } from '@graycode/core';
-import type { Content } from '../../../../backend/modules/conversation/types';
-import { MessageTokenEstimator } from '../../../../backend/modules/api/chat/services/MessageTokenEstimator';
-import { resolveMaxContextTokensForConfig } from '../../../../backend/modules/api/chat/services/contextTrim/contextWindowResolution';
 import { resolveContextManagementPolicy } from '../../../../backend/modules/api/chat/services/contextTrim/policy';
-import { calculateContextThreshold } from '../../../../backend/modules/api/chat/services/contextTrim/roundDetection';
 import type { PlatformApplication } from '../application';
-import { activeContextHistory, conversationContextSettings, type ModelPrefix } from './compaction';
+import { conversationContextSettings } from './compaction';
+import { readModelPrefix, type ModelPrefix } from './prefix';
+import { captureSummaryView } from './requestView';
+import { createContextBudget } from './budget';
 
 /** 仅由显式工具调用读取；不推进总结状态、写入历史或调用供应商计数接口。 */
 export async function contextStatus(app: PlatformApplication, context: ToolContext, id: string) {
   const state = await app.conversations.read(context.actorId, id);
   const custom = state.metadata.custom as Record<string, unknown> | undefined;
-  const prefix = custom?.contextRequestPrefix as ModelPrefix | undefined;
+  const prefix = await readModelPrefix(app, state.metadata);
   const providerId = context.modelSelection?.providerId ?? prefix?.providerId;
   const modelOverride = context.modelSelection?.modelOverride ?? prefix?.modelOverride;
   if (!providerId) throw new Error('当前运行没有已捕获的模型渠道。');
   const config = await app.product.channel(providerId, { includeCredential: false });
   if (!config) throw new Error('当前运行的模型渠道不可用，无法查询上下文预算。');
-  const view = await app.longMemoryPrompt.history.prepare(context.actorId, id, state.history.messages);
-  const history = activeContextHistory(view.messages, config);
-  const estimator = new MessageTokenEstimator();
-  const prompt = prefix?.promptContext;
-  const promptText = [...prompt?.beforeHistoryMessages ?? [], ...prompt?.afterHistoryMessages ?? []]
-    .flatMap(message => message.parts.map(part => part.text ?? '')).join('\n');
-  const fixedText = [prefix?.systemPrompt ?? '', JSON.stringify(prefix?.tools ?? [])].join('\n') + promptText;
-  const fixedPromptTokens = estimator.estimateMessageTokens({ role: 'user', parts: [{ text: fixedText }] });
-  const historyTokens = history.reduce((total, message) => total + estimator.estimateMessageTokens(message as Content), 0);
-  const estimatedInputTokens = fixedPromptTokens + historyTokens;
-  const resolution = resolveMaxContextTokensForConfig(config, modelOverride);
-  const thresholdTokens = calculateContextThreshold(config.contextThreshold ?? '80%', resolution.maxInputTokens);
+  const input: ModelPrefix = { conversationId: id, systemPrompt: '', tools: [], ...prefix, providerId, modelOverride };
+  const view = await captureSummaryView(app, state, input, config, context.signal);
+  const history = await view(state);
+  const counter = createContextBudget(input, config, app.product.runtimeSettings().getSummarizeConfig().autoSummarizeTokenLimit);
+  const budget = counter.evaluate(history);
+  const fixedPromptTokens = budget.fixedTokens;
+  const historyTokens = budget.historyTokens;
+  const estimatedInputTokens = budget.inputTokens;
+  const resolution = counter.resolution;
+  const thresholdTokens = budget.softLimitTokens;
   const policy = resolveContextManagementPolicy(config);
   const management = conversationContextSettings(app, state.metadata, config);
   const captured = prefix?.turnContext;
@@ -36,7 +33,7 @@ export async function contextStatus(app: PlatformApplication, context: ToolConte
   context.signal.throwIfAborted();
   return { success: true, data: {
     measuredAt: Date.now(), windowId: boundary?.contextWindowId ?? 'initial',
-    source: 'local-estimate', prefixAvailable: !!prefix, includesCurrentToolResult: false,
+    source: 'local-estimate', tokenizer: counter.tokenizer, prefixAvailable: !!prefix, includesCurrentToolResult: false,
     estimatedInputTokens, fixedPromptTokens, historyTokens,
     maxContextTokens: resolution.maxContextTokens, maxInputTokens: resolution.maxInputTokens,
     reservedOutputTokens: resolution.contextWindowIncludesOutput ? resolution.maxOutputTokens ?? 0 : 0,

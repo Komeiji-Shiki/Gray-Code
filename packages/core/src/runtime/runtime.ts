@@ -326,7 +326,7 @@ export class PlatformRuntime {
     messages: PlatformMessage[], selection: Pick<ModelInput, 'providerId' | 'modelOverride' | 'reasoningEffort' | 'promptContext' | 'turnContext' | 'retryCount'>, signal: AbortSignal): ModelInput {
     return { conversationId: run.conversationId, ...selection, systemPrompt: agent.systemPrompt, messages,
       taskContext: { actor: { id: actor.id, displayName: actor.displayName, role: actor.role }, workspace },
-      tools: structuredClone(catalog.declarations), signal };
+      tools: catalog.declarations, signal };
   }
 
   async wait(runId: string): Promise<RunRecord | null> {
@@ -381,6 +381,8 @@ export class PlatformRuntime {
       await this.services.beforeRun?.(run, workspace, signal);
       let historyMessages: PlatformMessage[] = [];
       let historyRevision: number | undefined;
+      let requestTools: ModelInput['tools'] | undefined;
+      let requestToolsNative: boolean | undefined;
       for (let iteration = 1; agent.maxIterations === -1 || iteration <= agent.maxIterations; iteration++) {
         signal.throwIfAborted();
         if (this.nativeTools.pendingIds(run.conversationId).length)
@@ -475,17 +477,22 @@ export class PlatformRuntime {
           },
         };
         const nativeEnabled = await this.services.models.supportsAsyncTools?.(request) ?? false;
-        request.tools = request.tools.map(tool => {
-          const runtimeTool = catalog.entries.get(tool.name)?.tool;
-          const allowed = runtimeTool?.nativeAsync !== false && agent.toolApproval?.[tool.name] !== 'deny' && (runtimeTool?.nativeAsync === true
-            || runtimeTool?.parallelRead === true && agent.toolApproval?.[tool.name] !== 'ask'
-              && !(agent.reviewerProviderId && agent.reviewerToolNames?.includes(tool.name)));
-          if (nativeEnabled && allowed) return nativeToolDeclaration(tool, runtimeTool?.nativeAsyncDescription, runtimeTool?.nativeAsyncParameterDescriptions);
-          // 存储会省略 undefined；同步声明直接移除标记，让保存前后的完整前缀保持同一结构。
-          const { async: _async, ...synchronous } = tool;
-          return synchronous;
-        });
-        if (request.tools.some(tool => tool.async)) request.tools.push(structuredClone(waitForTasksDeclaration));
+        // 工具目录在回合开始时已捕获；复用声明对象，让前缀序列化和 tokenizer 缓存跨迭代生效。
+        if (!requestTools || requestToolsNative !== nativeEnabled) {
+          requestTools = catalog.declarations.map(tool => {
+            const runtimeTool = catalog.entries.get(tool.name)?.tool;
+            const allowed = runtimeTool?.nativeAsync !== false && agent.toolApproval?.[tool.name] !== 'deny' && (runtimeTool?.nativeAsync === true
+              || runtimeTool?.parallelRead === true && agent.toolApproval?.[tool.name] !== 'ask'
+                && !(agent.reviewerProviderId && agent.reviewerToolNames?.includes(tool.name)));
+            if (nativeEnabled && allowed) return nativeToolDeclaration(tool, runtimeTool?.nativeAsyncDescription, runtimeTool?.nativeAsyncParameterDescriptions);
+            // 存储会省略 undefined；同步声明直接移除标记，让保存前后的完整前缀保持同一结构。
+            const { async: _async, ...synchronous } = tool;
+            return synchronous;
+          });
+          if (requestTools.some(tool => tool.async)) requestTools.push(waitForTasksDeclaration);
+          requestToolsNative = nativeEnabled;
+        }
+        request.tools = requestTools;
         const prepared = await this.services.prepareModel?.({ run, agent, workspace, iteration, input: request, history: state });
         if (prepared) { state = prepared.history; request.messages = prepared.messages; }
         const page = state.history;

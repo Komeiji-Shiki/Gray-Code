@@ -293,8 +293,21 @@ const sharedJa = {
                 description: backendJa.tools.reviewDocument.finding.description,
             },
             summarizeSettings: {
+                executionControls: {
+                    afterTurn: backendJa.modules.settings.contextExecution.afterTurn,
+                    afterTurnHint: backendJa.modules.settings.contextExecution.afterTurnHint,
+                    maxAttempts: backendJa.modules.settings.contextExecution.maxAttempts,
+                    maxAttemptsHint: backendJa.modules.settings.contextExecution.maxAttemptsHint,
+                    maxInputRatio: backendJa.modules.settings.contextExecution.maxInputRatio,
+                    maxInputRatioHint: backendJa.modules.settings.contextExecution.maxInputRatioHint,
+                    tokenLimit: backendJa.modules.settings.contextExecution.tokenLimit,
+                    tokenLimitApplied: backendJa.modules.settings.contextExecution.tokenLimitApplied,
+                    tokenLimitHint: backendJa.modules.settings.contextExecution.tokenLimitHint,
+                    tokenLimitPlaceholder: backendJa.modules.settings.contextExecution.tokenLimitPlaceholder,
+                },
                 methodControls: {
                     channelHint: backendJa.modules.settings.contextMethod.channelHint,
+                    channelInherited: backendJa.modules.settings.contextMethod.channelInherited,
                     channelTitle: backendJa.modules.settings.contextMethod.channelTitle,
                     defaultHint: backendJa.modules.settings.contextMethod.defaultHint,
                     defaultTitle: backendJa.modules.settings.contextMethod.defaultTitle,

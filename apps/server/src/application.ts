@@ -334,7 +334,12 @@ export class PlatformApplication {
       prepareModel: input => this.context.prepareModel(input),
       previewModel: input => this.context.prepareModel(input, true),
       transformOutput: async input => this.longMemoryPrompt.output(await this.characterPipeline.output(input.request.turnContext?.characterTurn as CharacterTurn | undefined, input.message, input.request.signal),input.request),
-      beforeRun: async (run, workspace, signal) => { await this.nodes.checkRun(run); await this.artifacts.beforeRun(run); await this.checkpointLifecycle.beforeRun(run, workspace, signal); },
+      beforeRun: async (run, workspace, signal) => {
+        this.context.beforeRun(run.conversationId);
+        await this.nodes.checkRun(run);
+        await this.artifacts.beforeRun(run);
+        await this.checkpointLifecycle.beforeRun(run, workspace, signal);
+      },
       modelBoundary: async (run, workspace, signal, phase, iteration, message) => {
         if (phase === 'before') await this.nodes.checkRun(run);
         if (phase === 'before') await this.subagents.boundary(run, signal);
@@ -437,7 +442,10 @@ export class PlatformApplication {
         void pulse.catch(() => {});
       }
       if (event.type === 'event' && ['run.completed', 'run.cancelled', 'run.failed'].includes(event.event.type)) this.checkpointLifecycle.clear(event.event.runId);
-      if(event.type==='event'&&event.event.type==='run.completed')this.longMemory.background.afterRun(event.event.runId);
+      if (event.type === 'event' && event.event.type === 'run.completed') {
+        this.longMemory.background.afterRun(event.event.runId);
+        this.context.afterRun(event.event.runId);
+      }
       this.notify(event as unknown as Record<string, unknown>);
     });
     this.discord = new DiscordBotService(this, options.discordGateway);

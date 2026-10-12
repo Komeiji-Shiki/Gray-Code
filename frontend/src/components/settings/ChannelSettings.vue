@@ -301,6 +301,7 @@ const contextThreshold = computed(() => {
 const summaryKeepRecentTokensHint = ref<string | number>('50%')
 const summaryKeepRecentRoundsHint = ref(2)
 const summaryMethodHint = ref<ContextManagementMethod>('summary')
+const summaryTokenLimitHint = ref<number>()
 const autoSummarizeMethod = computed(() => currentConfig.value?.autoSummarizeMethod ?? summaryMethodHint.value)
 
 async function updateAutoSummarizeMethod(method: ContextManagementMethod) {
@@ -361,6 +362,7 @@ async function loadSummaryHintConfig() {
     const response = await sendToExtension<any>(MESSAGE_NAMES.getSummarizeConfig, {})
     if (!response) return
     if (response.method === 'summary' || response.method === 'notes') summaryMethodHint.value = response.method
+    summaryTokenLimitHint.value = response.autoSummarizeTokenLimit
     if (typeof response.keepRecentTokens === 'string' || typeof response.keepRecentTokens === 'number') {
       summaryKeepRecentTokensHint.value = response.keepRecentTokens
     }
@@ -935,6 +937,7 @@ onUnmounted(() => {
         :summary-keep-recent-tokens="summaryKeepRecentTokensHint"
         :summary-keep-recent-rounds="summaryKeepRecentRoundsHint"
         :auto-summarize-method="autoSummarizeMethod"
+        :auto-summarize-token-limit="summaryTokenLimitHint"
         :auto-method-inherited="currentConfig.autoSummarizeMethod === undefined"
         @update:show="showContextThreshold = $event"
         @update:enabled="updateContextManagementEnabled"

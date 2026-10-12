@@ -12,6 +12,9 @@ export interface TokenCountResult {
     success: boolean;
     /** 总 token 数 */
     totalTokens?: number;
+    /** 本地计数使用的词表来源；供应方 API 结果不填。 */
+    source?: 'model-tokenizer' | 'generic-tokenizer';
+    encoding?: 'cl100k_base' | 'o200k_base';
     /** 错误信息 */
     error?: string;
 }

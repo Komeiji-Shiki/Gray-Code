@@ -3,6 +3,8 @@ import type { ModelInput,PlatformMessage,LongMemoryScope } from '@graycode/contr
 import { PlatformApplication } from '../../../apps/server/src/application';
 import { ApplicationRouter } from '../../../apps/server/src/transport/router';
 import { BOT_CHANNEL_ACCESS } from '../../../apps/server/src/bots/channelAccess';
+import { CapturedContext } from '../../../apps/server/src/context/captured';
+import { summarizeFullContext } from '../../../apps/server/src/context/compaction';
 import { fixture } from './fixtures';
 
 describe('长期记忆沿聊天、工具和请求视图接入',()=>{
@@ -73,6 +75,24 @@ describe('长期记忆沿聊天、工具和请求视图接入',()=>{
     generate=async()=>({role:'model',parts:[{text:'已读取。'}]});await run('memory-other','我的测试代号是什么？');
     const latest=seen.at(-1)!;const index=latest.messages.findIndex(message=>message.memoryContext);
     expect(index).toBeGreaterThanOrEqual(0);expect(latest.messages[index+1].isUserInput).toBe(true);expect(plain(latest)).toContain('青桐-173');
+    // 记忆刚进入总结输入时，尚没有助手存档可以间接传递它的删除依赖。
+    await app.createConversation('owner','记忆摘要',undefined,{},[],{id:'memory-summary'});
+    await app.storage.appendHistory('memory-summary',[
+      {id:'summary-first',role:'user',isUserInput:true,parts:[{text:'检查已有记录。'}]},
+      {id:'summary-answer',role:'model',parts:[{text:'先前只检查了独立的普通记录。'}]},
+      {id:'summary-latest',role:'user',isUserInput:true,parts:[{text:'现在检查测试代号。'}]},
+    ]);
+    const summaryFrame=new CapturedContext(await app.storage.readConversationState('memory-summary'));
+    const recalled={...latest.messages[index],id:'long-memory:summary-latest'};
+    generate=async()=>({role:'model',completionStatus:'complete',parts:[{
+      text:'已读取的长期记忆注明测试代号是青桐-173。当前用户希望核对这条记录，下一步应继续处理当前请求，并保留已经确认的来源和用户要求。',
+    }]});
+    const summarized=await summarizeFullContext(app,summaryFrame,{conversationId:'memory-summary',providerId,tools:[]},
+      new AbortController().signal,false,{maxHistoryTokens:32000,
+        messages:[...summaryFrame.state.history.messages.slice(0,2),recalled,summaryFrame.state.history.messages[2]]});
+    const directSummary=summaryFrame.state.history.messages[summarized.insertIndex];
+    expect(directSummary.longMemoryReferences).toEqual([{scopeId:scope.id,id:saved.id,version:saved.version}]);
+    expect(directSummary.longMemoryInputIds).not.toContain(recalled.id);
     let removing=true;
     generate=async input=>{
       if(removing){removing=false;return {role:'model',parts:[{functionCall:{id:'forget-call',name:'memory_remove',args:{scopeId:scope.id,id:saved.id,expectedVersion:saved.version,action:'delete',operation:'apply'}}}]};}
@@ -80,6 +100,10 @@ describe('长期记忆沿聊天、工具和请求视图接入',()=>{
       expect(response?.response?.success).toBe(true);return {role:'model',parts:[{text:'已忘记。'}]};
     };
     await run('memory-other','请忘记测试代号。');
+    const filteredSummary=await app.longMemoryPrompt.history.prepare('owner','memory-summary',summaryFrame.state.history.messages);
+    const redactedSummary=filteredSummary.messages.find(message=>message.id===directSummary.id)!;
+    expect(redactedSummary.memoryRedacted).toBe(true);
+    expect(JSON.stringify(redactedSummary.parts)).not.toContain('青桐-173');
     generate=async()=>({role:'model',parts:[{text:'已处理。'}]});
     await run('memory-chat','继续检查，已经忘记的内容不要复述。');
     expect(plain(seen.at(-1)!)).not.toContain('青桐-173');
@@ -93,9 +117,11 @@ describe('长期记忆沿聊天、工具和请求视图接入',()=>{
     expect(JSON.stringify(listed)).not.toContain('青桐-173');
   });
 
-  test('工具循环固定选择，普通新增不会重新排序，明确修订会刷新当前依据',async()=>{
+  test('工具循环固定选择，普通修订由新回合召回，旧回合按原位置回放',async()=>{
     const scope=await personal(),access=await app.longMemory.access('owner',{conversationId:'memory-chat'});
     const record=(await app.longMemory.remember(access,{scopeId:scope.id,text:'部署端口为 4300。',kind:'project',topic:['项目','部署']})).records[0];
+    const recalls=jest.spyOn(app.storage,'longMemoryRecall');
+    const snapshotReads=jest.spyOn(app.storage,'getVersionedRecord');
     app.tools.register({declaration:{name:'memory_boundary_fixture',description:'记忆边界测试',parameters:{type:'object',properties:{step:{type:'integer'}},required:['step']}},effects:()=>[],execute:async args=>{
       if(args.step===1)await app.longMemory.remember(access,{scopeId:scope.id,text:'部署工具使用另一项普通新增资料。',kind:'project',topic:['项目','部署']});
       else await app.longMemory.revise(access,{scopeId:scope.id,id:record.id,expectedVersion:record.version,text:'部署端口为 4400。'});
@@ -104,7 +130,22 @@ describe('长期记忆沿聊天、工具和请求视图接入',()=>{
     let iteration=0;generate=async()=>++iteration<3?{role:'model',parts:[{functionCall:{id:'boundary-'+iteration,name:'memory_boundary_fixture',args:{step:iteration}}}]}:{role:'model',parts:[{text:'完成。'}]};
     await run('memory-chat','部署端口是什么？');expect(seen).toHaveLength(3);
     const memory=(input:ModelInput)=>input.messages.find(message=>message.memoryContext)?.parts[0].text;
-    expect(memory(seen[0])).toContain('4300');expect(memory(seen[1])).toBe(memory(seen[0]));expect(memory(seen[2])).toContain('4400');expect(memory(seen[2])).not.toContain('4300');
+    expect(memory(seen[0])).toContain('4300');expect(memory(seen[1])).toBe(memory(seen[0]));expect(memory(seen[2])).toBe(memory(seen[0]));
+    expect(recalls).toHaveBeenCalledTimes(1);
+    await run('memory-chat','再次确认部署端口。');
+    const latest=seen.at(-1)!,blocks=latest.messages.filter(message=>message.memoryContext);
+    expect(blocks).toHaveLength(2);
+    expect(blocks[0]).toEqual(seen[0].messages.find(message=>message.memoryContext));
+    expect(blocks[1].parts[0].text).toContain('4400');expect(blocks[1].parts[0].text).not.toContain('4300');
+    for(const block of blocks){
+      const next=latest.messages[latest.messages.indexOf(block)+1];
+      expect(next.isUserInput).toBe(true);expect(block.id).toBe('long-memory:'+next.id);
+    }
+    expect(recalls).toHaveBeenCalledTimes(2);
+    expect(snapshotReads.mock.calls.filter(([namespace])=>namespace==='long-memory-turns')).toHaveLength(2);
+    const references=blocks.map(message=>(message.longMemoryReferences as Array<{id:string;version:number}>).find(ref=>ref.id===record.id));
+    expect(references.map(ref=>ref?.version)).toEqual([1,2]);
+    recalls.mockRestore();snapshotReads.mockRestore();
   });
 
   test('同一账号在群聊中只自动读取绑定群组，个人记忆不会进入群聊请求',async()=>{

@@ -13,6 +13,9 @@
 | `acp-sdk.txt` | `@agentclientprotocol/sdk` 1.5.0 | 安装包原始 `LICENSE`，Apache-2.0；[官方源码](https://github.com/agentclientprotocol/typescript-sdk) |
 | `mcp-client.txt` | `@modelcontextprotocol/client` 2.0.0 | 安装包原始 `LICENSE`；[官方源码](https://github.com/modelcontextprotocol/typescript-sdk) |
 | `mcp-core.txt` | `@modelcontextprotocol/core` 2.0.0 | 安装包原始 `LICENSE`；[官方源码](https://github.com/modelcontextprotocol/typescript-sdk) |
+| `tiktoken.txt` | tiktoken 1.0.22 | MIT；npm 包未附许可文件，保留 [上游原始许可](https://github.com/dqbd/tiktoken/blob/main/LICENSE)。Rust/WASM 本地 tokenizer 按独立生产依赖复制，保留原始 WASM 路径。 |
+| `image-size.txt` | image-size 1.2.1（沿用工作区锁定版本） | 安装包原始 MIT 许可；[官方源码](https://github.com/image-size/image-size)。仅读取图片尺寸，不解码像素。 |
+| `image-size-queue.txt`、`inherits.txt` | queue 6.0.2、inherits 2.0.4（image-size 的依赖） | 安装包原始 MIT、ISC 许可；[queue](https://github.com/jessetane/queue)、[inherits](https://github.com/isaacs/inherits)。 |
 | `velopack.txt` | Velopack，版本由根锁文件确定 | Windows 安装与更新运行库的原始许可 |
 
 MCP 2.0.0 的包元数据标为 MIT，但随包 `LICENSE` 说明项目正向 Apache-2.0 迁移，未获重授权的贡献继续适用原 MIT 许可。此处保留完整原文，不把包元数据简写当成统一授权结论。ACP 与 MCP SDK 未修改上游源码，由 esbuild 合并进平台与桌面产物；GrayCode 的连接和会话适配在各自业务模块内。

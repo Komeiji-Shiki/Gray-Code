@@ -1,6 +1,7 @@
 import type { ModelInput, PlatformMessage } from '@graycode/contracts';
 import { PlatformApplication } from '../../../apps/server/src/application';
 import { fixture } from './fixtures';
+import { TokenCountService } from '../../../backend/modules/channel/TokenCountService';
 
 describe('context read-only status mirrors saved summaries without extra summarize calls', () => {
   let f: Awaited<ReturnType<typeof fixture>>;
@@ -13,21 +14,23 @@ describe('context read-only status mirrors saved summaries without extra summari
   beforeEach(async () => {
     f = await fixture(); await f.store.close(); primary = []; summaries = []; summaryText = detailed;
     app = await PlatformApplication.open({ dataDirectory: f.data, models: { generate: async input => {
-      if (input.purpose === 'summary') { summaries.push(input); return { role: 'model', parts: [{ text: summaryText }] }; }
+      if (input.purpose === 'summary') { summaries.push(input); return { role: 'model', completionStatus: 'complete', parts: [{ text: summaryText }] }; }
       primary.push(input); return { role: 'model', parts: [{ text: 'Completed after context preparation.' }] };
     } } });
     const draft = await app.product.draft();
     providerId = await draft.configs.createConfig({ type: 'openai', name: 'Status fixture', enabled: true,
       url: 'http://localhost:1234/v1', model: 'fixture', apiKey: '', timeout: 5000, contextManagementEnabled: true,
       maxContextTokens: 8000, contextThreshold: '50%', models: [{ id: 'fixture', name: 'Fixture', contextWindow: 32000 }] });
-    await draft.settings.savePromptMode({ id: 'status-test', name: 'Status test', template: 'Preserve user requirements.', dynamicTemplate: '', dynamicTemplateEnabled: false });
+    // 状态夹具使用小窗口，只发送恢复历史需要的环境工具，不混入完整默认目录。
+    await draft.settings.savePromptMode({ id: 'status-test', name: 'Status test', template: 'Preserve user requirements.',
+      dynamicTemplate: '', dynamicTemplateEnabled: false, toolPolicy: [] });
     await draft.settings.updateSummarizeConfig({ keepRecentRounds: 1, keepRecentTokens: '50%', maxAutoSummarizeAttemptsPerTurn: 2 });
     await app.product.save(draft);
     const now = Date.now();
     await app.storage.createConversation({ id: 'status', actorId: 'owner', createdAt: now, updatedAt: now });
     const messages: PlatformMessage[] = [];
     for (let round = 0; round < 4; round++) {
-      messages.push({ id: `u${round}`, role: 'user', isUserInput: true, parts: [{ text: `Original requirement ${round}` }] },
+      messages.push({ id: `u${round}`, role: 'user', isUserInput: true, promptModeId: 'status-test', parts: [{ text: `Original requirement ${round}` }] },
         { id: `m${round}`, role: 'model', parts: [{ text: `Evidence ${round}: ${'retained original text '.repeat(300)}` },
           { functionCall: { id: `call-${round}`, name: 'workspace_files', args: { action: 'list', path: '.' } } }] },
         { id: `r${round}`, role: 'user', isFunctionResponse: true, parts: [{ functionResponse: { id: `call-${round}`, name: 'workspace_files', response: { success: true, data: { paths: ['source.ts'] } } } }] });
@@ -52,7 +55,8 @@ describe('context read-only status mirrors saved summaries without extra summari
 
     const run = await app.runtime.start({ actorId: 'owner', agentId: 'default', conversationId: 'status', requestKey: 'status-managed',
       providerId, promptModeId: 'status-test', message: { id: 'latest-user', role: 'user', parts: [{ text: 'Continue the work.' }] } });
-    expect(await app.runtime.wait(run.id)).toMatchObject({ status: 'completed' });
+    const completed = await app.runtime.wait(run.id);
+    expect({ status: completed?.status, error: completed?.error }).toEqual({ status: 'completed', error: undefined });
     expect(summaries.length).toBeGreaterThan(0);
     const summarizeCalls = summaries.length;
     const snapshots = await app.storage.listSnapshots('status');
@@ -116,4 +120,19 @@ describe('context read-only status mirrors saved summaries without extra summari
     expect(bare.tokens.precise).toBe(false);
     await expect(app.context.describeConversation('owner', 'missing')).rejects.toThrow();
   });
+
+  test.each([{ source: 'generic-tokenizer' as const }, { encoding: 'o200k_base' as const }])(
+    '计数返回本地词表来源 %j 时，不按配置方法标记为供应方精确计数', async provenance => {
+      const draft = await app.product.draft();
+      await draft.configs.updateConfig(providerId, { tokenCountMethod: 'openai_custom' });
+      await app.product.save(draft);
+      const count = jest.spyOn(TokenCountService.prototype, 'countTokensWithChannelConfig')
+        .mockResolvedValue({ success: true, totalTokens: 1234, ...provenance });
+      try {
+        const status = await app.context.describeConversation('owner', 'status', { providerId });
+        expect(status.tokens).toMatchObject({ preciseTokens: 1234, preciseAvailable: true, preciseIsProviderCount: false,
+          usedTokens: 0, source: 'none', precise: false });
+      } finally { count.mockRestore(); }
+    },
+  );
 });

@@ -35,6 +35,8 @@ const configLoaded = ref(false)
 const summarizeConfig = reactive<SummarizeConfig>({
   method: 'summary',
   userMessageRetention: 'first',
+  autoSummarizeTokenLimit: 0,
+  autoSummarizeAfterTurn: false,
   // 手动总结提示词（加载前的占位值，实际默认值由后端 DEFAULT_SUMMARIZE_CONFIG 下发）
   summarizePrompt: '',
   // 自动总结提示词
@@ -94,6 +96,11 @@ const {
 
 // 保留预算：数字或百分比文本，允许编辑期间为空；离开设置页时回填已保存值
 const keepRecentTokensDraft = ref('')
+function handleAutoSummarizeTokenLimit(event: Event) {
+  const input = event.target as HTMLInputElement
+  const value = input.value.trim() ? Number(input.value) : 0
+  if (Number.isSafeInteger(value) && value >= 0) void updateConfigField('autoSummarizeTokenLimit', value)
+}
 function syncKeepRecentTokensFromStored() {
   const stored = summarizeConfig.keepRecentTokens
   keepRecentTokensDraft.value = stored === undefined || stored === null ? '' : String(stored)
@@ -413,8 +420,19 @@ onUnmounted(() => {
         <p class="field-hint">{{ t('components.settings.summarizeSettings.optionsSection.keepTokensHint') }}</p>
       </div>
 
-      <div v-if="!standaloneContext" class="form-group">
-        <label>{{ t('components.settings.summarizeSettings.optionsSection.maxAttempts') }}</label>
+      <div v-if="standaloneContext" class="form-group">
+        <label>{{ t('components.settings.summarizeSettings.executionControls.tokenLimit') }}</label>
+        <div class="rounds-input">
+          <input type="number" :value="summarizeConfig.autoSummarizeTokenLimit || ''" min="0" step="1"
+            :placeholder="t('components.settings.summarizeSettings.executionControls.tokenLimitPlaceholder')"
+            @change="handleAutoSummarizeTokenLimit" />
+          <span class="unit">tokens</span>
+        </div>
+        <p class="field-hint">{{ t('components.settings.summarizeSettings.executionControls.tokenLimitHint') }}</p>
+      </div>
+
+      <div v-if="!standaloneContext || summarizeConfig.method !== 'notes'" class="form-group">
+        <label>{{ t('components.settings.summarizeSettings.executionControls.maxAttempts') }}</label>
         <div class="rounds-input">
           <input
             type="number"
@@ -425,11 +443,11 @@ onUnmounted(() => {
           />
           <span class="unit">{{ t('components.settings.summarizeSettings.optionsSection.maxAttemptsUnit') }}</span>
         </div>
-        <p class="field-hint">{{ t('components.settings.summarizeSettings.optionsSection.maxAttemptsHint') }}</p>
+        <p class="field-hint">{{ t('components.settings.summarizeSettings.executionControls.maxAttemptsHint') }}</p>
       </div>
 
-      <div v-if="!standaloneContext" class="form-group">
-        <label>{{ t('components.settings.summarizeSettings.optionsSection.maxInputRatio') }}</label>
+      <div v-if="!standaloneContext || summarizeConfig.method !== 'notes'" class="form-group">
+        <label>{{ t('components.settings.summarizeSettings.executionControls.maxInputRatio') }}</label>
         <div class="rounds-input">
           <input
             type="number"
@@ -440,7 +458,14 @@ onUnmounted(() => {
           />
           <span class="unit">%</span>
         </div>
-        <p class="field-hint">{{ t('components.settings.summarizeSettings.optionsSection.maxInputRatioHint') }}</p>
+        <p class="field-hint">{{ t('components.settings.summarizeSettings.executionControls.maxInputRatioHint') }}</p>
+      </div>
+
+      <div v-if="standaloneContext && summarizeConfig.method !== 'notes'" class="form-group">
+        <CustomCheckbox :model-value="summarizeConfig.autoSummarizeAfterTurn ?? false"
+          :label="t('components.settings.summarizeSettings.executionControls.afterTurn')"
+          @update:model-value="(value: boolean) => updateConfigField('autoSummarizeAfterTurn', value)" />
+        <p class="field-hint">{{ t('components.settings.summarizeSettings.executionControls.afterTurnHint') }}</p>
       </div>
 
       <div v-if="!standaloneContext || summarizeConfig.method !== 'notes'" class="form-group">
@@ -462,7 +487,7 @@ onUnmounted(() => {
         <p class="field-hint">{{ t('components.settings.summarizeSettings.optionsSection.manualPromptHint') }}</p>
       </div>
 
-      <div class="form-group">
+      <div v-if="!standaloneContext || summarizeConfig.method !== 'notes'" class="form-group">
         <div class="prompt-label-row">
           <label>{{ t('components.settings.summarizeSettings.optionsSection.autoPrompt') }}</label>
           <button

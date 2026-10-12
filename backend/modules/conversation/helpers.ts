@@ -6,6 +6,9 @@
 
 import type { Content, ContentPart } from './types';
 
+// 工具结果正文在历史中按对象替换；缓存净化后的只读投影，避免每轮复制大型 results。
+const functionResponseApiCache = new WeakMap<object, Record<string, unknown>>();
+
 /**
  * 判断消息是否为「真实 user 消息」（新回合边界）。
  *
@@ -379,6 +382,9 @@ export function cleanFunctionResponseForAPI(
         return response;
     }
     
+    const cached = functionResponseApiCache.get(response);
+    if (cached) return cached;
+
     // agentInbox 是模型可见的真实历史内容：不能在后续请求中删除，否则已经发送过的
     // provider 前缀会从该 functionResponse 起发生变化，破坏 KV/prompt cache 命中。
     // 一次性语义由 AgentMailbox.drain/claim 保证，不靠改写历史实现。
@@ -420,6 +426,8 @@ export function cleanFunctionResponseForAPI(
         rest.data = dataRest;
     }
     
+    functionResponseApiCache.set(response, rest);
+    functionResponseApiCache.set(rest, rest);
     return rest;
 }
 

@@ -2247,6 +2247,7 @@ const zhCN = {
             summarizeSettings: {
                 methodControls: sharedZhCN.components.settings.summarizeSettings.methodControls,
                 retention: sharedZhCN.components.settings.summarizeSettings.retention,
+                executionControls: sharedZhCN.components.settings.summarizeSettings.executionControls,
                 description: '上下文总结功能可以压缩对话历史，减少 Token 使用量。此页面用于配置手动总结与总结模型。自动总结请在「渠道设置 > 上下文管理」中配置。',
                 manualSection: {
                     title: '手动总结',

@@ -36,6 +36,8 @@ export type AgentConfig = SubAgentConfig
 export interface SummarizeConfig {
   method?: 'summary' | 'notes'
   userMessageRetention?: import('../../../shared/contextManagement').ContextUserMessageRetention
+  autoSummarizeTokenLimit?: number
+  autoSummarizeAfterTurn?: boolean
   summarizePrompt: string
   autoSummarizePrompt: string
   keepRecentRounds: number

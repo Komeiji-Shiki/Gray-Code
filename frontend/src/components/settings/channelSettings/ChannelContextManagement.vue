@@ -29,6 +29,7 @@ const props = defineProps<{
   summaryKeepRecentTokens: string | number | undefined
   summaryKeepRecentRounds: number
   autoSummarizeMethod?: ContextManagementMethod
+  autoSummarizeTokenLimit?: number
   autoMethodInherited?: boolean
 }>()
 
@@ -65,9 +66,13 @@ const thresholdHelp = computed(() => {
   const percentage = percentMatch ? Number(percentMatch[1]) : undefined
   const absolute = percentage === undefined ? parsePositiveNumber(raw) : undefined
   const effectiveInputTokens = props.contextBudget.effectiveInputTokens
-  const triggerTokens = percentage === undefined
+  const channelTrigger = percentage === undefined
     ? (absolute ?? Math.floor(effectiveInputTokens * 0.8))
     : Math.floor(effectiveInputTokens * percentage / 100)
+  const tokenLimit = props.autoSummarizeTokenLimit
+  const triggerTokens = standaloneContext
+    ? Math.min(channelTrigger, effectiveInputTokens, tokenLimit && tokenLimit > 0 ? tokenLimit : Infinity)
+    : channelTrigger
   const lines: string[] = []
 
   if (percentage !== undefined) {
@@ -78,7 +83,7 @@ const thresholdHelp = computed(() => {
     }))
   } else if (absolute !== undefined) {
     lines.push(t('components.settings.channelSettings.form.contextManagement.threshold.tooltip.absolute', {
-      trigger: formatTokens(absolute)
+      trigger: formatTokens(triggerTokens)
     }))
   } else {
     lines.push(t('components.settings.channelSettings.form.contextManagement.threshold.tooltip.invalid'))
@@ -97,9 +102,12 @@ const thresholdHelp = computed(() => {
   }
 
   if (standaloneContext) {
+    if (tokenLimit && tokenLimit > 0) {
+      lines.push(t('components.settings.summarizeSettings.executionControls.tokenLimitApplied', { limit: formatTokens(tokenLimit) }))
+    }
     lines.push(props.autoSummarizeMethod === 'notes'
       ? t('components.tools.contextStatus.notesHint')
-      : '达到阈值后使用当前模型和完整请求前缀生成摘要，活跃上下文仅保留首条用户消息和新摘要，原文仍可恢复。')
+      : t('components.settings.summarizeSettings.retention.summaryHint'))
     return lines.join('\n')
   }
   const keepRaw = props.summaryKeepRecentTokens ?? '50%'
@@ -163,7 +171,9 @@ const thresholdHelp = computed(() => {
           <span class="option-hint">
             {{ t(standaloneContext ? 'components.settings.summarizeSettings.methodControls.channelHint' : 'components.settings.channelSettings.form.contextManagement.mode.hint') }}
           </span>
-          <span v-if="standaloneContext && autoMethodInherited" class="option-hint">此旧渠道尚未单独设置，当前沿用全局方式；选择一次后按该渠道独立保存。</span>
+          <span v-if="standaloneContext && autoMethodInherited" class="option-hint">
+            {{ t('components.settings.summarizeSettings.methodControls.channelInherited') }}
+          </span>
         </div>
 
         <!-- 阈值（两种模式共用） -->

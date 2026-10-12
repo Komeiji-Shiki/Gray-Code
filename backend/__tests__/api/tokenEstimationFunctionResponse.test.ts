@@ -1,5 +1,7 @@
 import { TokenEstimationService } from '../../modules/api/chat/services/TokenEstimationService';
 import type { Content } from '../../modules/conversation/types';
+import { formatHistoryForAPI } from '../../modules/conversation/manager/historyFormatting';
+import { Tiktoken } from 'tiktoken';
 
 function createService(): TokenEstimationService {
     return new TokenEstimationService({} as any, {} as any);
@@ -41,6 +43,31 @@ describe('TokenEstimationService functionResponse API parity', () => {
 
         expect(service.estimateMessageTokens(functionResponseMessage(responseWithInternalMetadata)))
             .toBe(service.estimateMessageTokens(functionResponseMessage(visibleResponse)));
+
+        // 覆盖真实格式化路径：大型正文超过字符串缓存上限，必须复用 part/response 对象。
+        const largeText = '读取结果：alpha beta gamma delta\n'.repeat(6000);
+        const raw: Content[] = [
+            { role: 'user', parts: [{ text: largeText }] },
+            { role: 'model', parts: [{ functionCall: { id: 'fc-subagent', name: 'read_file', args: { path: 'a.ts' } } }] },
+            functionResponseMessage({ success: true, data: { content: largeText, diffs: 'internal-only' } })
+        ];
+        const encode = jest.spyOn(Tiktoken.prototype, 'encode');
+        const stringify = jest.spyOn(JSON, 'stringify');
+        try {
+            const first = formatHistoryForAPI(raw, { channelType: 'anthropic' });
+            const firstCount = first.reduce((total, message) => total + service.estimateMessageTokens(message), 0);
+            encode.mockClear();
+            stringify.mockClear();
+            const second = formatHistoryForAPI(raw, { channelType: 'anthropic' });
+            expect(second[0].parts[0]).toBe(first[0].parts[0]);
+            expect(second[2].parts[0].functionResponse!.response).toBe(first[2].parts[0].functionResponse!.response);
+            expect(second.reduce((total, message) => total + service.estimateMessageTokens(message), 0)).toBe(firstCount);
+            expect(encode).not.toHaveBeenCalled();
+            expect(stringify).not.toHaveBeenCalled();
+        } finally {
+            encode.mockRestore();
+            stringify.mockRestore();
+        }
     });
 
     test('steps / toolsUsed 保留给 AI 后计入裁剪预算', () => {

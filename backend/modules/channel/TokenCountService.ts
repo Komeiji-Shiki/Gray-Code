@@ -187,7 +187,7 @@ export class TokenCountService {
                 case 'anthropic':
                     return await this.countAnthropicTokensWithConfig(channelConfig, apiConfig, preparedContents, proxyUrl);
                 case 'local':
-                    return estimateLocalTokens(preparedContents);
+                    return estimateLocalTokens(preparedContents, { model: apiConfig?.model || channelConfig.model, channelType: channelConfig.type });
                 default:
                     return {
                         success: false,

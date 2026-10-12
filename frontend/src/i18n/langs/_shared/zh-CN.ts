@@ -293,8 +293,21 @@ const sharedZhCN = {
                 description: backendZhCN.tools.reviewDocument.finding.description,
             },
             summarizeSettings: {
+                executionControls: {
+                    afterTurn: backendZhCN.modules.settings.contextExecution.afterTurn,
+                    afterTurnHint: backendZhCN.modules.settings.contextExecution.afterTurnHint,
+                    maxAttempts: backendZhCN.modules.settings.contextExecution.maxAttempts,
+                    maxAttemptsHint: backendZhCN.modules.settings.contextExecution.maxAttemptsHint,
+                    maxInputRatio: backendZhCN.modules.settings.contextExecution.maxInputRatio,
+                    maxInputRatioHint: backendZhCN.modules.settings.contextExecution.maxInputRatioHint,
+                    tokenLimit: backendZhCN.modules.settings.contextExecution.tokenLimit,
+                    tokenLimitApplied: backendZhCN.modules.settings.contextExecution.tokenLimitApplied,
+                    tokenLimitHint: backendZhCN.modules.settings.contextExecution.tokenLimitHint,
+                    tokenLimitPlaceholder: backendZhCN.modules.settings.contextExecution.tokenLimitPlaceholder,
+                },
                 methodControls: {
                     channelHint: backendZhCN.modules.settings.contextMethod.channelHint,
+                    channelInherited: backendZhCN.modules.settings.contextMethod.channelInherited,
                     channelTitle: backendZhCN.modules.settings.contextMethod.channelTitle,
                     defaultHint: backendZhCN.modules.settings.contextMethod.defaultHint,
                     defaultTitle: backendZhCN.modules.settings.contextMethod.defaultTitle,

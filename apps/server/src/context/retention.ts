@@ -8,10 +8,22 @@ export function isHistoricalUserInput(message: PlatformMessage): boolean {
   return isRealUserMessage({ ...message, isSummarized: false } as Content);
 }
 
-export function retainedUserIds(messages: PlatformMessage[], policy?: ContextUserMessageRetention): Set<string> {
+export function retainedUserIds(messages: PlatformMessage[], policy?: ContextUserMessageRetention,
+  budget?: { maxTokens: number; estimateTokens: (message: PlatformMessage) => number }): Set<string> {
   const users = messages.filter(isHistoricalUserInput);
   // undefined 用于 Bot：保留其原来的首条活跃输入语义。
   const selected = policy === 'all' ? users : policy === 'first' ? [users[0], users.at(-1)]
     : [messages.find(message => isRealUserMessage(message as Content))];
-  return new Set(selected.flatMap(message => message?.id ? [message.id] : []));
+  const retained = new Set<string>();
+  let available = budget?.maxTokens ?? Number.POSITIVE_INFINITY;
+  // 最新要求先占用预算；整条原文放不下时留在摘要中，不截断用户约束的半句话。
+  for (let index = selected.length - 1; index >= 0; index--) {
+    const message = selected[index];
+    if (!message?.id || retained.has(message.id)) continue;
+    const tokens = budget?.estimateTokens(message) ?? 0;
+    if (tokens > available) continue;
+    available -= tokens;
+    retained.add(message.id);
+  }
+  return new Set(selected.flatMap(message => message?.id && retained.has(message.id) ? [message.id] : []));
 }

@@ -18,6 +18,8 @@ export type {
 
 export type * from './storage/memoryTypes';
 export {memoryTokens as estimateMemoryTokens} from './storage/longMemory/text';
+export { countTextTokens, countJsonTokens, describeTextTokenizer } from './tokenizer';
+export type { TokenizerOptions } from './tokenizer';
 
 export { readCharacterFile, identifyCharacterResource, readCharacterDefinition, readRegexRules, readWorldbook } from './characters/import';
 

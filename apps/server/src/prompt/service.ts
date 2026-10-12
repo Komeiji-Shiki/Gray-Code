@@ -60,7 +60,7 @@ export class PlatformPromptService {
     // 手动换到笔记窗口后仍提供恢复工具，自动方式继续服从当前渠道，不强迫两者相同。
     const contextRecovery = this.app.context.configuration(input.conversation).method === 'notes'
       || input.history.findLast(message => message.isSummary && !message.isSummarized)?.contextMethod === 'notes';
-    const contextToolNames = ['context_status', ...(useContextNotes ? [...CONTEXT_TOOL_NAMES] : contextRecovery ? ['context_history', 'context_notes'] : [])];
+    const contextToolNames = ['context_status', 'context_history', ...(useContextNotes ? [...CONTEXT_TOOL_NAMES] : contextRecovery ? ['context_notes'] : [])];
     if (typeof (input.conversation.custom as Record<string, unknown> | undefined)?.platformSubagentId === 'string') return {
       systemPrompt: input.agent.systemPrompt, toolNames: [...new Set([...input.agent.toolNames, ...contextToolNames])],
       turnContext: { contextManagementMethod, contextUserMessageRetention },

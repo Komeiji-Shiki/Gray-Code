@@ -3,7 +3,7 @@ import path from 'node:path';
 import { createRequire, isBuiltin } from 'node:module';
 
 // 编译 external 与发布依赖从同一处组成；语言服务由独立进程启动，桌面专用模块另行追加。
-const SHARED_RUNTIME_PACKAGES = ['sharp', 'jsonc-parser', 'node-pty', 'better-sqlite3', 'discord.js',
+const SHARED_RUNTIME_PACKAGES = ['sharp', 'tiktoken', 'jsonc-parser', 'node-pty', 'better-sqlite3', 'discord.js',
   '@graycode/core', '@graycode/contracts', 'typescript', 'typescript-language-server', 'docx', 'exceljs', 'pptxgenjs'];
 const LANGUAGE_SERVER_PACKAGES = ['pyright', 'vscode-langservers-extracted', 'yaml-language-server', 'bash-language-server',
   '@vue/language-server', '@vue/typescript-plugin', 'svelte-language-server'];

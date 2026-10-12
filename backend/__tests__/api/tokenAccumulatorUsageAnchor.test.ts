@@ -1,11 +1,4 @@
-/**
- * accumulateContextTokens 的 usage 锚点模式测试。
- *
- * 背景：自动总结判定此前用「系统提示词 + 逐条本地估算（×1.5 安全系数）」累加，
- * 与前端 usedTokens 显示口径（最后一条 usage 的 totalTokenCount）脱节——
- * 用户看到 26 万却触发 40 万阈值的总结。useUsageAnchor=true 时直接以最后一条
- * 真实 usage 为锚点，与显示值完全同源；无 usage 时回退原有估算逻辑。
- */
+/** 当前请求预算只累加选中的正文；旧 usage 不可充当缺少请求身份的总量锚点。 */
 
 import { accumulateContextTokens } from '../../modules/api/chat/services/contextTrim/tokenAccumulator';
 import type { AccumulateTokensDeps } from '../../modules/api/chat/services/contextTrim/tokenAccumulator';
@@ -23,7 +16,7 @@ function makeModelMessage(usage: Content['usageMetadata']): Content {
     };
 }
 
-function makeDeps(estimateMessageTokens = jest.fn()): AccumulateTokensDeps {
+function makeDeps(estimateMessageTokens = jest.fn().mockReturnValue(500)): AccumulateTokensDeps {
     return {
         tokenEstimationService: {
             estimateMessageTokens
@@ -53,8 +46,8 @@ function makeParams(fullHistory: Content[], extra: Record<string, unknown> = {})
 }
 
 describe('accumulateContextTokens usage 锚点模式', () => {
-    test('命中最后一条 usage：直接返回 totalTokenCount，且不调用本地估算', () => {
-        const estimateMessageTokens = jest.fn().mockReturnValue(999_999);
+    test('旧 usage 不覆盖当前正文预算，模型输出仅计一次', () => {
+        const estimateMessageTokens = jest.fn().mockReturnValue(500);
         const deps = makeDeps(estimateMessageTokens);
         const history = [
             makeUserMessage('hello'),
@@ -63,12 +56,11 @@ describe('accumulateContextTokens usage 锚点模式', () => {
 
         const result = accumulateContextTokens(deps, makeParams(history, { useUsageAnchor: true }));
 
-        expect(result.estimatedTotalTokens).toBe(350_000);
-        // 锚点命中后不再逐条本地估算
-        expect(estimateMessageTokens).not.toHaveBeenCalled();
+        expect(result.estimatedTotalTokens).toBe(2000);
+        expect(estimateMessageTokens).toHaveBeenCalledTimes(2);
     });
 
-    test('totalTokenCount 缺失时回退 promptTokenCount', () => {
+    test('只有 prompt usage 也不复用旧输入预算', () => {
         const deps = makeDeps();
         const history = [
             makeUserMessage('hello'),
@@ -77,28 +69,26 @@ describe('accumulateContextTokens usage 锚点模式', () => {
 
         const result = accumulateContextTokens(deps, makeParams(history, { useUsageAnchor: true }));
 
-        expect(result.estimatedTotalTokens).toBe(200_000);
+        expect(result.estimatedTotalTokens).toBe(2000);
     });
 
-    test('usage 之后的新消息不累加：显示多少就用多少', () => {
-        // 模拟主人的场景：上一轮主回复 usage 显示 260199，之后又有新输入和
-        // 无 usage 的模型回复，判定值仍与显示值一致（不因本地估算提前触发）
-        const estimateMessageTokens = jest.fn().mockReturnValue(999_999);
+    test('usage 之后的新输入与工具结果继续计入当前预算', () => {
+        const estimateMessageTokens = jest.fn().mockReturnValue(500);
         const deps = makeDeps(estimateMessageTokens);
         const history = [
             makeUserMessage('first user input'),
             makeModelMessage({ promptTokenCount: 240_000, candidatesTokenCount: 20_199, totalTokenCount: 260_199 }),
             makeUserMessage('new user input after the anchored reply'),
-            makeModelMessage(undefined as unknown as Content['usageMetadata'])
+            { role: 'user', isFunctionResponse: true, parts: [{ functionResponse: { name: 'read_file', response: { content: 'new result' } } }] } as Content
         ];
 
         const result = accumulateContextTokens(deps, makeParams(history, { useUsageAnchor: true }));
 
-        expect(result.estimatedTotalTokens).toBe(260_199);
-        expect(estimateMessageTokens).not.toHaveBeenCalled();
+        expect(result.estimatedTotalTokens).toBe(3000);
+        expect(estimateMessageTokens).toHaveBeenCalledTimes(4);
     });
 
-    test('无任何 usage 记录：回退原有估算逻辑', () => {
+    test('无 usage 记录时直接计数选中的正文', () => {
         const estimateMessageTokens = jest.fn().mockReturnValue(500);
         const deps = makeDeps(estimateMessageTokens);
         const history = [makeUserMessage('hello')];
@@ -109,7 +99,7 @@ describe('accumulateContextTokens usage 锚点模式', () => {
         expect(estimateMessageTokens).toHaveBeenCalledTimes(1);
     });
 
-    test('默认关闭锚点模式：保持原有累加行为', () => {
+    test('默认路径也不把模型 usage 输出重复加到正文上', () => {
         const estimateMessageTokens = jest.fn().mockReturnValue(500);
         const deps = makeDeps(estimateMessageTokens);
         const history = [
@@ -119,7 +109,7 @@ describe('accumulateContextTokens usage 锚点模式', () => {
 
         const result = accumulateContextTokens(deps, makeParams(history));
 
-        // promptTokens(1000) + 用户消息估算(500) + 模型 usage candidates(50)
-        expect(result.estimatedTotalTokens).toBe(1550);
+        // 固定前缀 1000 + 用户正文 500 + 模型正文 500。
+        expect(result.estimatedTotalTokens).toBe(2000);
     });
 });

@@ -10,8 +10,12 @@
 export interface SummarizeConfig {
     /** 常规总结或持久笔记换窗口；旧配置继续使用常规总结。 */
     method?: import('../../../../shared/contextManagement').ContextManagementMethod;
-    /** 普通会话的用户消息保留范围；两种选择都额外保留最近一次真实输入，Bot 不使用。 */
+    /** 普通会话在预算内保留首条与最新一条、或全部用户原文；不足时优先最新输入，Bot 不使用。 */
     userMessageRetention?: import('../../../../shared/contextManagement').ContextUserMessageRetention;
+    /** 自动压缩的可选绝对 token 上限；0 或省略时沿用渠道阈值。 */
+    autoSummarizeTokenLimit?: number;
+    /** 回合完成后按相同阈值在后台准备总结，默认关闭。 */
+    autoSummarizeAfterTurn?: boolean;
     /**
      * 手动总结提示词
      */
@@ -57,16 +61,16 @@ export interface SummarizeConfig {
     /**
      * 单个真实用户回合内自动总结的最大尝试次数。
      *
-     * 每次尝试都会调用总结模型；次数耗尽后若仍超阈值，本次请求改用不持久化的
-     * 细粒度安全裁剪（不直接丢弃整轮用户对话）。默认 2，允许范围 1-5。
+     * 仅普通总结使用；笔记换窗口不调用总结模型。次数耗尽后按当前输入预算裁剪请求。
+     * 默认 2，允许范围 1-5。
      */
     maxAutoSummarizeAttemptsPerTurn: number;
 
     /**
-     * 自动总结单次请求输入占总结模型上下文窗口的比例（0~1）。
+     * 自动普通总结超出硬输入预算时，单次处理范围占可用历史输入预算的比例（0~1）。
      *
-     * 待总结内容估算 token 超出该预算时，自动缩小总结范围（保留最近一轮
-     * functionCall/functionResponse 工具交互）。默认 0.5（50%）。
+     * 正常能放下的总结继续使用完整上下文；超限时扣除固定前缀与总结指令后缩小范围，
+     * 工具调用与结果保持配对。默认 0.5（50%），笔记换窗口不使用。
      */
     summarizeMaxInputRatio: number;
     

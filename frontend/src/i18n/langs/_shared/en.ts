@@ -293,8 +293,21 @@ const sharedEn = {
                 description: backendEn.tools.reviewDocument.finding.description,
             },
             summarizeSettings: {
+                executionControls: {
+                    afterTurn: backendEn.modules.settings.contextExecution.afterTurn,
+                    afterTurnHint: backendEn.modules.settings.contextExecution.afterTurnHint,
+                    maxAttempts: backendEn.modules.settings.contextExecution.maxAttempts,
+                    maxAttemptsHint: backendEn.modules.settings.contextExecution.maxAttemptsHint,
+                    maxInputRatio: backendEn.modules.settings.contextExecution.maxInputRatio,
+                    maxInputRatioHint: backendEn.modules.settings.contextExecution.maxInputRatioHint,
+                    tokenLimit: backendEn.modules.settings.contextExecution.tokenLimit,
+                    tokenLimitApplied: backendEn.modules.settings.contextExecution.tokenLimitApplied,
+                    tokenLimitHint: backendEn.modules.settings.contextExecution.tokenLimitHint,
+                    tokenLimitPlaceholder: backendEn.modules.settings.contextExecution.tokenLimitPlaceholder,
+                },
                 methodControls: {
                     channelHint: backendEn.modules.settings.contextMethod.channelHint,
+                    channelInherited: backendEn.modules.settings.contextMethod.channelInherited,
                     channelTitle: backendEn.modules.settings.contextMethod.channelTitle,
                     defaultHint: backendEn.modules.settings.contextMethod.defaultHint,
                     defaultTitle: backendEn.modules.settings.contextMethod.defaultTitle,

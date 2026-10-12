@@ -13,6 +13,9 @@ import { cleanFunctionResponseForAPI, ensureBackgroundTaskSourceForDisplay, isRe
 import { createForegroundWorkTransitionPart } from '../foregroundWorkTransition';
 import { formatBotSourceMessages } from '../../../../shared/botMessagePresentation';
 
+// 清理附件展示字段时保留净化对象身份，图片尺寸只在首次预算中读取。
+const formattedInlineData = new WeakMap<NonNullable<ContentPart['inlineData']>, Map<boolean, NonNullable<ContentPart['inlineData']>>>();
+
 /** 把历史映射为返回给前端的显示消息：补绝对 index、过滤内部字段、深拷贝 */
 export function toDisplayMessages(history: ConversationHistory, startIndex = 0): Content[] {
     return formatBotSourceMessages(history).map((message, index) => {
@@ -164,6 +167,8 @@ export function formatHistoryForAPI(
         isHistoryPart: boolean,
         messageIndex: number
     ): ContentPart => {
+        if (!part.thoughtSignatures && !part.thoughtSignature) return part;
+
         // 1. 处理历史消息的签名
         if (isHistoryPart) {
             if (!sendHistoryThoughtSignatures) {
@@ -268,23 +273,19 @@ export function formatHistoryForAPI(
             }
         }
         
-        // 根据渠道类型决定是否保留 displayName
-        // Gemini 支持 displayName，OpenAI/Anthropic 不支持
-        if (channelType === 'gemini') {
-            // Gemini: 保留 displayName，移除 id 和 name
-            const { id, name, ...cleanedInlineData } = part.inlineData;
-            return {
-                ...part,
-                inlineData: cleanedInlineData
-            };
-        } else {
-            // OpenAI/Anthropic/Custom: 移除 id, name, displayName
-            const { id, name, displayName, ...cleanedInlineData } = part.inlineData;
-            return {
-                ...part,
-                inlineData: cleanedInlineData
-            };
+        const keepDisplayName = channelType === 'gemini';
+        if (!('id' in part.inlineData) && !('name' in part.inlineData) && (keepDisplayName || !('displayName' in part.inlineData))) {
+            return part;
         }
+        let variants = formattedInlineData.get(part.inlineData);
+        let inlineData = variants?.get(keepDisplayName);
+        if (!inlineData) {
+            const { id, name, displayName, ...body } = part.inlineData;
+            inlineData = keepDisplayName && displayName !== undefined ? { ...body, displayName } : body;
+            if (!variants) { variants = new Map(); formattedInlineData.set(part.inlineData, variants); }
+            variants.set(keepDisplayName, inlineData);
+        }
+        return { ...part, inlineData };
     };
     
     // 首先收集所有被拒绝的工具调用 ID
@@ -364,6 +365,7 @@ export function formatHistoryForAPI(
             return null;
         }
         
+        if (!('rejected' in part.functionCall)) return part;
         // 移除 rejected 字段
         const { rejected, ...cleanedFunctionCall } = part.functionCall;
         return {
@@ -413,6 +415,7 @@ export function formatHistoryForAPI(
             return { ...rest, text: JSON.stringify({ tool_result: { id: functionResponse.id, name: functionResponse.name, response: cleanedResponse } }) };
         }
         
+        if (cleanedResponse === part.functionResponse.response) return part;
         return {
             ...part,
             functionResponse: {

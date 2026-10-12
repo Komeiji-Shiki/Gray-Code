@@ -26,8 +26,10 @@ const state = computed(() => {
 const method = computed(() => label(data.value.method === 'notes' ? 'notes' : data.value.method === 'summary' ? 'summary' : 'unknown'))
 const retention = computed(() => label(data.value.userMessageRetention === 'all' ? 'retainAll' : data.value.userMessageRetention === 'first' ? 'retainFirst' : data.value.userMessageRetention === 'bot-managed' ? 'retainBot' : 'unknown'))
 const threshold = computed(() => {
+  // 绝对上限可能早于渠道百分比触发，卡片优先显示服务端解析后的实际阈值。
+  if (finite(data.value.thresholdTokens) !== undefined) return format(data.value.thresholdTokens)
   const raw = data.value.threshold
-  return typeof raw === 'string' && /^\d+(?:\.\d+)?%$/.test(raw) ? raw : format(data.value.thresholdTokens ?? raw)
+  return typeof raw === 'string' && /^\d+(?:\.\d+)?%$/.test(raw) ? raw : format(raw)
 })
 const measuredAt = computed(() => {
   const value = finite(data.value.measuredAt)

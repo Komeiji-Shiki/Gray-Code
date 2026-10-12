@@ -13,7 +13,7 @@ describe('完整前缀总结与持久笔记换窗口', () => {
   const summaryText = '当前任务是完成原始要求。已经读取所需证据，确认原有约束仍然生效，尚待执行最新用户提出的修改。继续时保留精确文件路径和消息来源，不把历史引用当作新请求。';
   beforeEach(async () => {
     f = await fixture(); await f.store.close(); seen = [];
-    generate = async () => ({ role: 'model', parts: [{ text: summaryText }] });
+    generate = async () => ({ role: 'model', completionStatus: 'complete', parts: [{ text: summaryText }] });
     app = await PlatformApplication.open({ dataDirectory: f.data, models: { generate: async input => { seen.push(input); return generate(input); } } });
     const draft = await app.product.draft();
     providerId = await draft.configs.createConfig({ type: 'openai', name: '本地总结夹具', enabled: true, url: 'http://127.0.0.1:1/v1',
@@ -126,7 +126,7 @@ describe('完整前缀总结与持久笔记换窗口', () => {
   test('渠道总结方式同时用于自动和手动操作，未设置的渠道仍使用全局默认值', async () => {
     const draft = await app.product.draft(); await draft.settings.updateSummarizeConfig({ method: 'notes' });
     await draft.configs.updateConfig(providerId, { contextManagementEnabled: true, autoSummarizeMethod: 'summary' }); await app.product.save(draft);
-    generate = async input => ({ role: 'model', parts: [{ text: input.purpose === 'summary' ? summaryText : '继续完成当前任务。' }] });
+    generate = async input => ({ role: 'model', completionStatus: 'complete', parts: [{ text: input.purpose === 'summary' ? summaryText : '继续完成当前任务。' }] });
     const run = await start('automatic-summary'); expect(await app.runtime.wait(run.id)).toMatchObject({ status: 'completed' });
     expect(seen[0].purpose).toBe('summary'); expect(seen[0].providerId).toBe(providerId);
     expect(seen[0].tools).toEqual(seen[1].tools);
@@ -239,7 +239,9 @@ describe('完整前缀总结与持久笔记换窗口', () => {
     await app.storage.appendHistory('compaction', [{ id: 'long-evidence', role: 'model', parts: [
       { text: '前'.repeat(8000) + 'NEEDLE_TAG' + '后'.repeat(1000) }, { inlineData: attachment },
     ] }]);
-    const run = await start('history-test'); await app.runtime.wait(run.id);
+    const run = await start('history-test');
+    const completed = await app.runtime.wait(run.id);
+    expect({ status: completed.status, error: completed.error }).toEqual({ status: 'completed', error: undefined });
     const context = { actorId: 'owner', runId: run.id, conversationId: 'compaction', signal: new AbortController().signal, progress: () => {}, askUser: jest.fn() };
     const tools = app.tools.catalog(['context_history', 'context_notes']).entries;
     const history = tools.get('context_history')!.tool;

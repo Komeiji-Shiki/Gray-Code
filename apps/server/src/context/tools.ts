@@ -3,7 +3,8 @@ import type { PlatformApplication } from '../application';
 import { contextStatus } from './status';
 import { contextMessageText, historyPreview, textPage } from './textPage';
 import { NOTE_GRAPH_PROPERTIES, runNoteGraphTool } from './noteTool';
-import { activeContextHistory, type ModelPrefix } from './compaction';
+import { activeContextHistory } from './compaction';
+import { readModelPrefix } from './prefix';
 import { MEMORY_HISTORY_PROJECTION } from '../memory/longTerm/history';
 
 interface WorkingNote {
@@ -75,7 +76,7 @@ export function contextTools(app: PlatformApplication): RuntimeTool[] {
         if (['record', 'recall', 'inspect'].includes(String(args.action))) {
           const state = await app.storage.readConversationState(id);
           const view = await app.longMemoryPrompt.history.prepare(context.actorId, id, state.history.messages);
-          const prefix = (state.metadata.custom as Record<string, unknown> | undefined)?.contextRequestPrefix as ModelPrefix | undefined;
+          const prefix = await readModelPrefix(app, state.metadata);
           const providerId = context.modelSelection?.providerId ?? prefix?.providerId;
           const config = args.action === 'recall' && providerId ? await app.product.channel(providerId, { includeCredential: false }) : undefined;
           context.signal.throwIfAborted();
@@ -236,9 +237,7 @@ export function contextTools(app: PlatformApplication): RuntimeTool[] {
         const id = await authorizeContext(context);
         const state = await app.storage.getConversationInfo(id);
         if (!state) throw new Error('当前会话已不存在。');
-        const prefix = (state.metadata.custom as Record<string, unknown> | undefined)?.contextRequestPrefix as
-          | { turnContext?: { contextManagementMethod?: string } }
-          | undefined;
+        const prefix = await readModelPrefix(app, state.metadata);
         if ((prefix?.turnContext?.contextManagementMethod ?? app.context.configuration(state.metadata).method) !== 'notes')
           throw new Error('切换上下文需要选择笔记管理方式。');
         context.signal.throwIfAborted();

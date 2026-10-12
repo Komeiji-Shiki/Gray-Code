@@ -3,40 +3,39 @@ import type { BotAutoSummarySettings, PlatformConversation, PlatformMessage, Run
 import type { ModelRequestContext } from '@graycode/core';
 import type { PlatformApplication } from '../application';
 import { CapturedContext } from './captured';
-import { Logger } from '../../../../backend/core/logger';
 import type { Content } from '../../../../backend/modules/conversation/types';
 import { isRealUserMessage } from '../../../../backend/modules/conversation/helpers';
-import { repairParentChainAfterInsert, restoreSummarizedRange } from '../../../../backend/modules/conversation/TranscriptMutation';
-import { MessageBuilderService } from '../../../../backend/modules/api/chat/services/MessageBuilderService';
+import { restoreSummarizedRange } from '../../../../backend/modules/conversation/TranscriptMutation';
 import { MessageTokenEstimator } from '../../../../backend/modules/api/chat/services/MessageTokenEstimator';
-import { TokenEstimationService } from '../../../../backend/modules/api/chat/services/TokenEstimationService';
 import { TokenCountService } from '../../../../backend/modules/channel/TokenCountService';
-import { SummaryAlgorithms, BUILTIN_SUMMARIZE_SYSTEM_PROMPT, MIN_SUMMARY_LENGTH, MANUAL_SUMMARY_MAX_INPUT_RATIO,
-  extractSummaryAnchorText } from '../../../../backend/modules/api/chat/services/SummaryAlgorithms';
-import { getHistoryWithContextTrimInfo } from '../../../../backend/modules/api/chat/services/contextTrim/contextTrimInfo';
-import { getHistoryWithGranularFallback } from '../../../../backend/modules/api/chat/services/contextTrim/granularFallback';
-import { findLastSummaryIndex, calculateContextThreshold } from '../../../../backend/modules/api/chat/services/contextTrim/roundDetection';
+import { BUILTIN_SUMMARIZE_SYSTEM_PROMPT } from '../../../../backend/modules/api/chat/services/SummaryAlgorithms';
+import { findLastSummaryIndex } from '../../../../backend/modules/api/chat/services/contextTrim/roundDetection';
 import { resolveContextManagementPolicy } from '../../../../backend/modules/api/chat/services/contextTrim/policy';
 import { resolveMaxContextTokensForConfig } from '../../../../backend/modules/api/chat/services/contextTrim/contextWindowResolution';
 import { planAutoSummarizeMessages, planSummarizeMessages, planIntraRoundSplit, resolveKeepRecentTokenBudget } from '../../../../backend/modules/api/chat/services/summarizeRangePlanner';
-import { clampSummarizeMaxInputRatio } from '../../../../backend/modules/settings/types/summarizeTypes';
 import { branchMutation, groupMessages, readBranches } from '../conversations/branches';
 import { rebaseActivePathFromHistory } from '../../../../backend/modules/conversation/branch/BranchGraph';
-import { CONTEXT_NOTES_REMINDER, CONTEXT_TOOL_NAMES } from '../../../../shared/contextManagement';
-import { activeContextHistory, captureModelPrefix, conversationContextSettings, manualSummaryPrefix, notesWindowBoundary, summarizeFullContext } from './compaction';
-import { applyBotContextPrefixes, type CapturedBotEnvironment } from '../bots/prompt';
-import type { CharacterTurn } from '../characters/pipeline';
+import { conversationContextSettings, manualSummaryPrefix, notesWindowBoundary, summarizeFullContext } from './compaction';
+import { prepareContextRequest } from './prepare';
+import { createContextBudget } from './budget';
+import { captureSummaryView } from './requestView';
+import { ContextBackgroundSummaries } from './background';
+import { extractSummaryText } from './summaryText';
+import type { TurnContextState } from './decision';
 
-interface TurnContextState { turnId: string; summaryAttempts: number; fallbackStart?: number; fallback?: boolean }
 interface SummaryResult { summaryContent: Content; insertIndex: number; removedCount: number }
 
 export class PlatformContextService {
-  private readonly log = Logger.get('PlatformContext');
-  private readonly builder = new MessageBuilderService();
   private readonly localTokens = new MessageTokenEstimator();
-  private readonly summaries = new SummaryAlgorithms(this.localTokens);
   private readonly manual = new Map<string, { actorId: string; controller: AbortController; done: Promise<unknown> }>();
-  constructor(private readonly app: PlatformApplication) {}
+  private readonly background: ContextBackgroundSummaries;
+  constructor(private readonly app: PlatformApplication) {
+    this.background = new ContextBackgroundSummaries(app, {
+      commit: (frame, snapshot) => this.commit(frame, undefined, snapshot),
+      event: (runId, type, payload) => this.event(runId, type, payload),
+      isManual: id => this.manual.has(id),
+    });
+  }
   configuration(conversation: PlatformConversation, automaticChannel?: Parameters<typeof conversationContextSettings>[2]) {
     return conversationContextSettings(this.app, conversation, automaticChannel);
   }
@@ -50,206 +49,95 @@ export class PlatformContextService {
     const state = frame.state;
     const result = await this.app.storage.commitConversation({ conversationId: state.metadata.id,
       expectedRevision: state.history.revision, expectedMetadataToken: state.metadataToken, activeRunId: runId,
-      ...(frame.historyReplaced ? { messages: state.history.messages }
-        : frame.messageUpdates.size ? { messageUpdates: [...frame.messageUpdates].map(([index, message]) => ({ index, message })) } : {}),
+      ...(frame.historyReplaced ? { messages: state.history.messages } : {
+        ...(frame.messageUpdates.size ? { messageUpdates: [...frame.messageUpdates].map(([index, message]) => ({ index, message })) } : {}),
+        ...(frame.appendMessages.length ? { appendMessages: frame.appendMessages } : {}),
+      }),
       metadata: state.metadata,
       ...(snapshot ? { snapshot: { id: randomUUID(), conversationId: state.metadata.id, timestamp: Date.now(), name: '总结变更前', kind: 'context-summary' } } : {}) });
     state.history.revision = result.revision; state.history.total = result.total; state.metadataToken = result.metadataToken;
-    frame.dirty = false; frame.historyReplaced = false; frame.messageUpdates.clear();
+    frame.dirty = false; frame.historyReplaced = false; frame.messageUpdates.clear(); frame.appendMessages.length = 0;
     this.app.productUi.conversations.clearMetadataCache();
   }
-  /** 正式请求与预览共用处理顺序；预览沿用捕获的元数据，并把只读模式传给记忆和上下文准备。 */
-  async prepareModel(input: ModelRequestContext, preview = false) {
-    const view = await this.app.longMemoryPrompt.history.prepare(input.run.actorId, input.run.conversationId,
-      input.history.history.messages, preview ? input.history.metadata : undefined);
-    const memory = await this.app.longMemoryPrompt.capture({ ...input,
-      history: { ...input.history, history: { ...input.history.history, messages: view.messages } } }, preview);
-    const prepared = await this.prepare(input, preview, memory.text, view.filter);
-    prepared.messages = await this.app.characterPipeline.modelHistory(prepared.messages,
-      input.input.turnContext?.characterTurn as CharacterTurn | undefined, input.input.signal);
-    prepared.messages = this.app.longMemoryPrompt.inject(view.filter(prepared.messages), memory, input.input,
-      view.filter(prepared.history.history.messages));
-    prepared.messages = applyBotContextPrefixes(prepared.messages,
-      (prepared.history.metadata.custom as { botEnvironment?: CapturedBotEnvironment } | undefined)?.botEnvironment,
-      input.input.taskContext?.actor);
-    return prepared;
+  /** 正式请求和预览共享最终视图、预算和动作决策。 */
+  async prepareModel(context: ModelRequestContext, preview = false) {
+    if (!preview) this.beforeRun(context.run.conversationId);
+    return prepareContextRequest(this.app, context, { preview, modelView: true,
+      commit: (frame, snapshot) => this.commit(frame, context.run.id, snapshot),
+      event: (type, payload) => this.event(context.run.id, type, payload) });
   }
-  async prepare(context: ModelRequestContext, preview = false, additionalContextText = '', filterHistory?: (messages: PlatformMessage[]) => PlatformMessage[]) {
-    const { run, input } = context;
-    const pendingAsyncCallIds = input.pendingToolCallIds?.length ? new Set(input.pendingToolCallIds) : undefined;
-    // 管理策略只用普通渠道字段；远程 Token 计数读取独立的计数配置。
-    let config = await this.app.product.channel(input.providerId, { includeCredential: false });
-    if (!config) return { history: context.history, messages: input.messages };
-    const management = this.configuration(context.history.metadata, config);
-    // 工具目录和总结方式在回合开始时一同捕获，设置变更不破坏正在运行的前缀。
-    const capturedMethod = input.turnContext?.contextManagementMethod;
-    if (capturedMethod === 'summary' || capturedMethod === 'notes') management.method = capturedMethod;
-    const capturedRetention = input.turnContext?.contextUserMessageRetention;
-    if (management.userMessageRetention !== undefined && (capturedRetention === 'first' || capturedRetention === 'all')) management.userMessageRetention = capturedRetention;
-    if (management.bot?.method && management.bot.method !== 'time') config = { ...config,
-      contextManagementEnabled: management.bot.enabled, contextManagementMode: 'summarize' };
-    const settings = this.app.product.runtimeSettings();
-    const frame = new CapturedContext(context.history, filterHistory);
-    const notices: string[] = [];
-    const commit = (snapshot = false) => preview ? Promise.resolve() : this.commit(frame, run.id, snapshot);
-    const event = (type: RunEvent['type'], payload: Record<string, unknown>) => preview ? Promise.resolve() : this.event(run.id, type, payload);
-    const prefix = captureModelPrefix({ ...input, modelOverride: input.modelOverride ?? config.model });
-    const custom = frame.state.metadata.custom as Record<string, unknown> | undefined;
-    if (JSON.stringify(custom?.contextRequestPrefix) !== JSON.stringify(prefix)) await frame.store.setCustomMetadata(run.conversationId, 'contextRequestPrefix', prefix);
-    const pending = custom?.pendingContextWindow as { runId?: string; toolCallId?: string } | undefined;
-    const switchRequested = pending?.runId === run.id && frame.state.history.messages.some(message => message.parts.some(part =>
-      part.functionResponse && (part.functionResponse as { id?: string }).id === pending.toolCallId));
-    if (switchRequested && management.method === 'notes' && !pendingAsyncCallIds) {
-      await event('context.summary.started', { method: 'notes' });
-      const result = await notesWindowBoundary(this.app, frame, true, config.type, management.userMessageRetention, 'model_requested');
-      await commit(true);
-      await event('context.summary.completed', { ...result });
-    }
-    // 预览只在独立快照内估算，不发起远程 Token 计数或更新已保存的历史。
-    const estimator = new TokenEstimationService(frame.store, new TokenCountService(settings.getEffectiveProxyUrl()), preview ? undefined : settings);
-    const options = { ...this.builder.buildHistoryOptions(config), ...(pendingAsyncCallIds ? { pendingAsyncCallIds } : {}) };
-    const promptText = [...input.promptContext?.beforeHistoryMessages ?? [], ...input.promptContext?.afterHistoryMessages ?? []]
-      .flatMap(message => message.parts.map(part => part.text ?? '')).join('\n') + additionalContextText;
-    const fixedSystem = [input.systemPrompt, JSON.stringify(input.tools)].join('\n');
-    const evaluate = (advance: boolean) => getHistoryWithContextTrimInfo({ conversationManager: frame.store,
-      promptManager: { getSystemPrompt: () => fixedSystem, getDynamicContextText: () => promptText },
-      messageBuilderService: this.builder, tokenEstimationService: estimator, log: this.log },
-    run.conversationId, config, options, promptText, undefined, input.modelOverride, 'preserve', { allowStateAdvance: advance });
-    if (pendingAsyncCallIds) {
-      // 等待期间只冻结边界变化，仍复用既有窗口、裁剪点和渠道过滤，不能重新发送完整存档。
-      const policy = resolveContextManagementPolicy(config);
-      const messages = policy.mode === 'trim' ? (await evaluate(false)).history as PlatformMessage[]
-        : activeContextHistory(filterHistory?.(frame.state.history.messages) ?? frame.state.history.messages, config, pendingAsyncCallIds);
-      await commit();
-      return { history: frame.state, messages, notices };
-    }
-    let info = await evaluate(context.iteration === 1);
-    const turnId = frame.state.history.messages.findLast(message => isRealUserMessage({ ...message, isSummarized: false } as Content) && !message.userFeedback)?.id ?? run.id;
-    const old = custom?.platformContext as TurnContextState | undefined;
-    const turn: TurnContextState = old?.turnId === turnId ? { ...old } : { turnId, summaryAttempts: 0 };
-    const fixedTokens = info.fixedPromptTokens ?? this.localTokens.estimateMessageTokens({ role: 'user', parts: [{ text: fixedSystem + promptText }] });
-    const overflow = info.history.reduce((total, message) => total + this.localTokens.estimateMessageTokens(message), fixedTokens) > resolveMaxContextTokensForConfig(config, input.modelOverride).maxInputTokens;
-    const policy = resolveContextManagementPolicy(config);
-    if (!policy.enabled) { turn.fallback = false; turn.fallbackStart = undefined; }
-    if (overflow && policy.enabled && context.iteration > 1) info = await evaluate(true);
-    const active = () => activeContextHistory(filterHistory?.(frame.state.history.messages)??frame.state.history.messages, config);
-    // 活动历史的额外计数只用于自动总结阈值；裁剪、关闭管理或已触发总结时无需重复估算。
-    const shouldCompact = policy.enabled && policy.mode === 'summarize' && (info.needsAutoSummarize ||
-      active().reduce((total, message) => total + this.localTokens.estimateMessageTokens(message as Content), fixedTokens)
-        > calculateContextThreshold(config.contextThreshold ?? '80%', resolveMaxContextTokensForConfig(config, input.modelOverride).maxInputTokens));
-    if (management.method === 'notes' && shouldCompact && !switchRequested) {
-      if (!CONTEXT_TOOL_NAMES.every(name => input.tools.some(tool => tool.name === name))) throw new Error('笔记管理需要启用 context_notes、context_history 和 new_context 工具，请启用后重试。');
-      if (overflow) {
-        await event('context.summary.started', { method: 'notes' });
-        const result = await notesWindowBoundary(this.app, frame, true, config.type, management.userMessageRetention, 'input_budget_exceeded');
-        await commit(true);
-        await event('context.summary.completed', { ...result });
-        if (preview) notices.push('当前内容预计超过上下文容量，发送前将切换到笔记窗口；这里展示切换后的内容。');
-      } else {
-        const windowId = frame.state.history.messages.findLast(message => message.contextWindowId)?.contextWindowId ?? 'initial';
-        if (custom?.contextReminderWindowId !== windowId) {
-          frame.state.history.messages.push({ id: randomUUID(), role: 'user', contextControl: 'reminder', parts: [{ text: CONTEXT_NOTES_REMINDER }],
-            parentId: frame.state.history.messages.at(-1)?.id ?? null, timestamp: Date.now(), index: frame.state.history.messages.length });
-          await frame.store.setCustomMetadata(run.conversationId, 'contextReminderWindowId', windowId);
-        }
-      }
-      await commit();
-      return { history: frame.state, messages: active(), notices };
-    }
-    const latestBoundary = frame.state.history.messages.findLastIndex(message => message.isSummary && !message.isSummarized);
-    const hasNewModelHistory = frame.state.history.messages.slice(latestBoundary + 1).some(message => message.role === 'model' && !message.isSummarized);
-    if (management.method === 'summary' && shouldCompact && hasNewModelHistory) {
-      if (preview) return { history: frame.state, messages: active(), notices: [
-        '当前内容预计触发自动总结。这里展示总结前的完整提示词；总结生成后，实际发送的历史会随之变化。'] };
-      turn.summaryAttempts++;
-      await frame.store.setCustomMetadata(run.conversationId, 'platformContext', turn);
-      await commit();
-      await event('context.summary.started', { attempt: turn.summaryAttempts });
-      try {
-        const result = await summarizeFullContext(this.app, frame, prefix, input.signal, true);
-        await commit(true);
-        turn.fallback = false; turn.fallbackStart = undefined;
-        await event('context.summary.completed', { ...result });
-        info = await evaluate(true);
-      } catch (error) {
-        input.signal.throwIfAborted();
-        if (['REVISION_CONFLICT', 'STORAGE_BUSY'].includes((error as { code?: string }).code ?? '')) throw error;
-        await event('context.summary.failed', { message: (error as Error).message });
-        throw error;
-      }
-    }
-    if (policy.mode === 'trim' && (info.needsContextFallback || turn.fallback)) {
-      info = await getHistoryWithGranularFallback({ conversationManager: frame.store, tokenEstimationService: estimator, log: this.log },
-        run.conversationId, config, options, input.modelOverride, 'preserve', turn.fallbackStart, fixedTokens);
-      turn.fallback = true; turn.fallbackStart = info.trimStartIndex;
-      await event('context.fallback', { trimStartIndex: info.trimStartIndex });
-    }
-    if (turn.summaryAttempts || turn.fallback) await frame.store.setCustomMetadata(run.conversationId, 'platformContext', turn);
-    await commit();
-    input.signal.throwIfAborted();
-    return { history: frame.state, messages: policy.mode === 'trim' ? info.history as PlatformMessage[] : active(), notices };
+  async prepare(context: ModelRequestContext, preview = false, additionalContextText = '',
+    filterHistory?: (messages: PlatformMessage[]) => PlatformMessage[]) {
+    return prepareContextRequest(this.app, context, { preview, additionalContextText, filterHistory,
+      commit: (frame, snapshot) => this.commit(frame, context.run.id, snapshot),
+      event: (type, payload) => this.event(context.run.id, type, payload) });
   }
 
-  private async summarizeTimed(frame: CapturedContext, providerId: string, modelOverride: string | undefined, signal: AbortSignal, mode: 'auto' | 'manual', override?: BotAutoSummarySettings): Promise<SummaryResult> {
+  private async summarizeTimed(frame: CapturedContext, providerId: string, modelOverride: string | undefined,
+    signal: AbortSignal, mode: 'auto' | 'manual', override?: BotAutoSummarySettings): Promise<SummaryResult> {
     signal.throwIfAborted();
     const settings = this.app.product.runtimeSettings().getSummarizeConfig();
-    const filtered = await this.app.longMemoryPrompt.history.prepare(String(frame.state.metadata.actorId),frame.state.metadata.id,frame.state.history.messages);
-    const full = filtered.messages as Content[];
-    const lastSummary = findLastSummaryIndex(full);
-    const start = lastSummary + 1;
-    const candidates = full.slice(start).filter(message => !message.isSummarized);
     const main = await this.app.product.channel(providerId, { includeCredential: false });
     if (!main) throw new Error('总结使用的主渠道不存在。');
-    const tokens = candidates.map(message => this.summaries.estimateMessageTokensForBudget(message, main.type));
-    const keep = resolveKeepRecentTokenBudget(override ? `${100 - override.percent}%` : settings.keepRecentTokens, tokens.reduce((sum, item) => sum + item, 0));
-    const args = { messages: candidates, messageTokens: tokens, keepBudgetTokens: keep, minKeepRounds: override ? 1 : settings.keepRecentRounds };
+    const prefix = await manualSummaryPrefix(this.app, frame, String(frame.state.metadata.actorId), providerId, modelOverride);
+    const assemble = await captureSummaryView(this.app, frame.state, prefix, main, signal);
+    const full = await assemble(frame.state);
+    const counter = createContextBudget(prefix, main, settings.autoSummarizeTokenLimit);
+    const lastSummary = findLastSummaryIndex(full as Content[]);
+    const candidates = full.slice(lastSummary + 1);
+    const tokens = candidates.map(counter.estimateMessage);
+    const keep = resolveKeepRecentTokenBudget(override ? `${100 - override.percent}%` : settings.keepRecentTokens,
+      tokens.reduce((sum, item) => sum + item, 0));
+    const args = { messages: candidates as Content[], messageTokens: tokens, keepBudgetTokens: keep,
+      minKeepRounds: override ? 1 : settings.keepRecentRounds };
     const plan = mode === 'auto' ? planAutoSummarizeMessages(args) : planSummarizeMessages({ ...args, mode });
-    const split = plan ?? (lastSummary >= 0 && !candidates.some(isRealUserMessage) ? planIntraRoundSplit(args) : null);
+    const split = plan ?? (lastSummary >= 0 && !candidates.some(message => isRealUserMessage(message as Content))
+      ? planIntraRoundSplit(args) : null);
     if (!split || split.cutIndex < 1) throw new Error('没有足够的完整历史可总结，最近的用户回合会继续保留。');
-    let end = full.findIndex(message => message.id === candidates[split.cutIndex]?.id);
-    if (end < 1) throw new Error('总结范围边界不可用。');
+    const source = full.slice(0, lastSummary + 1 + split.cutIndex);
     const actualProvider = settings.useSeparateModel && settings.summarizeChannelId ? settings.summarizeChannelId : providerId;
     const actualModel = settings.useSeparateModel && settings.summarizeChannelId ? settings.summarizeModelId || undefined : modelOverride;
     const config = await this.app.product.channel(actualProvider, { includeCredential: false });
     if (!config?.enabled) throw new Error('总结渠道不存在或已禁用。');
-    const basePrompt = override?.prompt.trim() || (mode === 'auto' ? settings.autoSummarizePrompt : settings.summarizePrompt);
-    const prompt = this.summaries.buildDetailedSummaryPrompt(basePrompt, extractSummaryAnchorText(full, end));
-    const budget = this.summaries.resolveSummaryInputBudget(config, actualModel,
-      mode === 'auto' ? clampSummarizeMaxInputRatio(settings.summarizeMaxInputRatio) : MANUAL_SUMMARY_MAX_INPUT_RATIO, prompt);
-    const source = full.slice(Math.max(0, lastSummary), end).filter(message => !message.isSummarized);
-    const fitted = this.summaries.fitSummaryHistoryPrefixToBudget(source, budget.maxHistoryTokens, config.type);
-    if (!fitted) throw new Error('没有完整消息范围能放入总结模型的输入预算。');
-    end = full.findIndex(message => message.id === fitted.messages.at(-1)?.id) + 1;
-    if (end <= start) throw new Error('缩小范围后没有可总结的新消息。');
-    const cleaned = this.summaries.cleanMessagesForSummarize(fitted.messages, config);
-    if (!cleaned.length || this.summaries.estimateMessagesTokens(cleaned, config.type) > budget.maxHistoryTokens) throw new Error('总结请求仍然超过输入预算。');
-    const response = await this.app.models.generate({ conversationId: `summary-${randomUUID()}`, providerId: actualProvider,
-      modelOverride: actualModel, systemPrompt: BUILTIN_SUMMARIZE_SYSTEM_PROMPT, tools: [], signal,
-      messages: [...cleaned, { role: 'user', parts: [{ text: this.summaries.buildDetailedSummaryPrompt(basePrompt, extractSummaryAnchorText(full, end)) }] }] as unknown as PlatformMessage[] });
-    signal.throwIfAborted();
-    const text = response.parts.filter(part => !part.thought && typeof part.text === 'string').map(part => part.text).join('\n').trim();
-    if (text.length < MIN_SUMMARY_LENGTH || response.parts.some(part => part.functionCall)) throw new Error('总结内容过短或格式不完整，原文没有被覆盖。');
-    const firstUser = full.findIndex(isRealUserMessage);
-    const markStart = Math.max(start, firstUser + 1);
-    if (markStart >= end) throw new Error('总结范围没有可标记的新消息。');
-    const sourceIds = full.slice(markStart, end).map(message => message.id!);
-    const summary: Content = { id: randomUUID(), role: 'user', parts: [{ text }], timestamp: Date.now(),
-      parentId: full[end - 1]?.id ?? null, isSummary: true, isAutoSummary: mode === 'auto',
-      summarizedMessageCount: this.summaries.resolvePreviousSummarizedCount(full, lastSummary) + sourceIds.length,
-      summaryTokenStats: this.summaries.buildSummaryTokenStats({ fullHistory: full, messagesToSummarize: fitted.messages,
-        summaryText: text, channelType: config.type }), index: end };
-    const messages = structuredClone(frame.state.history.messages) as Content[];
-    for (let index = markStart; index < end; index++) messages[index].isSummarized = true;
-    messages.splice(end, 0, summary);
-    repairParentChainAfterInsert(messages, end, summary.parentId ?? null, summary.id!);
-    frame.state.history.messages = messages.map((message, index) => ({ ...message, index })) as unknown as PlatformMessage[];
-    (frame.state.history.messages[end] as PlatformMessage).summarizedMessageIds = sourceIds;
-    (frame.state.history.messages[end] as PlatformMessage).longMemoryInputIds = fitted.messages.filter(message=>!(message as PlatformMessage).memoryRedacted).map(message=>message.id!);
-    frame.dirty = true; frame.historyReplaced = true;
-    await frame.store.setCustomMetadata(frame.state.metadata.id, 'trimState', null);
-    return { summaryContent: frame.state.history.messages[end] as Content, insertIndex: end, removedCount: sourceIds.length };
+    const summaryPrefix = actualProvider === providerId && actualModel === modelOverride ? prefix
+      : { ...prefix, providerId: actualProvider, modelOverride: actualModel, systemPrompt: BUILTIN_SUMMARIZE_SYSTEM_PROMPT,
+        tools: [], promptContext: undefined };
+    const summaryBudget = createContextBudget(summaryPrefix, config);
+    const before = counter.evaluate(full);
+    return summarizeFullContext(this.app, frame, summaryPrefix, signal, mode === 'auto', {
+      messages: source, consumedMessageIds: new Set(source.flatMap(message => message.id ? [message.id] : [])),
+      insertAtConsumedEnd: true, maxHistoryTokens: Math.max(0, summaryBudget.maxInputTokens - summaryBudget.fixedTokens),
+      retainedUserTokenBudget: Math.max(0, before.maxInputTokens - before.fixedTokens
+        - (before.historyTokens - counter.evaluate(source).historyTokens)), estimateTokens: summaryBudget.estimateMessage,
+      prompt: override?.prompt.trim() || (mode === 'auto' ? settings.autoSummarizePrompt : settings.summarizePrompt),
+      validateCandidate: async candidate => {
+        const after = counter.evaluate(await assemble(candidate.state));
+        if (after.inputTokens >= before.inputTokens) throw new Error('总结没有减少本次模型请求，原历史保持不变。');
+      },
+    });
   }
 
+  private async summarizePrepared(frame: CapturedContext, providerId: string, modelOverride: string | undefined,
+    signal: AbortSignal, automatic: boolean) {
+    const config = await this.app.product.channel(providerId, { includeCredential: false });
+    if (!config?.enabled) throw new Error('当前会话的模型渠道不存在或已禁用。');
+    const prefix = await manualSummaryPrefix(this.app, frame, String(frame.state.metadata.actorId), providerId, modelOverride);
+    const assemble = await captureSummaryView(this.app, frame.state, prefix, config, signal);
+    const messages = await assemble(frame.state);
+    const counter = createContextBudget(prefix, config);
+    const before = counter.evaluate(messages);
+    return summarizeFullContext(this.app, frame, prefix, signal, automatic, {
+      messages, maxHistoryTokens: Math.max(0, before.maxInputTokens - before.fixedTokens),
+      retainedUserTokenBudget: Math.max(0, before.maxInputTokens - before.fixedTokens), estimateTokens: counter.estimateMessage,
+      validateCandidate: async candidate => {
+        if (counter.evaluate(await assemble(candidate.state)).inputTokens >= before.inputTokens)
+          throw new Error('总结没有减少本次模型请求，原历史保持不变。');
+      },
+    });
+  }
+
+  beforeRun(conversationId: string): void { this.background.beforeRun(conversationId); }
+  afterRun(runId: string): void { this.background.afterRun(runId); }
   isSummarizing(id: string): boolean { return this.manual.has(id); }
   /** 修改摘要只替换正文，保留覆盖范围与原文，并与旧版本快照一起提交。 */
   async editSummary(actorId: string, id: string, messageId: string, text: string, expectedText: string) {
@@ -282,6 +170,7 @@ export class PlatformContextService {
   async summarizeManually(actorId: string, id: string, providerId: string, modelOverride?: string, botSchedule?: BotAutoSummarySettings) {
     this.app.requireOwner(actorId);
     if (this.manual.has(id)) throw new Error('当前对话已经在总结。');
+    this.beforeRun(id);
     const controller = new AbortController();
     const done = (async () => {
       try {
@@ -294,7 +183,7 @@ export class PlatformContextService {
         const result = botSchedule && (!botSchedule.method || botSchedule.method === 'time')
           ? await this.summarizeTimed(frame, providerId, modelOverride, controller.signal, 'auto', botSchedule)
           : method === 'notes' ? await notesWindowBoundary(this.app, frame, !!botSchedule, channel?.type ?? 'openai')
-            : await summarizeFullContext(this.app, frame, await manualSummaryPrefix(this.app, frame, actorId, providerId, modelOverride), controller.signal, !!botSchedule);
+            : await this.summarizePrepared(frame, providerId, modelOverride, controller.signal, !!botSchedule);
         controller.signal.throwIfAborted();
         await this.commit(frame, undefined, true);
         return { success: true, ...result, summarizedMessageCount: result.removedCount };
@@ -390,7 +279,7 @@ export class PlatformContextService {
           if (result.success && typeof result.totalTokens === 'number') {
             preciseTokens = Math.max(0, result.totalTokens); preciseAvailable = true;
             const channelType = typeof channel.type === 'string' ? channel.type as string : '';
-            const isLocal = preciseMethod === 'local' ||
+            const isLocal = !!result.source || !!result.encoding || preciseMethod === 'local' ||
               ((preciseMethod === 'channel_default' || !preciseMethod) && (channelType === 'openai' || !channelType));
             preciseIsProviderCount = !isLocal;
           } else preciseError = result.error ?? '精确计数不可用。';
@@ -401,9 +290,7 @@ export class PlatformContextService {
     const trimStartIndex = trimState && typeof trimState.trimStartIndex === 'number' ? trimState.trimStartIndex
       : (typeof platformContext?.fallbackStart === 'number' ? platformContext.fallbackStart : undefined);
     const summaries = summaryEntries.map(({ message, index }) => {
-      const text = Array.isArray(message.parts) ? message.parts
-        .filter(part => typeof (part as { text?: unknown }).text === 'string' && !(part as { thought?: unknown }).thought)
-        .map(part => (part as { text: string }).text).join('\n') : '';
+      const text = extractSummaryText(message as PlatformMessage);
       const platform = message as unknown as { summarizedMessageIds?: unknown; isAutoSummary?: unknown; summarizedMessageCount?: unknown };
       return {
         id: message.id, index, timestamp: message.timestamp,
@@ -442,9 +329,7 @@ export class PlatformContextService {
     if (index < 0 || !messages[index]?.isSummary) throw new Error('总结消息已变化。');
     const message = messages[index];
     const platform = message as unknown as { summarizedMessageIds?: unknown; isAutoSummary?: unknown; summarizedMessageCount?: unknown };
-    const text = Array.isArray(message.parts) ? message.parts
-      .filter(part => typeof (part as { text?: unknown }).text === 'string' && !(part as { thought?: unknown }).thought)
-      .map(part => (part as { text: string }).text).join('\n') : '';
+    const text = extractSummaryText(message as PlatformMessage);
     return {
       success: true,
       conversationId: id,
@@ -460,6 +345,6 @@ export class PlatformContextService {
   }
   async close(): Promise<void> {
     for (const operation of this.manual.values()) operation.controller.abort(new Error('应用正在关闭。'));
-    await Promise.allSettled([...this.manual.values()].map(operation => operation.done));
+    await Promise.allSettled([this.background.close(), ...[...this.manual.values()].map(operation => operation.done)]);
   }
 }

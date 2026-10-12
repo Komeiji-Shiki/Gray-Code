@@ -4,7 +4,7 @@ import { validateHistoryIntegrity } from '../../../channel/HistoryIntegrityValid
 import { resolveMaxContextTokensForConfig, resolveModelContextWindowForConfig } from './contextTrim/contextWindowResolution';
 import type { RequestPromptContext } from '../../../channel/types';
 import type { DynamicContextStrategy, ResolvedPromptModeSnapshot } from '../../../settings/types';
-import type { MessageTokenEstimator } from './MessageTokenEstimator';
+import { MessageTokenEstimator } from './MessageTokenEstimator';
 /**
  * 总结请求的系统提示只定义角色与输出语言；内容结构统一由追加在 user 消息末尾的
  * SUMMARY_HANDOFF_REQUIREMENTS 提供，避免系统提示、设置项与详细要求各写一套结构互相冲突。
@@ -104,7 +104,7 @@ export const MIN_SUMMARY_LENGTH = 50;
  */
 
 export class SummaryAlgorithms {
-    constructor(protected tokenEstimationService?: Pick<MessageTokenEstimator, "estimateMessageTokens">) {}
+    constructor(protected tokenEstimationService: Pick<MessageTokenEstimator, "estimateMessageTokens"> = new MessageTokenEstimator()) {}
 
 
     getLatestMainContextTokenCount(history: Content[]): number | undefined {
@@ -378,78 +378,18 @@ export class SummaryAlgorithms {
     }
 
 
-    /**
-     * 估算单条消息的 token 数（用于保留预算计算）
-     *
-     * 口径与 ContextTrimService.accumulateTokens 对齐：
-     * - user 消息优先当前渠道的 tokenCountByChannel，其次 estimatedTokenCount，最后本地估算
-     * - model 消息优先 usageMetadata（输出 token 扣除思考部分），否则本地估算
-     */
+    /** 总结范围按实际正文计数，不能复用已编辑正文或其他模型留下的 usage/旧估算。 */
     estimateMessageTokensForBudget(message: Content, channelType: string): number {
-        // 中断/取消流的 usageMetadata 只覆盖已收到的 chunk，token 数可能严重偏低：
-        // 若据此规划保留预算会低估实际占用、总结范围规划过大。
-        // 与 conversation/usageStats.ts extractMessageTokens 及 manager/stats.ts
-        // 的 usageMetadataPartial 回退口径一致——回退到本地估算而非信任半截 usage。
-        if (message.usageMetadataPartial) {
-            return this.estimateSingleMessageTokensLocally(message);
-        }
-
-        if (message.role === 'user') {
-            const byChannel = message.tokenCountByChannel?.[channelType];
-            if (typeof byChannel === 'number') {
-                return byChannel;
-            }
-            if (typeof message.estimatedTokenCount === 'number') {
-                return message.estimatedTokenCount;
-            }
-            return this.estimateSingleMessageTokensLocally(message);
-        }
-
-        const usage = message.usageMetadata;
-        if (usage) {
-            if (typeof usage.totalTokenCount === 'number' && typeof usage.promptTokenCount === 'number') {
-                const outputTokens = Math.max(0, usage.totalTokenCount - usage.promptTokenCount);
-                const thoughtsTokens = Math.min(Math.max(0, usage.thoughtsTokenCount ?? 0), outputTokens);
-                return Math.max(0, outputTokens - thoughtsTokens);
-            }
-            if (typeof usage.candidatesTokenCount === 'number') {
-                return Math.max(0, usage.candidatesTokenCount);
-            }
-        }
-        return this.estimateSingleMessageTokensLocally(message);
+        return this.tokenEstimationService.estimateMessageTokens(message, { channelType });
     }
 
-
-    /**
-     * 本地估算单条消息的 token 数
-     */
     estimateSingleMessageTokensLocally(message: Content): number {
-        if (this.tokenEstimationService) {
-            return this.tokenEstimationService.estimateMessageTokens(message);
-        }
-        // 兜底：无 tokenEstimationService 时按统一安全系数 1.5 偏大估算
-        const text = message.parts.map(p => p.text || '').join('');
-        return Math.ceil(Math.ceil(text.length / 4) * 1.5) || 1;
+        return this.tokenEstimationService.estimateMessageTokens(message);
     }
 
-
-    /**
-     * 估算一组消息的 token 数
-     *
-     * 用于判断待总结内容是否超出总结模型上下文。
-     * 口径与 resolveSummarizeRange 的预算估算（estimateMessageTokensForBudget）一致：
-     * 优先 usageMetadata / tokenCountByChannel，缺失才本地估算，保证溢出判断与范围规划一致。
-     *
-     * @param channelType 当前渠道类型（tokenCountByChannel 的取值口径）
-     */
     estimateMessagesTokens(messages: Content[], channelType: string): number {
-        let total = 0;
-        for (const msg of messages) {
-            total += this.estimateMessageTokensForBudget(msg, channelType);
-        }
-        return total;
+        return messages.reduce((total, message) => total + this.estimateMessageTokensForBudget(message, channelType), 0);
     }
-
 
     /**
      * 解析此前总结累计覆盖的原始消息数
