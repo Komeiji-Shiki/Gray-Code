@@ -239,14 +239,16 @@ async function selectProject(group: (typeof groups.value)[number]) {
 }
 async function selectWorkspace(workspaceId: string, group?: NavigationGroup) {
   const intent = navigate({ workspaceId });
-  // 选择器和新加项目也沿用侧栏的会话导航，工作区只由实际聚焦的对话更新。
-  const source = group ? navigation.value : await uiRequest('conversation.navigation', { scope: 'personal' });
+  // 空分组可能还有分页外的旧对话，先按项目补查，再决定是否创建；工作区只由实际聚焦的对话更新。
+  const groupItems = group?.items.length ? group.items : undefined;
+  const source = groupItems ? navigation.value
+    : await uiRequest('conversation.navigation', { scope: 'personal', workspaceId: workspaceId || undefined });
   if (!intent.current()) return;
   const matchesWorkspace = (item: ConversationNavigationItem) => workspaceId
     ? item.workspaceId === workspaceId && !item.automaticWorkspace
     : !item.workspaceUri || item.automaticWorkspace;
   const candidates = [
-    ...(group?.items ?? source.items.filter(matchesWorkspace)),
+    ...(groupItems ?? source.items.filter(matchesWorkspace)),
     ...source.pinned.filter((item) => (!group || !!workspaceId) && matchesWorkspace(item)),
   ].sort(
     (left, right) => right.updatedAt - left.updatedAt,

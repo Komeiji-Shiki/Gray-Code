@@ -24,7 +24,9 @@ export interface UiRequests {
   'characters.conversation.get': Request<{ conversationId: string }, CharacterConversationSettings>;
   'characters.conversation.create': Request<{ config: CharacterChatConfig }, { conversationId: string }>;
   'characters.conversation.save': Request<{ conversationId: string; config: CharacterChatConfig; metadataToken: string }, Success>;
-  'conversation.navigation': Request<{ scope?: NavigationScope; query?: string; cursor?: ConversationNavigationCursor }, ConversationNavigationResult>;
+  'conversation.navigation': Request<{
+    scope?: NavigationScope; workspaceId?: string; query?: string; cursor?: ConversationNavigationCursor;
+  }, ConversationNavigationResult>;
   'conversation.navigation.reorder': Request<{ scope?: NavigationScope; kind: NavigationOrderKind; ids: string[]; revision: number }, NavigationOrdering>;
   'conversation.navigation.pinGroup': Request<{ key: string; pinned: boolean; revision: number }, NavigationOrdering>;
   'projects.rename': Request<ProjectNavigationTarget & { name: string }, Success>;

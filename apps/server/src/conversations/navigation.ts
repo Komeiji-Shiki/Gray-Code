@@ -1,5 +1,5 @@
 import { pathToFileURL } from 'node:url';
-import type { ConversationNavigationCursor, ConversationNavigationItem, ConversationNavigationResult, ConversationSummary } from '@graycode/contracts';
+import type { ConversationNavigationItem, ConversationNavigationResult, ConversationSummary, UiRequestParams } from '@graycode/contracts';
 import type { PlatformApplication } from '../application';
 import { conversationWorkspaceIndex, workspaceDirectoryKey } from '../workspace/identity';
 import { ProjectNavigation, projectNavigationKey, type ProjectNavigationPreference } from './projects';
@@ -10,18 +10,22 @@ const namespace = 'conversation-navigation';
 /** 侧边栏只读取摘要和运行索引，点击对话后才装载对应消息。 */
 export class ConversationNavigation {
   constructor(private readonly app: PlatformApplication) {}
-  async list(actorId: string, options: { scope?: 'personal' | 'bots'; query?: string; cursor?: ConversationNavigationCursor } = {}): Promise<ConversationNavigationResult> {
+  async list(actorId: string, options: UiRequestParams<'conversation.navigation'> = {}): Promise<ConversationNavigationResult> {
     this.app.requireOwner(actorId);
     if (options.scope !== undefined && !['personal', 'bots'].includes(options.scope)) throw new Error('未知对话列表。');
+    const selectedWorkspace = options.workspaceId !== undefined ? this.app.workspace(actorId, options.workspaceId, []) : undefined;
     const ordering = await new NavigationOrderingStore(this.app).get(actorId, options.scope);
     if (options.cursor && options.cursor.orderingRevision !== ordering.revision) throw new Error('侧边栏顺序已变化，请刷新列表。');
     const botPlatform = (item: { id?: string; botPlatform?: string; custom?: { botOrigin?: { platform?: string } } }): ConversationSummary['botPlatform'] => {
       const value = item.botPlatform ?? item.custom?.botOrigin?.platform;
       return value === 'discord' || value === 'onebot' ? value : undefined;
     };
-    const included = (item: Parameters<typeof botPlatform>[0]) => (options.scope === 'bots') === ['discord', 'onebot'].includes(botPlatform(item) ?? '');
     const workspaces = this.app.settings.read('workspaces').workspaces.map(item => ({ ...item, uri: pathToFileURL(item.directory).toString() }));
     const workspaceFor = conversationWorkspaceIndex(workspaces);
+    // 归属筛选先于导航页计数；其他项目占满存储页时继续读取，不能把旧项目误判为空。
+    const included = (item: Parameters<typeof botPlatform>[0] & { workspaceId?: string; workspaceUri?: string }) =>
+      (options.scope === 'bots') === ['discord', 'onebot'].includes(botPlatform(item) ?? '')
+      && (!selectedWorkspace || workspaceFor(item)?.id === selectedWorkspace.id);
     const projects = await new ProjectNavigation(this.app).preferences();
     const directoryCounts = new Map<string | undefined, number>();
     const workspaceKeys = new Map(workspaces.map(item => [item.id, workspaceDirectoryKey(item.directory)]));
