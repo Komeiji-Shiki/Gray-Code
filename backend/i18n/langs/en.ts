@@ -29,6 +29,7 @@ import desktopMaintenance from './en/desktopMaintenance';
 const en: BackendLanguageMessages = {
     desktop: {
         inputUi,
+        appClosing: 'The app is closing. Please reopen it shortly.',
         bot: {
             policyTitle: "Group message policy",
             policyHint: "0 disables a limit. Merge consecutive messages from the same sender; wait during cooldown; retain excess requests as background. Direct messages are processed immediately.",

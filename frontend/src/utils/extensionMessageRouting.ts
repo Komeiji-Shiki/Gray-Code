@@ -47,7 +47,9 @@ export function routeExtensionMessage(
       handler.resolve(payload.data)
       return 'resolved'
     }
-    handler.reject(new Error(payload.error?.message || 'Unknown error'))
+    const error = new Error(payload.error?.message || 'Unknown error')
+    if (typeof payload.error?.code === 'string') Object.assign(error, { code: payload.error.code })
+    handler.reject(error)
     return 'rejected'
   }
 

@@ -29,6 +29,7 @@ import desktopMaintenance from './ja/desktopMaintenance';
 const ja: BackendLanguageMessages = {
     desktop: {
         inputUi,
+        appClosing: 'アプリを終了しています。しばらくしてからもう一度開いてください。',
         bot: {
             policyTitle: "グループメッセージ設定",
             policyHint: "0 は無効です。同じ人の連続メッセージを統合し、クールダウン中は待機します。上限を超えた内容は背景として保存します。DM は即時処理します。",

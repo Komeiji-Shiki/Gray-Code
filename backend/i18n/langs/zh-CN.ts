@@ -32,6 +32,7 @@ import desktopMaintenance from './zh-CN/desktopMaintenance';
 const zhCN = {
     desktop: {
         inputUi,
+        appClosing: '应用正在关闭，请稍后重新打开。',
         bot: {
             policyTitle: "群聊消息策略",
             policyHint: "0 表示关闭。合并只作用于同一人的连续消息；冷却期间继续排队；超过排队上限的消息保留为背景，不单独回复。私聊保持即时处理。",

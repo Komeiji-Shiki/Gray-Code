@@ -1,6 +1,8 @@
 import { contextBridge, ipcRenderer } from 'electron';
 import '../../../apps/desktop/src/preload';
 import { callDesktopBridge, desktopRpcReply, type DesktopBridge } from '../../../shared/desktopBridge';
+import { DesktopRequests } from '../../../apps/desktop/src/requests';
+import { getLanguage, setLanguage } from '../../../backend/i18n';
 
 jest.mock('electron', () => {
   const ipcRenderer = new (require('node:events').EventEmitter)();
@@ -17,6 +19,24 @@ test('桌面 RPC 经过两次跨上下文复制后仍保留取消错误码', asy
   const renderer: DesktopBridge = { ...bridge, call: async (method, params) => structuredClone(await bridge.call(method, params)) };
   await expect(callDesktopBridge(renderer, 'ui.request', { type: 'chatStream', data: {} }))
     .rejects.toMatchObject({ code: 'CANCELLED_ERROR', message: 'Cancelled by user.' });
+});
+
+test.each([
+  { language: 'zh-CN' as const, message: '应用正在关闭，请稍后重新打开。' },
+  { language: 'en' as const, message: 'The app is closing. Please reopen it shortly.' },
+  { language: 'ja' as const, message: 'アプリを終了しています。しばらくしてからもう一度開いてください。' },
+])('桌面关闭拒绝经过桥接后保留 APP_CLOSING 和 $language 提示', async ({ language, message }) => {
+  const previousLanguage = getLanguage();
+  const requests = new DesktopRequests({ isClosing: () => true } as ConstructorParameters<typeof DesktopRequests>[0]);
+  try {
+    setLanguage(language);
+    (ipcRenderer.invoke as jest.Mock).mockImplementationOnce(async () => structuredClone(await desktopRpcReply(
+      () => requests.call(1, 'ui.request', { type: 'config.listConfigs', data: {} }),
+    )));
+    const renderer: DesktopBridge = { ...bridge, call: async (method, params) => structuredClone(await bridge.call(method, params)) };
+    await expect(callDesktopBridge(renderer, 'ui.request', { type: 'config.listConfigs', data: {} }))
+      .rejects.toMatchObject({ code: 'APP_CLOSING', message });
+  } finally { setLanguage(previousLanguage); }
 });
 
 test('桌面 RPC 成功结果与 Web 原始结果保持业务数据原样', async () => {

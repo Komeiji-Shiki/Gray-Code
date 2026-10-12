@@ -83,14 +83,17 @@ describe('渠道预加载缓存的失效语义（刷新接线的依赖机制）'
 
   afterEach(() => vi.restoreAllMocks())
 
-  test.each(['single', 'list'])('%s 预加载因应用关闭拒绝时保留失败结果，不记录错误日志', async source => {
+  test.each([
+    { source: 'single', message: 'The app is closing. Please reopen it shortly.' },
+    { source: 'list', message: 'アプリを終了しています。しばらくしてからもう一度開いてください。' }
+  ])('$source 预加载遇到 APP_CLOSING 时与提示语言无关，不记录错误日志', async ({ source, message }) => {
     const log = vi.spyOn(console, 'error').mockImplementation(() => {})
-    const message = '请求已拒绝：应用正在关闭，请稍后重新打开。'
+    const error = Object.assign(new Error(message), { code: 'APP_CLOSING' })
     if (source === 'single') {
       mockListConfigIds.mockResolvedValue(['cfg-1', 'cfg-2'])
-      mockGetConfig.mockRejectedValueOnce(new Error(message))
+      mockGetConfig.mockRejectedValueOnce(error)
     } else {
-      mockListConfigIds.mockRejectedValueOnce(message)
+      mockListConfigIds.mockRejectedValueOnce(error)
     }
 
     const result = await preloadChannelConfigs()
@@ -100,9 +103,14 @@ describe('渠道预加载缓存的失效语义（刷新接线的依赖机制）'
     expect(log).not.toHaveBeenCalled()
   })
 
-  test.each(['single', 'list'])('%s 预加载的普通错误仍记录原始错误日志', async source => {
+  test.each([
+    { source: 'single', message: '服务暂时不可用' },
+    { source: 'list', message: '服务暂时不可用' },
+    { source: 'single', message: '应用正在关闭，请稍后重新打开。' },
+    { source: 'list', message: '应用正在关闭，请稍后重新打开。' }
+  ])('$source 预加载错误没有 APP_CLOSING 时仍记录原始错误日志：$message', async ({ source, message }) => {
     const log = vi.spyOn(console, 'error').mockImplementation(() => {})
-    const error = new Error('服务暂时不可用')
+    const error = new Error(message)
     if (source === 'single') mockGetConfig.mockRejectedValueOnce(error)
     else mockListConfigIds.mockRejectedValueOnce(error)
 

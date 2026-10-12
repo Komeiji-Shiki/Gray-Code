@@ -279,7 +279,9 @@ export class DesktopRequests {
       method = uiMethod; params = params.data ?? {};
     }
     const handler = this.handlers.get(method);
-    if (!handler?.duringClose && this.host.isClosing()) throw new Error('应用正在关闭，请稍后重新打开。');
+    if (!handler?.duringClose && this.host.isClosing()) {
+      throw Object.assign(new Error(t('desktop.appClosing')), { code: 'APP_CLOSING' });
+    }
     // 原桌面入口在处理完文件、桌宠等特定分支后，对其余消息及服务端回退统一要求 owner。
     if (handler?.owner !== false) this.host.application.requireOwner(this.host.client.actorId);
     return handler ? handler.execute(params, senderId) : this.host.router.call(this.host.client, method, params);

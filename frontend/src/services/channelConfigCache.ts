@@ -55,7 +55,7 @@ async function loadAllConfigs(): Promise<ChannelConfigLoadResult> {
     } catch (error) {
       // 单条配置获取失败不拖垮整批预加载：跳过该项，后续打开设置页仍可看到其余配置
       const message = error instanceof Error ? error.message : String(error)
-      if (!message.includes('应用正在关闭，请稍后重新打开。')) {
+      if ((error as { code?: unknown } | null)?.code !== 'APP_CLOSING') {
         console.error(`Failed to preload config ${id}:`, error)
       }
       firstError ||= message
@@ -75,7 +75,7 @@ async function fetchAndCache(): Promise<ChannelConfigLoadResult> {
   } catch (error) {
     // 预加载失败（含超时）静默处理：不弹错误提示，缓存保持 null，后续打开设置页会重新加载
     const message = error instanceof Error ? error.message : String(error)
-    if (!message.includes('应用正在关闭，请稍后重新打开。')) {
+    if ((error as { code?: unknown } | null)?.code !== 'APP_CLOSING') {
       console.error('Failed to preload channel configs:', error)
     }
     return { configs: null, error: message }

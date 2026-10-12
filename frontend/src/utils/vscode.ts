@@ -107,7 +107,7 @@ export function sendToExtension<T = any>(type: string, data: any, options?: { ti
       const msg = typeof err?.message === 'string' && err.message.trim()
         ? err.message
         : 'Failed to post message to VS Code extension'
-      reject(new Error(msg))
+      reject(Object.assign(new Error(msg), typeof err?.code === 'string' ? { code: err.code } : {}))
     }
   })
 }

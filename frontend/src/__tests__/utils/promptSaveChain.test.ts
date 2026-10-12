@@ -11,7 +11,7 @@
 import { MESSAGE_NAMES } from '@shared/protocol'
 import { describe, expect, beforeEach, afterEach, vi } from 'vitest'
 import { ref } from 'vue'
-import { sendToExtension, onMessageFromExtension } from '../../utils/vscode'
+import { sendToExtension, onMessageFromExtension, getVSCodeAPI } from '../../utils/vscode'
 
 /** 与 PromptSettings.vue 组件内定义的 PromptMode 接口同形状 */
 interface PromptMode {
@@ -78,7 +78,7 @@ function buildUpdatedMode(modesRef: ReturnType<typeof ref<PromptMode[]>>, select
   }
 }
 
-describe('savePromptMode 完整链路（Proxy 数据）', () => {
+describe('sendToExtension 完整链路（Proxy 数据与错误回执）', () => {
   beforeEach(() => {
     capturedMessages = []
     installVscodeMock()
@@ -89,6 +89,31 @@ describe('savePromptMode 完整链路（Proxy 数据）', () => {
 
   afterEach(() => {
     vi.restoreAllMocks()
+  })
+
+  test('真实 sendToExtension 从失败回执重建 Error 时保留 APP_CLOSING', async () => {
+    const pending = sendToExtension('config.listConfigs', {})
+    const message = 'The app is closing. Please reopen it shortly.'
+    window.dispatchEvent(new MessageEvent('message', { data: {
+      type: 'error', requestId: capturedMessages.at(-1)!.requestId, success: false,
+      error: { code: 'APP_CLOSING', message }
+    } }))
+
+    const error = await pending.catch(error => error)
+    expect(error).toBeInstanceOf(Error)
+    expect(error).toMatchObject({ code: 'APP_CLOSING', message })
+  })
+
+  test('同步发送失败重建 Error 时保留宿主错误码', async () => {
+    const error = Object.assign(new Error('アプリを終了しています。'), { code: 'APP_CLOSING' })
+    const transport = getVSCodeAPI()
+    const originalPostMessage = transport.postMessage
+    transport.postMessage = () => { throw error }
+    try {
+      await expect(sendToExtension('config.listConfigs', {})).rejects.toMatchObject({
+        code: 'APP_CLOSING', message: error.message
+      })
+    } finally { transport.postMessage = originalPostMessage }
   })
 
   test('reactive modes 构造的 updatedMode 发送后能收到成功响应', async () => {
