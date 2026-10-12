@@ -4,6 +4,8 @@
   "generated": "frontend/src/i18n/langs/_shared",
   "description": "共享词条映射表：frontend key -> backend key（翻译文本单一来源为 backend 语言包）。新增共享词条在此登记后运行 node scripts/i18n-sync.mjs，前端语言包通过 _shared 生成物引用后端译文。",
   "mappings": [
+    {"frontend":"desktop.shell.characterWorldBudgetHelp","backend":"desktop.shell.characterWorldBudgetHelp"},
+    {"frontend":"desktop.shell.characterWorldBudgetPlaceholder","backend":"desktop.shell.characterWorldBudgetPlaceholder"},
     {"frontend":"desktop.bot.policyTitle","backend":"desktop.bot.policyTitle"},
     {"frontend":"desktop.bot.policyHint","backend":"desktop.bot.policyHint"},
     {"frontend":"desktop.bot.mergeWindow","backend":"desktop.bot.mergeWindow"},
@@ -338,6 +340,7 @@
     { "frontend": "components.tools.automation.actions.key", "backend": "tools.automation.actions.key" },
     { "frontend": "components.tools.automation.actions.query", "backend": "tools.automation.actions.query" },
     { "frontend": "components.tools.automation.actions.play", "backend": "tools.automation.actions.play" },
+    { "frontend": "components.tools.automation.actions.set", "backend": "tools.automation.actions.set" },
     { "frontend": "components.tools.automation.actions.expression", "backend": "tools.automation.actions.expression" },
     { "frontend": "components.tools.automation.actions.look", "backend": "tools.automation.actions.look" },
     { "frontend": "components.tools.automation.actions.parameters", "backend": "tools.automation.actions.parameters" },

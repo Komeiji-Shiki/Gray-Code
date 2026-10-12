@@ -1,8 +1,18 @@
 <script setup lang="ts">
-import {computed,nextTick,onMounted,onUnmounted,reactive,ref,watch} from 'vue';
-import type {LongMemoryArchive,LongMemoryJob,LongMemoryPolicy,LongMemoryRecall,LongMemoryRecord,LongMemoryScope,LongMemorySource,LongMemoryTopic} from '@graycode/contracts';
-import {call,subscribe} from '../api';
-import {state} from '../state';
+import { shellText as t, shellLocale } from '../i18n';
+import { computed, nextTick, onMounted, onUnmounted, reactive, ref, watch } from 'vue';
+import type {
+  LongMemoryArchive,
+  LongMemoryJob,
+  LongMemoryPolicy,
+  LongMemoryRecall,
+  LongMemoryRecord,
+  LongMemoryScope,
+  LongMemorySource,
+  LongMemoryTopic,
+} from '@graycode/contracts';
+import { call, subscribe } from '../api';
+import { state } from '../state';
 import type { LongMemoryGraph, LongMemoryGraphNode } from '@graycode/contracts';
 import type { LongMemoryTopicPage, LongMemoryBrowseResult, LongMemoryPreview } from '@graycode/contracts';
 import MemoryGraph from './MemoryGraph.vue';
@@ -10,246 +20,1170 @@ import MemoryImports from './MemoryImports.vue';
 import MemorySourceFiles from './MemorySourceFiles.vue';
 import './memoryShared.css';
 
-interface ScopeRow extends LongMemoryScope {label:string}
-interface Options {scopes:ScopeRow[];policy:{value:LongMemoryPolicy;revision:number|null};providers:Array<{id:string;name:string;model:string;models:string[]}>}
-interface Detail {revisions:LongMemoryRecord[];sources:LongMemorySource[];parents:LongMemoryRecord[];relations?:LongMemoryRecord[];activeVersion?:number}
-const emit=defineEmits<{close:[]}>();
-const options=ref<Options>(),scopeId=ref(''),section=ref<'records'|'organize'|'jobs'|'imports'>('records');
-const searchText=ref(''),appliedQuery=ref(''),topicPath=ref<string[]>([]),kind=ref('');
-const result=ref<LongMemoryRecall>(),topics=ref<LongMemoryTopic[]>([]),detail=ref<Detail>(),jobs=ref<LongMemoryJob[]>([]);
-const topicCursor=ref<string>();
-const browseResult=ref<LongMemoryBrowseResult>(),recordCursor=ref<string>(),recordTrail=ref<Array<string|undefined>>([]);
-const searchMode=ref<'related'|'list'>('related'),filterConfidence=ref(''),filterStatus=ref<'current'|'inactive'|'all'>('current');
-const relatedSearch=computed(()=>searchMode.value==='related'&&!!appliedQuery.value.trim());
-const visibleRecords=computed<Array<LongMemoryPreview&{reasons:string[];conflicts:string[]}>>(()=>result.value
-  ?result.value.hits.map(hit=>({...hit.record,preview:hit.record.text,moreText:false,active:true,reasons:hit.reasons,conflicts:hit.conflicts}))
-  :(browseResult.value?.items??[]).map(item=>({...item,reasons:[],conflicts:[]})));
-const error=ref(''),notice=ref(''),busy=ref(false),loading=ref(false),changedElsewhere=ref(false);
-const editing=ref(false),editingScopeId=ref(''),editingId=ref(''),editingVersion=ref(0),editorBaseline=ref('');
-const pendingNavigation=ref<(()=>Promise<void>|void)|null>(null),pendingClose=ref(false);
-const selectedIds=ref<string[]>([]),summaryTopic=ref(''),deleteImpact=ref<{recordCount:number;sourceCount:number;items:Array<{id:string;kind:string;text:string}>;truncated:boolean}|null>(null);
-const importPreview=ref<LongMemoryArchive|null>(null),embeddingCredential=ref(''),policyBaseline=ref('');
-const policy=reactive<LongMemoryPolicy>({enabled:true,automaticExtraction:false,automaticScopes:[],recallTokens:1200,recallLimit:5,extractionOutputTokens:12288});
-const embeddingEnabled=ref(false);
-const editorView=ref<'edit'|'graph'>('edit'), editor=ref<HTMLElement>();
-const graph=ref<LongMemoryGraph>(), graphLoading=ref(false), graphError=ref(''), graphLimit=ref(40);
-const graphSource=ref<LongMemorySource>();
-let graphEpoch=0;
-const embedding=reactive({url:'',model:'',credentialRef:undefined as string|undefined,dimensions:'' as string,queryPrefix:'',documentPrefix:''});
-const form=reactive({text:'',kind:'fact' as LongMemoryRecord['kind'],subject:'',topic:'',attribute:'',value:'',validFrom:'',validTo:'',eventAt:'',confidence:'confirmed' as LongMemoryRecord['confidence']});
-let epoch=0,editorEpoch=0,refreshTimer:ReturnType<typeof setTimeout>|undefined,refreshRecords=false;
-const kinds:Record<string,string>={fact:'事实',preference:'偏好',experience:'经历与经验',project:'项目知识',procedure:'操作方法',event:'事件',summary:'分层摘要'};
-const origins:Record<string,string>={user:'用户陈述',model:'模型提炼',tool:'工具结果',fiction:'角色剧情',import:'导入资料'};
-const statuses:Record<string,string>={pending:'等待中',running:'正在整理',completed:'完成',failed:'失败',cancelled:'已取消',interrupted:'已中断'};
-const provider=computed(()=>options.value?.providers.find(item=>item.id===policy.providerId));
-const draftPolicy=()=>({...policy,automaticScopes:[...policy.automaticScopes??[]],embedding:embeddingEnabled.value?{url:embedding.url,model:embedding.model,credentialRef:embedding.credentialRef,
-  dimensions:embedding.dimensions?Number(embedding.dimensions):undefined,queryPrefix:embedding.queryPrefix,documentPrefix:embedding.documentPrefix}:undefined});
-const editorDirty=computed(()=>editing.value&&JSON.stringify(form)!==editorBaseline.value);
-const policyDirty=computed(()=>!!options.value&&(JSON.stringify(draftPolicy())!==policyBaseline.value||!!embeddingCredential.value));
-const dirty=computed(()=>editorDirty.value||policyDirty.value);
-const historicalRevision=computed(()=>!!editingId.value&&editingVersion.value!==detail.value?.revisions[0]?.version);
-const scopeLabel=(id:string)=>options.value?.scopes.find(scope=>scope.id===id)?.label??id;
-const rpc=<T,>(method:string,params:Record<string,unknown>={})=>call<T>(method,{conversationId:state.conversationId??undefined,workspaceId:state.workspaceId||undefined,...params});
-const date=(value?:number)=>value===undefined?'':new Date(value).toISOString().slice(0,16);
-const fromDate=(value:string)=>value?Date.parse(value+'Z'):undefined;
+interface ScopeRow extends LongMemoryScope {
+  label: string;
+}
+interface Options {
+  scopes: ScopeRow[];
+  policy: { value: LongMemoryPolicy; revision: number | null };
+  providers: Array<{ id: string; name: string; model: string; models: string[] }>;
+}
+interface Detail {
+  revisions: LongMemoryRecord[];
+  sources: LongMemorySource[];
+  parents: LongMemoryRecord[];
+  relations?: LongMemoryRecord[];
+  activeVersion?: number;
+}
+const emit = defineEmits<{ close: [] }>();
+const options = ref<Options>(),
+  scopeId = ref(''),
+  section = ref<'records' | 'organize' | 'jobs' | 'imports'>('records');
+const searchText = ref(''),
+  appliedQuery = ref(''),
+  topicPath = ref<string[]>([]),
+  kind = ref('');
+const result = ref<LongMemoryRecall>(),
+  topics = ref<LongMemoryTopic[]>([]),
+  detail = ref<Detail>(),
+  jobs = ref<LongMemoryJob[]>([]);
+const topicCursor = ref<string>();
+const browseResult = ref<LongMemoryBrowseResult>(),
+  recordCursor = ref<string>(),
+  recordTrail = ref<Array<string | undefined>>([]);
+const searchMode = ref<'related' | 'list'>('related'),
+  filterConfidence = ref(''),
+  filterStatus = ref<'current' | 'inactive' | 'all'>('current');
+const relatedSearch = computed(() => searchMode.value === 'related' && !!appliedQuery.value.trim());
+const visibleRecords = computed<Array<LongMemoryPreview & { reasons: string[]; conflicts: string[] }>>(() =>
+  result.value
+    ? result.value.hits.map((hit) => ({
+        ...hit.record,
+        preview: hit.record.text,
+        moreText: false,
+        active: true,
+        reasons: hit.reasons,
+        conflicts: hit.conflicts,
+      }))
+    : (browseResult.value?.items ?? []).map((item) => ({ ...item, reasons: [], conflicts: [] })),
+);
+const error = ref(''),
+  notice = ref(''),
+  busy = ref(false),
+  loading = ref(false),
+  changedElsewhere = ref(false);
+const editing = ref(false),
+  editingScopeId = ref(''),
+  editingId = ref(''),
+  editingVersion = ref(0),
+  editorBaseline = ref('');
+const pendingNavigation = ref<(() => Promise<void> | void) | null>(null),
+  pendingClose = ref(false);
+const selectedIds = ref<string[]>([]),
+  summaryTopic = ref(''),
+  deleteImpact = ref<{ recordCount: number; sourceCount: number; items: Array<{ id: string; kind: string; text: string }>; truncated: boolean } | null>(null);
+const importPreview = ref<LongMemoryArchive | null>(null),
+  embeddingCredential = ref(''),
+  policyBaseline = ref('');
+const policy = reactive<LongMemoryPolicy>({
+  enabled: true,
+  automaticExtraction: false,
+  automaticScopes: [],
+  recallTokens: 1200,
+  recallLimit: 5,
+  extractionOutputTokens: 12288,
+});
+const embeddingEnabled = ref(false);
+const editorView = ref<'edit' | 'graph'>('edit'),
+  editor = ref<HTMLElement>();
+const graph = ref<LongMemoryGraph>(),
+  graphLoading = ref(false),
+  graphError = ref(''),
+  graphLimit = ref(40);
+const graphSource = ref<LongMemorySource>();
+let graphEpoch = 0;
+const embedding = reactive({
+  url: '',
+  model: '',
+  credentialRef: undefined as string | undefined,
+  dimensions: '' as string,
+  queryPrefix: '',
+  documentPrefix: '',
+});
+const form = reactive({
+  text: '',
+  kind: 'fact' as LongMemoryRecord['kind'],
+  subject: '',
+  topic: '',
+  attribute: '',
+  value: '',
+  validFrom: '',
+  validTo: '',
+  eventAt: '',
+  confidence: 'confirmed' as LongMemoryRecord['confidence'],
+});
+let epoch = 0,
+  editorEpoch = 0,
+  refreshTimer: ReturnType<typeof setTimeout> | undefined,
+  refreshRecords = false;
+const kinds = computed<Record<string, string>>(() => ({
+  fact: t('uiMemoryGraphFact'),
+  preference: t('uiMemoryGraphPreference'),
+  experience: t('uiMemoryLibraryExperiencesAndLessons'),
+  project: t('uiMemoryLibraryProjectKnowledge'),
+  procedure: t('uiMemoryLibraryProcedures'),
+  event: t('uiMemoryGraphEvent'),
+  summary: t('uiMemoryLibraryHierarchicalSummaries'),
+}));
+const origins = computed<Record<string, string>>(() => ({
+  user: t('uiMemoryLibraryUserStatements'),
+  model: t('uiMemoryLibraryModelSynthesis'),
+  tool: t('uiMemoryLibraryToolResult'),
+  fiction: t('uiMemoryLibraryFiction'),
+  import: t('uiMemoryLibraryImportedMaterial'),
+}));
+const statuses = computed<Record<string, string>>(() => ({
+  pending: t('uiMemoryLibraryPending'),
+  running: t('uiMemoryLibraryOrganizing'),
+  completed: t('uiMemoryLibraryDone'),
+  failed: t('uiComputerPaneFailure'),
+  cancelled: t('reviewCancelledStatus'),
+  interrupted: t('uiMemoryLibraryInterrupted'),
+}));
+const provider = computed(() => options.value?.providers.find((item) => item.id === policy.providerId));
+const draftPolicy = () => ({
+  ...policy,
+  automaticScopes: [...(policy.automaticScopes ?? [])],
+  embedding: embeddingEnabled.value
+    ? {
+        url: embedding.url,
+        model: embedding.model,
+        credentialRef: embedding.credentialRef,
+        dimensions: embedding.dimensions ? Number(embedding.dimensions) : undefined,
+        queryPrefix: embedding.queryPrefix,
+        documentPrefix: embedding.documentPrefix,
+      }
+    : undefined,
+});
+const editorDirty = computed(() => editing.value && JSON.stringify(form) !== editorBaseline.value);
+const policyDirty = computed(() => !!options.value && (JSON.stringify(draftPolicy()) !== policyBaseline.value || !!embeddingCredential.value));
+const dirty = computed(() => editorDirty.value || policyDirty.value);
+const historicalRevision = computed(() => !!editingId.value && editingVersion.value !== detail.value?.revisions[0]?.version);
+const scopeLabel = (id: string) => options.value?.scopes.find((scope) => scope.id === id)?.label ?? id;
+const rpc = <T,>(method: string, params: Record<string, unknown> = {}) =>
+  call<T>(method, { conversationId: state.conversationId ?? undefined, workspaceId: state.workspaceId || undefined, ...params });
+const date = (value?: number) => (value === undefined ? '' : new Date(value).toISOString().slice(0, 16));
+const fromDate = (value: string) => (value ? Date.parse(value + 'Z') : undefined);
 // 控件只显示到分钟，未编辑的时间保留原秒和毫秒，避免普通文字修改改变时效。
-const savedDate=(value:string,original?:number)=>value===date(original)?original:fromDate(value);
-const stamp=(value?:number)=>value===undefined?'未记录':new Date(value).toLocaleString();
-const topicParts=(value:string)=>value.split('/').map(part=>part.trim()).filter(Boolean);
-function setPolicy(value:LongMemoryPolicy){
-  Object.assign(policy,{...value,automaticScopes:[...value.automaticScopes??[]]});embeddingEnabled.value=!!value.embedding;
-  Object.assign(embedding,{url:value.embedding?.url??'',model:value.embedding?.model??'',credentialRef:value.embedding?.credentialRef,dimensions:value.embedding?.dimensions?String(value.embedding.dimensions):'',queryPrefix:value.embedding?.queryPrefix??'',documentPrefix:value.embedding?.documentPrefix??''});
-  embeddingCredential.value='';policyBaseline.value=JSON.stringify(draftPolicy());
+const savedDate = (value: string, original?: number) => (value === date(original) ? original : fromDate(value));
+const stamp = (value?: number) => (value === undefined ? t('uiMemoryImportFileNotRecorded') : new Date(value).toLocaleString(shellLocale.value));
+const topicParts = (value: string) =>
+  value
+    .split('/')
+    .map((part) => part.trim())
+    .filter(Boolean);
+function setPolicy(value: LongMemoryPolicy) {
+  Object.assign(policy, { ...value, automaticScopes: [...(value.automaticScopes ?? [])] });
+  embeddingEnabled.value = !!value.embedding;
+  Object.assign(embedding, {
+    url: value.embedding?.url ?? '',
+    model: value.embedding?.model ?? '',
+    credentialRef: value.embedding?.credentialRef,
+    dimensions: value.embedding?.dimensions ? String(value.embedding.dimensions) : '',
+    queryPrefix: value.embedding?.queryPrefix ?? '',
+    documentPrefix: value.embedding?.documentPrefix ?? '',
+  });
+  embeddingCredential.value = '';
+  policyBaseline.value = JSON.stringify(draftPolicy());
 }
-async function perform(action:()=>Promise<void>){
-  if(busy.value)return;busy.value=true;error.value='';notice.value='';
-  try{await action();}catch(cause){error.value=(cause as Error).message;}finally{busy.value=false;}
+async function perform(action: () => Promise<void>) {
+  if (busy.value) return;
+  busy.value = true;
+  error.value = '';
+  notice.value = '';
+  try {
+    await action();
+  } catch (cause) {
+    error.value = (cause as Error).message;
+  } finally {
+    busy.value = false;
+  }
 }
-async function requestRecords(cursor?:string){
-  const common={scopeId:scopeId.value,text:appliedQuery.value||undefined,topic:topicPath.value};
-  if(relatedSearch.value)return {mode:'related' as const,value:await rpc<LongMemoryRecall>('memory.search',{...common,kinds:kind.value?[kind.value]:undefined})};
-  return {mode:'list' as const,value:await rpc<LongMemoryBrowseResult>('memory.browse',{...common,kind:kind.value||undefined,confidence:filterConfidence.value||undefined,status:filterStatus.value,limit:40,cursor})};
+async function requestRecords(cursor?: string) {
+  const common = { scopeId: scopeId.value, text: appliedQuery.value || undefined, topic: topicPath.value };
+  if (relatedSearch.value)
+    return { mode: 'related' as const, value: await rpc<LongMemoryRecall>('memory.search', { ...common, kinds: kind.value ? [kind.value] : undefined }) };
+  return {
+    mode: 'list' as const,
+    value: await rpc<LongMemoryBrowseResult>('memory.browse', {
+      ...common,
+      kind: kind.value || undefined,
+      confidence: filterConfidence.value || undefined,
+      status: filterStatus.value,
+      limit: 40,
+      cursor,
+    }),
+  };
 }
-function applyRecords(found:Awaited<ReturnType<typeof requestRecords>>){
-  if(found.mode==='related'){result.value=found.value;browseResult.value=undefined;}else{browseResult.value=found.value;result.value=undefined;}
-  selectedIds.value=selectedIds.value.filter(id=>visibleRecords.value.some(record=>record.id===id&&record.active));
+function applyRecords(found: Awaited<ReturnType<typeof requestRecords>>) {
+  if (found.mode === 'related') {
+    result.value = found.value;
+    browseResult.value = undefined;
+  } else {
+    browseResult.value = found.value;
+    result.value = undefined;
+  }
+  selectedIds.value = selectedIds.value.filter((id) => visibleRecords.value.some((record) => record.id === id && record.active));
 }
-async function loadRecordPage(direction:'next'|'previous'){
-  const cursor=direction==='next'?browseResult.value?.nextCursor:recordTrail.value.at(-1);
-  const current=++epoch;loading.value=true;
-  try{
-    const found=await requestRecords(cursor);if(current!==epoch)return;
-    if(direction==='next')recordTrail.value.push(recordCursor.value);else recordTrail.value.pop();
-    recordCursor.value=cursor;applyRecords(found);
-  }finally{if(current===epoch)loading.value=false;}
+async function loadRecordPage(direction: 'next' | 'previous') {
+  const cursor = direction === 'next' ? browseResult.value?.nextCursor : recordTrail.value.at(-1);
+  const current = ++epoch;
+  loading.value = true;
+  try {
+    const found = await requestRecords(cursor);
+    if (current !== epoch) return;
+    if (direction === 'next') recordTrail.value.push(recordCursor.value);
+    else recordTrail.value.pop();
+    recordCursor.value = cursor;
+    applyRecords(found);
+  } finally {
+    if (current === epoch) loading.value = false;
+  }
 }
-async function refreshJobs(){
-  const scope=scopeId.value;if(!scope)return;const list=await rpc<LongMemoryJob[]>('memory.jobs',{scopeId:scope});
-  if(scope===scopeId.value)jobs.value=list.sort((a,b)=>b.updatedAt-a.updatedAt);
+async function refreshJobs() {
+  const scope = scopeId.value;
+  if (!scope) return;
+  const list = await rpc<LongMemoryJob[]>('memory.jobs', { scopeId: scope });
+  if (scope === scopeId.value) jobs.value = list.sort((a, b) => b.updatedAt - a.updatedAt);
 }
-async function reload(){
-  if(!scopeId.value)return;const current=++epoch,scope=scopeId.value;loading.value=true;topicCursor.value=undefined;
-  try{
-    const [found,directory,list]=await Promise.all([
+async function reload() {
+  if (!scopeId.value) return;
+  const current = ++epoch,
+    scope = scopeId.value;
+  loading.value = true;
+  topicCursor.value = undefined;
+  try {
+    const [found, directory, list] = await Promise.all([
       requestRecords(),
-      rpc<LongMemoryTopicPage>('memory.topics',{scopeId:scope,topic:topicPath.value}),
-      rpc<LongMemoryJob[]>('memory.jobs',{scopeId:scope}),
+      rpc<LongMemoryTopicPage>('memory.topics', { scopeId: scope, topic: topicPath.value }),
+      rpc<LongMemoryJob[]>('memory.jobs', { scopeId: scope }),
     ]);
-    if(current!==epoch)return;applyRecords(found);recordCursor.value=undefined;recordTrail.value=[];topics.value=directory.topics;topicCursor.value=directory.nextCursor;jobs.value=list.sort((a,b)=>b.updatedAt-a.updatedAt);
-  }finally{if(current===epoch)loading.value=false;}
+    if (current !== epoch) return;
+    applyRecords(found);
+    recordCursor.value = undefined;
+    recordTrail.value = [];
+    topics.value = directory.topics;
+    topicCursor.value = directory.nextCursor;
+    jobs.value = list.sort((a, b) => b.updatedAt - a.updatedAt);
+  } finally {
+    if (current === epoch) loading.value = false;
+  }
 }
-async function loadOptions(){
-  const next=await rpc<Options>('memory.options');options.value=next;
-  if(!policyDirty.value||!policyBaseline.value)setPolicy(next.policy.value);
-  if(!scopeId.value||!next.scopes.some(scope=>scope.id===scopeId.value))scopeId.value=next.scopes[0]?.id??'';
+async function loadOptions() {
+  const next = await rpc<Options>('memory.options');
+  options.value = next;
+  if (!policyDirty.value || !policyBaseline.value) setPolicy(next.policy.value);
+  if (!scopeId.value || !next.scopes.some((scope) => scope.id === scopeId.value)) scopeId.value = next.scopes[0]?.id ?? '';
   await reload();
 }
-function resetEditor(){editorEpoch++;editing.value=false;detail.value=undefined;editingId.value='';deleteImpact.value=null;changedElsewhere.value=false;graphSource.value=undefined;}
-async function navigate(action:()=>Promise<void>|void){if(busy.value)return;if(editorDirty.value){pendingNavigation.value=action;return;}await perform(async()=>{await action();});}
-async function choose(id:string,version?:number){
-  const current=++editorEpoch,scope=scopeId.value,data=await rpc<Detail>('memory.get',{scopeId:scope,id,version});if(current!==editorEpoch)return;if(!data.revisions.length){resetEditor();return;}
-  const record=version===undefined?data.revisions[0]:data.revisions.find(item=>item.version===version);if(!record)throw new Error('这次修订已经不可读取，请刷新列表。');
-  detail.value=data;editingScopeId.value=scope;editingId.value=id;editingVersion.value=record.version;editing.value=true;changedElsewhere.value=false;deleteImpact.value=null;
-  Object.assign(form,{text:record.text,kind:record.kind,subject:record.subject,topic:record.topic.join(' / '),attribute:record.attribute??'',value:record.value??'',validFrom:date(record.validFrom),validTo:date(record.validTo),eventAt:date(record.eventAt),confidence:record.confidence});
-  editorBaseline.value=JSON.stringify(form);
-  graphSource.value=undefined;graphLimit.value=40;
-  await nextTick();editor.value?.scrollIntoView({block:'nearest'});
+function resetEditor() {
+  editorEpoch++;
+  editing.value = false;
+  detail.value = undefined;
+  editingId.value = '';
+  deleteImpact.value = null;
+  changedElsewhere.value = false;
+  graphSource.value = undefined;
 }
-async function loadMoreTopics(){
-  if(!topicCursor.value)return;const current=epoch;
-  const page=await rpc<LongMemoryTopicPage>('memory.topics',{scopeId:scopeId.value,topic:topicPath.value,cursor:topicCursor.value});
-  if(current!==epoch)return;topics.value.push(...page.topics);topicCursor.value=page.nextCursor;
-  if(!page.topics.length&&page.requiredTokenBudget)throw new Error('主题名称或摘要超过当前目录预算，请先缩小范围。');
-}
-async function latestRevision(){const scope=editingScopeId.value,id=editingId.value;await navigate(async()=>{scopeId.value=scope;await choose(id);});}
-async function browseImport(id:string){await navigate(async()=>{resetEditor();scopeId.value=id;section.value='records';topicPath.value=[];searchText.value='';appliedQuery.value='';kind.value='';filterConfidence.value='';filterStatus.value='all';searchMode.value='list';await loadOptions();});}
-function create(){
-  resetEditor();editing.value=true;editingScopeId.value=scopeId.value;editorView.value='edit';
-  Object.assign(form,{text:'',kind:'fact',subject:'',topic:topicPath.value.join(' / '),attribute:'',value:'',validFrom:'',validTo:'',eventAt:'',confidence:'confirmed'});editorBaseline.value=JSON.stringify(form);
-}
-async function save(){
-  if(historicalRevision.value)throw new Error('请先切换到最新修订后再编辑。');
-  const original=detail.value?.revisions.find(record=>record.version===editingVersion.value);
-  const params={scopeId:editingScopeId.value,text:form.text,kind:form.kind,subject:form.subject||undefined,topic:topicParts(form.topic),attribute:form.attribute||(editingId.value?null:undefined),value:form.value||(editingId.value?null:undefined),
-    validFrom:savedDate(form.validFrom,original?.validFrom),validTo:savedDate(form.validTo,original?.validTo)??(editingId.value?null:undefined),eventAt:savedDate(form.eventAt,original?.eventAt)??(editingId.value?null:undefined),confidence:form.confidence};
-  const saved=await rpc<{records:LongMemoryRecord[]}>(editingId.value?'memory.revise':'memory.remember',{...params,...editingId.value?{id:editingId.value,expectedVersion:editingVersion.value}:{}});
-  notice.value='记忆已保存。';scopeId.value=editingScopeId.value;await reload();await choose(saved.records[0].id);
-}
-async function showImpact(){deleteImpact.value=await rpc('memory.impact',{scopeId:editingScopeId.value,id:editingId.value,action:'delete'});}
-async function remove(){
-  await rpc('memory.remove',{scopeId:editingScopeId.value,id:editingId.value,expectedVersion:editingVersion.value,action:'delete'});resetEditor();notice.value='记忆、来源摘录与关联派生内容已移除。';await reload();
-}
-async function savePolicy(){const saved=await rpc<Options['policy']>('memory.policy.save',{value:draftPolicy(),expectedRevision:options.value!.policy.revision,embeddingCredential:embeddingCredential.value||undefined});options.value!.policy=saved;setPolicy(saved.value);notice.value='整理方式已保存。';}
-async function exportScope(){
-  const archive=await rpc<LongMemoryArchive>('memory.export',{scopeId:scopeId.value});const url=URL.createObjectURL(new Blob([JSON.stringify(archive,null,2)],{type:'application/json'}));
-  const link=document.createElement('a');link.href=url;link.download='GrayCode-记忆-'+new Date().toISOString().slice(0,10)+'.json';link.click();setTimeout(()=>URL.revokeObjectURL(url),1000);
-}
-async function readImport(event:Event){
-  const input=event.target as HTMLInputElement,file=input.files?.[0];input.value='';if(!file)return;
-  await perform(async()=>{if(file.size>32*1024*1024)throw new Error('单个记忆归档不能超过 32 MiB。');const value=JSON.parse(await file.text()) as LongMemoryArchive;
-    if(value.format!=='graycode-long-memory'||value.version!==1||!Array.isArray(value.records)||!Array.isArray(value.sources)||!Array.isArray(value.scopes)||!Array.isArray(value.tombstones))throw new Error('这不是有效的 GrayCode 记忆归档。');importPreview.value=value;});
-}
-async function restore(){const restored=await rpc<{records:number;sources:number;skipped:number}>('memory.restore',{archive:importPreview.value});importPreview.value=null;notice.value=`已合并 ${restored.records} 条记忆、${restored.sources} 条来源，跳过 ${restored.skipped} 个已有或已删除的对象。`;await loadOptions();}
-async function queueSummary(){await rpc('memory.summary.queue',{scopeId:scopeId.value,recordIds:selectedIds.value,topic:topicParts(summaryTopic.value||topicPath.value.join('/'))});notice.value='分层摘要已加入后台任务。';selectedIds.value=[];await reload();}
-async function regenerateSummary(){const refs=detail.value?.revisions[0].dependencies.filter(ref=>ref.kind==='record').map(ref=>ref.id)??[];
-  await rpc('memory.summary.queue',{scopeId:editingScopeId.value,recordIds:refs,topic:topicParts(form.topic),id:editingId.value,expectedVersion:editingVersion.value});notice.value='已按当前有效来源重新整理摘要。';section.value='jobs';await reload();}
-async function testEmbedding(){const value=await rpc<{dimensions:number}>('memory.embedding.test',{scopeId:scopeId.value});notice.value='连接成功，实际维度为 '+value.dimensions+'。';}
-async function rebuildIndex(){const value=await rpc<{queued:number}>('memory.index.rebuild',{scopeId:scopeId.value});notice.value='已为 '+value.queued+' 个记忆版本安排索引重建。';section.value='jobs';await reload();}
-async function extractCurrent(){await rpc('memory.extract',{scopeId:scopeId.value});notice.value='最近回合的用户陈述与工具结果已加入整理任务。';section.value='jobs';await reload();}
-function requestClose():boolean{if(busy.value){notice.value='正在保存，请稍候。';return false;}if(dirty.value){pendingClose.value=true;return false;}return true;}
-async function discard(){
-  if(pendingClose.value){emit('close');return;}
-  const action=pendingNavigation.value;pendingNavigation.value=null;resetEditor();await action?.();
-}
-function discardChanges(){pendingClose.value=false;pendingNavigation.value=null;resetEditor();if(options.value)setPolicy(options.value.policy.value);}
-defineExpose({requestClose,dirty,busy,discardChanges});
-async function loadGraph(){
-  const request=++graphEpoch;graph.value=undefined;graphError.value='';
-  if(editorView.value!=='graph'||!editingId.value){graphLoading.value=false;return;}
-  graphLoading.value=true;
-  try{const value=await rpc<LongMemoryGraph>('memory.graph',{scopeId:editingScopeId.value,id:editingId.value,version:editingVersion.value,limit:graphLimit.value});if(request===graphEpoch)graph.value=value;}
-  catch(cause){if(request===graphEpoch)graphError.value=(cause as Error).message;}
-  finally{if(request===graphEpoch)graphLoading.value=false;}
-}
-async function selectGraphNode(node:LongMemoryGraphNode){
-  if(node.type==='source'){graphSource.value=detail.value?.sources.find(source=>source.id===node.id&&source.version===node.version);return;}
-  if(node.id===editingId.value&&node.version===editingVersion.value){editorView.value='edit';return;}
-  await navigate(async()=>{scopeId.value=node.scopeId;await choose(node.id,node.version);});
-}
-watch([editorView,editingId,editingVersion,graphLimit],()=>{void loadGraph();});
-let unsubscribe=()=>{};
-onMounted(()=>{void perform(loadOptions);unsubscribe=subscribe(event=>{
-  if(['memory.changed','memory.indexed','memory.job.changed'].includes(event.type)&&(!event.scopeId||event.scopeId===scopeId.value)){
-    if(editingId.value&&event.type==='memory.changed')changedElsewhere.value=true;
-    refreshRecords ||= event.type==='memory.changed'||event.type==='memory.indexed'&&relatedSearch.value;
-    if(refreshTimer)clearTimeout(refreshTimer);refreshTimer=setTimeout(()=>{const reloadRecords=refreshRecords;refreshRecords=false;void (reloadRecords?reload():refreshJobs()).catch(cause=>error.value=(cause as Error).message);},180);
+async function navigate(action: () => Promise<void> | void) {
+  if (busy.value) return;
+  if (editorDirty.value) {
+    pendingNavigation.value = action;
+    return;
   }
-});});
-onUnmounted(()=>{epoch++;editorEpoch++;graphEpoch++;unsubscribe();if(refreshTimer)clearTimeout(refreshTimer);});
+  await perform(async () => {
+    await action();
+  });
+}
+async function choose(id: string, version?: number) {
+  const current = ++editorEpoch,
+    scope = scopeId.value,
+    data = await rpc<Detail>('memory.get', { scopeId: scope, id, version });
+  if (current !== editorEpoch) return;
+  if (!data.revisions.length) {
+    resetEditor();
+    return;
+  }
+  const record = version === undefined ? data.revisions[0] : data.revisions.find((item) => item.version === version);
+  if (!record) throw new Error(t('uiMemoryLibraryRevisionUnavailable'));
+  detail.value = data;
+  editingScopeId.value = scope;
+  editingId.value = id;
+  editingVersion.value = record.version;
+  editing.value = true;
+  changedElsewhere.value = false;
+  deleteImpact.value = null;
+  Object.assign(form, {
+    text: record.text,
+    kind: record.kind,
+    subject: record.subject,
+    topic: record.topic.join(' / '),
+    attribute: record.attribute ?? '',
+    value: record.value ?? '',
+    validFrom: date(record.validFrom),
+    validTo: date(record.validTo),
+    eventAt: date(record.eventAt),
+    confidence: record.confidence,
+  });
+  editorBaseline.value = JSON.stringify(form);
+  graphSource.value = undefined;
+  graphLimit.value = 40;
+  await nextTick();
+  editor.value?.scrollIntoView({ block: 'nearest' });
+}
+async function loadMoreTopics() {
+  if (!topicCursor.value) return;
+  const current = epoch;
+  const page = await rpc<LongMemoryTopicPage>('memory.topics', { scopeId: scopeId.value, topic: topicPath.value, cursor: topicCursor.value });
+  if (current !== epoch) return;
+  topics.value.push(...page.topics);
+  topicCursor.value = page.nextCursor;
+  if (!page.topics.length && page.requiredTokenBudget) throw new Error(t('uiMemoryLibraryTopicBudgetExceeded'));
+}
+async function latestRevision() {
+  const scope = editingScopeId.value,
+    id = editingId.value;
+  await navigate(async () => {
+    scopeId.value = scope;
+    await choose(id);
+  });
+}
+async function browseImport(id: string) {
+  await navigate(async () => {
+    resetEditor();
+    scopeId.value = id;
+    section.value = 'records';
+    topicPath.value = [];
+    searchText.value = '';
+    appliedQuery.value = '';
+    kind.value = '';
+    filterConfidence.value = '';
+    filterStatus.value = 'all';
+    searchMode.value = 'list';
+    await loadOptions();
+  });
+}
+function create() {
+  resetEditor();
+  editing.value = true;
+  editingScopeId.value = scopeId.value;
+  editorView.value = 'edit';
+  Object.assign(form, {
+    text: '',
+    kind: 'fact',
+    subject: '',
+    topic: topicPath.value.join(' / '),
+    attribute: '',
+    value: '',
+    validFrom: '',
+    validTo: '',
+    eventAt: '',
+    confidence: 'confirmed',
+  });
+  editorBaseline.value = JSON.stringify(form);
+}
+async function save() {
+  if (historicalRevision.value) throw new Error(t('uiMemoryLibraryEditLatestRevisionRequired'));
+  const original = detail.value?.revisions.find((record) => record.version === editingVersion.value);
+  const params = {
+    scopeId: editingScopeId.value,
+    text: form.text,
+    kind: form.kind,
+    subject: form.subject || undefined,
+    topic: topicParts(form.topic),
+    attribute: form.attribute || (editingId.value ? null : undefined),
+    value: form.value || (editingId.value ? null : undefined),
+    validFrom: savedDate(form.validFrom, original?.validFrom),
+    validTo: savedDate(form.validTo, original?.validTo) ?? (editingId.value ? null : undefined),
+    eventAt: savedDate(form.eventAt, original?.eventAt) ?? (editingId.value ? null : undefined),
+    confidence: form.confidence,
+  };
+  const saved = await rpc<{ records: LongMemoryRecord[] }>(editingId.value ? 'memory.revise' : 'memory.remember', {
+    ...params,
+    ...(editingId.value ? { id: editingId.value, expectedVersion: editingVersion.value } : {}),
+  });
+  notice.value = t('uiMemoryLibraryMemorySaved');
+  scopeId.value = editingScopeId.value;
+  await reload();
+  await choose(saved.records[0].id);
+}
+async function showImpact() {
+  deleteImpact.value = await rpc('memory.impact', { scopeId: editingScopeId.value, id: editingId.value, action: 'delete' });
+}
+async function remove() {
+  await rpc('memory.remove', { scopeId: editingScopeId.value, id: editingId.value, expectedVersion: editingVersion.value, action: 'delete' });
+  resetEditor();
+  notice.value = t('uiMemoryLibraryMemoryRemoved');
+  await reload();
+}
+async function savePolicy() {
+  const saved = await rpc<Options['policy']>('memory.policy.save', {
+    value: draftPolicy(),
+    expectedRevision: options.value!.policy.revision,
+    embeddingCredential: embeddingCredential.value || undefined,
+  });
+  options.value!.policy = saved;
+  setPolicy(saved.value);
+  notice.value = t('uiMemoryLibraryOrganizationSaved');
+}
+async function exportScope() {
+  const archive = await rpc<LongMemoryArchive>('memory.export', { scopeId: scopeId.value });
+  const url = URL.createObjectURL(new Blob([JSON.stringify(archive, null, 2)], { type: 'application/json' }));
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = t('uiMemoryLibraryArchiveFilenamePrefix') + new Date().toISOString().slice(0, 10) + '.json';
+  link.click();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+async function readImport(event: Event) {
+  const input = event.target as HTMLInputElement,
+    file = input.files?.[0];
+  input.value = '';
+  if (!file) return;
+  await perform(async () => {
+    if (file.size > 32 * 1024 * 1024) throw new Error(t('uiMemoryLibraryArchiveTooLarge'));
+    const value = JSON.parse(await file.text()) as LongMemoryArchive;
+    if (
+      value.format !== 'graycode-long-memory' ||
+      value.version !== 1 ||
+      !Array.isArray(value.records) ||
+      !Array.isArray(value.sources) ||
+      !Array.isArray(value.scopes) ||
+      !Array.isArray(value.tombstones)
+    )
+      throw new Error(t('uiMemoryLibraryInvalidArchive'));
+    importPreview.value = value;
+  });
+}
+async function restore() {
+  const restored = await rpc<{ records: number; sources: number; skipped: number }>('memory.restore', { archive: importPreview.value });
+  importPreview.value = null;
+  notice.value = t('uiMemoryLibraryArchiveMerged', { value1: restored.records, value2: restored.sources, value3: restored.skipped });
+  await loadOptions();
+}
+async function queueSummary() {
+  await rpc('memory.summary.queue', {
+    scopeId: scopeId.value,
+    recordIds: selectedIds.value,
+    topic: topicParts(summaryTopic.value || topicPath.value.join('/')),
+  });
+  notice.value = t('uiMemoryLibrarySummaryTaskQueued');
+  selectedIds.value = [];
+  await reload();
+}
+async function regenerateSummary() {
+  const refs = detail.value?.revisions[0].dependencies.filter((ref) => ref.kind === 'record').map((ref) => ref.id) ?? [];
+  await rpc('memory.summary.queue', {
+    scopeId: editingScopeId.value,
+    recordIds: refs,
+    topic: topicParts(form.topic),
+    id: editingId.value,
+    expectedVersion: editingVersion.value,
+  });
+  notice.value = t('uiMemoryLibrarySummariesReorganized');
+  section.value = 'jobs';
+  await reload();
+}
+async function testEmbedding() {
+  const value = await rpc<{ dimensions: number }>('memory.embedding.test', { scopeId: scopeId.value });
+  notice.value = t('uiMemoryLibraryConnectedDimensionsPrefix') + value.dimensions + '。';
+}
+async function rebuildIndex() {
+  const value = await rpc<{ queued: number }>('memory.index.rebuild', { scopeId: scopeId.value });
+  notice.value = t('uiMemoryLibraryRebuildScheduledPrefix') + value.queued + t('uiMemoryLibraryRebuildScheduledSuffix');
+  section.value = 'jobs';
+  await reload();
+}
+async function extractCurrent() {
+  await rpc('memory.extract', { scopeId: scopeId.value });
+  notice.value = t('uiMemoryLibraryRecentTurnsQueued');
+  section.value = 'jobs';
+  await reload();
+}
+function requestClose(): boolean {
+  if (busy.value) {
+    notice.value = t('uiMemoryLibrarySavingPleaseWait');
+    return false;
+  }
+  if (dirty.value) {
+    pendingClose.value = true;
+    return false;
+  }
+  return true;
+}
+async function discard() {
+  if (pendingClose.value) {
+    emit('close');
+    return;
+  }
+  const action = pendingNavigation.value;
+  pendingNavigation.value = null;
+  resetEditor();
+  await action?.();
+}
+function discardChanges() {
+  pendingClose.value = false;
+  pendingNavigation.value = null;
+  resetEditor();
+  if (options.value) setPolicy(options.value.policy.value);
+}
+defineExpose({ requestClose, dirty, busy, discardChanges });
+async function loadGraph() {
+  const request = ++graphEpoch;
+  graph.value = undefined;
+  graphError.value = '';
+  if (editorView.value !== 'graph' || !editingId.value) {
+    graphLoading.value = false;
+    return;
+  }
+  graphLoading.value = true;
+  try {
+    const value = await rpc<LongMemoryGraph>('memory.graph', {
+      scopeId: editingScopeId.value,
+      id: editingId.value,
+      version: editingVersion.value,
+      limit: graphLimit.value,
+    });
+    if (request === graphEpoch) graph.value = value;
+  } catch (cause) {
+    if (request === graphEpoch) graphError.value = (cause as Error).message;
+  } finally {
+    if (request === graphEpoch) graphLoading.value = false;
+  }
+}
+async function selectGraphNode(node: LongMemoryGraphNode) {
+  if (node.type === 'source') {
+    graphSource.value = detail.value?.sources.find((source) => source.id === node.id && source.version === node.version);
+    return;
+  }
+  if (node.id === editingId.value && node.version === editingVersion.value) {
+    editorView.value = 'edit';
+    return;
+  }
+  await navigate(async () => {
+    scopeId.value = node.scopeId;
+    await choose(node.id, node.version);
+  });
+}
+watch([editorView, editingId, editingVersion, graphLimit], () => {
+  void loadGraph();
+});
+let unsubscribe = () => {};
+onMounted(() => {
+  void perform(loadOptions);
+  unsubscribe = subscribe((event) => {
+    if (['memory.changed', 'memory.indexed', 'memory.job.changed'].includes(event.type) && (!event.scopeId || event.scopeId === scopeId.value)) {
+      if (editingId.value && event.type === 'memory.changed') changedElsewhere.value = true;
+      refreshRecords ||= event.type === 'memory.changed' || (event.type === 'memory.indexed' && relatedSearch.value);
+      if (refreshTimer) clearTimeout(refreshTimer);
+      refreshTimer = setTimeout(() => {
+        const reloadRecords = refreshRecords;
+        refreshRecords = false;
+        void (reloadRecords ? reload() : refreshJobs()).catch((cause) => (error.value = (cause as Error).message));
+      }, 180);
+    }
+  });
+});
+onUnmounted(() => {
+  epoch++;
+  editorEpoch++;
+  graphEpoch++;
+  unsubscribe();
+  if (refreshTimer) clearTimeout(refreshTimer);
+});
 </script>
 <template>
-  <section class="memory-library" aria-label="长期记忆">
-    <div class="memory-toolbar"><label v-if="section!=='imports'">范围<select v-model="scopeId" :disabled="busy" aria-label="记忆范围" @change="topicPath=[];selectedIds=[];perform(reload)"><option v-for="scope in options?.scopes" :key="scope.id" :value="scope.id">{{scope.label}}</option></select></label>
-      <nav aria-label="记忆管理"><button :aria-pressed="section==='records'" @click="section='records'">浏览与编辑</button><button :aria-pressed="section==='imports'" @click="section='imports'">导入资料库</button><button :aria-pressed="section==='organize'" @click="section='organize'">整理方式</button><button :aria-pressed="section==='jobs'" @click="section='jobs';perform(refreshJobs)">后台任务</button></nav>
-      <span v-if="loading" class="memory-muted" role="status">正在读取…</span>
+  <section class="memory-library" :aria-label="t('uiMemoryLibraryLongTermMemory')">
+    <div class="memory-toolbar">
+      <label v-if="section !== 'imports'">
+        {{ t('uiMemoryLibraryRange') }}
+        <select
+          v-model="scopeId"
+          :disabled="busy"
+          :aria-label="t('uiMemoryLibraryMemoryScope')"
+          @change="
+            topicPath = [];
+            selectedIds = [];
+            perform(reload);
+          "
+        >
+          <option v-for="scope in options?.scopes" :key="scope.id" :value="scope.id">{{ scope.label }}</option>
+        </select>
+      </label>
+      <nav :aria-label="t('uiMemoryLibraryMemoryManagement')">
+        <button :aria-pressed="section === 'records'" @click="section = 'records'">{{ t('uiMemoryLibraryBrowseAndEdit') }}</button>
+        <button :aria-pressed="section === 'imports'" @click="section = 'imports'">{{ t('uiMemoryLibraryImportedLibrary') }}</button>
+        <button :aria-pressed="section === 'organize'" @click="section = 'organize'">{{ t('uiMemoryLibraryOrganizationSettings') }}</button>
+        <button
+          :aria-pressed="section === 'jobs'"
+          @click="
+            section = 'jobs';
+            perform(refreshJobs);
+          "
+        >
+          {{ t('uiMemoryLibraryBackgroundTasks') }}
+        </button>
+      </nav>
+      <span v-if="loading" class="memory-muted" role="status">{{ t('uiComputerPaneLoading') }}</span>
     </div>
-    <p v-if="error" class="memory-error" role="alert">{{error}}</p><p v-if="notice" class="memory-notice" role="status">{{notice}}</p>
-    <div v-if="pendingClose||pendingNavigation" class="memory-confirm"><span>有未保存的更改。可以保留当前编辑，或放弃后继续。</span><button @click="pendingClose=false;pendingNavigation=null">保留当前编辑</button><button @click="perform(discard)">放弃并继续</button></div>
-    <div v-if="importPreview" class="memory-confirm"><span>将合并 {{importPreview.scopes.length}} 个范围、{{importPreview.records.length}} 个记忆版本和 {{importPreview.sources.length}} 个来源版本。已有删除标记仍然优先，冲突不会被覆盖。</span><button :disabled="busy" @click="perform(restore)">确认合并归档</button><button @click="importPreview=null">取消</button></div>
-    <div v-show="section==='records'" class="memory-columns">
-      <aside><form class="memory-search" @submit.prevent="appliedQuery=searchText;perform(reload)"><input v-model="searchText" :disabled="busy" aria-label="搜索长期记忆" placeholder="搜索事实、偏好或经验"><button :disabled="busy" type="submit">搜索</button></form>
-        <label class="memory-filter">查找方式<select v-model="searchMode" :disabled="busy" aria-label="记忆查找方式" @change="filterConfidence='';filterStatus='current';perform(reload)"><option value="related">相关性搜索</option><option value="list">逐条浏览／关键词</option></select></label>
-        <label class="memory-filter">类别<select v-model="kind" :disabled="busy" @change="perform(reload)"><option value="">全部类别</option><option v-for="(label,key) in kinds" :key="key" :value="key">{{label}}</option></select></label>
-        <label class="memory-filter">确认状态<select v-model="filterConfidence" :disabled="busy" aria-label="筛选确认状态" @change="searchMode='list';perform(reload)"><option value="">全部状态</option><option value="confirmed">已确认</option><option value="inferred">尚待核对</option><option value="disputed">存在争议</option></select></label>
-        <label class="memory-filter">有效性<select v-model="filterStatus" :disabled="busy" aria-label="筛选记忆有效性" @change="searchMode='list';perform(reload)"><option value="current">当前有效版本</option><option value="all">全部条目的最新修订</option><option value="inactive">未生效或已失效</option></select></label>
-        <p class="memory-muted">相关性搜索保留关键词与语义检索。逐条浏览可分页核对全部条目，有效性和确认状态分别筛选。</p>
-        <div class="memory-path"><button @click="topicPath=[];perform(reload)">全部主题</button><button v-for="(part,index) in topicPath" :key="index" @click="topicPath=topicPath.slice(0,index+1);perform(reload)">{{part}}</button></div>
-        <button v-for="topic in topics" :key="topic.scopeId+topic.path.join('/')" class="memory-topic" @click="topicPath=topic.path;perform(reload)"><span>{{topic.path.at(-1)}}</span><small>{{topic.records}} 条<span v-if="topic.summaries.length"> · 有摘要</span></small></button>
-        <button v-if="topicCursor" class="memory-topic" :disabled="busy||loading" @click="perform(loadMoreTopics)">加载更多主题</button>
-        <div class="memory-side-actions"><button :disabled="busy||!scopeId" @click="navigate(create)">新增记忆</button><button :disabled="busy||!scopeId" @click="perform(exportScope)">导出当前范围</button><label class="memory-import">合并归档<input type="file" accept=".json" :disabled="busy" @change="readImport"></label></div>
-        <p class="memory-muted">按主题逐层查看，只把相关内容交给当前对话。群聊和角色剧情有独立范围。</p>
+    <p v-if="error" class="memory-error" role="alert">{{ error }}</p>
+    <p v-if="notice" class="memory-notice" role="status">{{ notice }}</p>
+    <div v-if="pendingClose || pendingNavigation" class="memory-confirm">
+      <span>{{ t('uiMemoryLibraryUnsavedChangesHelp') }}</span>
+      <button
+        @click="
+          pendingClose = false;
+          pendingNavigation = null;
+        "
+      >
+        {{ t('uiMemoryLibraryKeepCurrentEdits') }}
+      </button>
+      <button @click="perform(discard)">{{ t('uiMemoryLibraryDiscardAndContinue') }}</button>
+    </div>
+    <div v-if="importPreview" class="memory-confirm">
+      <span>
+        {{ t('uiMemoryLibraryMergeArchivePrefix') }} {{ importPreview.scopes.length }} {{ t('uiMemoryLibraryScopeCountSuffix')
+        }}{{ importPreview.records.length }} {{ t('uiMemoryLibraryMemoryVersionCountSuffix') }} {{ importPreview.sources.length }}
+        {{ t('uiMemoryLibrarySourceVersionMergeSuffix') }}
+      </span>
+      <button :disabled="busy" @click="perform(restore)">{{ t('uiMemoryLibraryConfirmArchiveMerge') }}</button>
+      <button @click="importPreview = null">{{ t('uiBrowserPaneCancel') }}</button>
+    </div>
+    <div v-show="section === 'records'" class="memory-columns">
+      <aside>
+        <form
+          class="memory-search"
+          @submit.prevent="
+            appliedQuery = searchText;
+            perform(reload);
+          "
+        >
+          <input
+            v-model="searchText"
+            :disabled="busy"
+            :aria-label="t('uiMemoryLibrarySearchLongTermMemory')"
+            :placeholder="t('uiMemoryLibraryMemorySearchPlaceholder')"
+          />
+          <button :disabled="busy" type="submit">{{ t('uiMemoryLibrarySearch') }}</button>
+        </form>
+        <label class="memory-filter">
+          {{ t('uiMemoryLibrarySearchMethod') }}
+          <select
+            v-model="searchMode"
+            :disabled="busy"
+            :aria-label="t('uiMemoryLibraryMemorySearchMethod')"
+            @change="
+              filterConfidence = '';
+              filterStatus = 'current';
+              perform(reload);
+            "
+          >
+            <option value="related">{{ t('uiMemoryLibraryRelevanceSearch') }}</option>
+            <option value="list">{{ t('uiMemoryLibraryBrowseKeywordSearch') }}</option>
+          </select>
+        </label>
+        <label class="memory-filter">
+          {{ t('uiMemoryLibraryCategory') }}
+          <select v-model="kind" :disabled="busy" @change="perform(reload)">
+            <option value="">{{ t('uiMemoryLibraryAllCategories') }}</option>
+            <option v-for="(label, key) in kinds" :key="key" :value="key">{{ label }}</option>
+          </select>
+        </label>
+        <label class="memory-filter">
+          {{ t('uiMemoryLibraryVerificationStatus') }}
+          <select
+            v-model="filterConfidence"
+            :disabled="busy"
+            :aria-label="t('uiMemoryLibraryFilterVerificationStatus')"
+            @change="
+              searchMode = 'list';
+              perform(reload);
+            "
+          >
+            <option value="">{{ t('uiMemoryLibraryAllStatuses') }}</option>
+            <option value="confirmed">{{ t('uiMemoryLibraryConfirmed') }}</option>
+            <option value="inferred">{{ t('uiMemoryLibraryAwaitingVerification') }}</option>
+            <option value="disputed">{{ t('uiMemoryLibraryDisputed') }}</option>
+          </select>
+        </label>
+        <label class="memory-filter">
+          {{ t('uiMemoryLibraryValidity') }}
+          <select
+            v-model="filterStatus"
+            :disabled="busy"
+            :aria-label="t('uiMemoryLibraryFilterValidity')"
+            @change="
+              searchMode = 'list';
+              perform(reload);
+            "
+          >
+            <option value="current">{{ t('uiMemoryLibraryValidVersions') }}</option>
+            <option value="all">{{ t('uiMemoryLibraryLatestRevisions') }}</option>
+            <option value="inactive">{{ t('uiMemoryLibraryInactiveVersions') }}</option>
+          </select>
+        </label>
+        <p class="memory-muted">{{ t('uiMemoryLibrarySearchMethodHelp') }}</p>
+        <div class="memory-path">
+          <button
+            @click="
+              topicPath = [];
+              perform(reload);
+            "
+          >
+            {{ t('uiMemoryLibraryAllTopics') }}
+          </button>
+          <button
+            v-for="(part, index) in topicPath"
+            :key="index"
+            @click="
+              topicPath = topicPath.slice(0, index + 1);
+              perform(reload);
+            "
+          >
+            {{ part }}
+          </button>
+        </div>
+        <button
+          v-for="topic in topics"
+          :key="topic.scopeId + topic.path.join('/')"
+          class="memory-topic"
+          @click="
+            topicPath = topic.path;
+            perform(reload);
+          "
+        >
+          <span>{{ topic.path.at(-1) }}</span>
+          <small>
+            {{ topic.records }} {{ t('uiMemoryLibraryEntryCountSuffix') }}
+            <span v-if="topic.summaries.length">{{ t('uiMemoryLibraryHasSummarySuffix') }}</span>
+          </small>
+        </button>
+        <button v-if="topicCursor" class="memory-topic" :disabled="busy || loading" @click="perform(loadMoreTopics)">
+          {{ t('uiMemoryLibraryLoadMoreTopics') }}
+        </button>
+        <div class="memory-side-actions">
+          <button :disabled="busy || !scopeId" @click="navigate(create)">{{ t('uiMemoryLibraryAddMemory') }}</button>
+          <button :disabled="busy || !scopeId" @click="perform(exportScope)">{{ t('uiMemoryLibraryExportCurrentScope') }}</button>
+          <label class="memory-import">
+            {{ t('uiMemoryLibraryMergeArchive') }}
+            <input type="file" accept=".json" :disabled="busy" @change="readImport" />
+          </label>
+        </div>
+        <p class="memory-muted">{{ t('uiMemoryLibraryScopeBrowsingHelp') }}</p>
       </aside>
-      <main :class="{'has-selection':editing}">
-        <div v-if="result" class="memory-result-meta"><span>{{result.method==='hybrid'?'关键词与语义':'关键词'}} · {{result.hits.length}} 条相关结果</span><span v-if="result.truncated">相关结果按召回预算选取，可改用逐条浏览核对全部关键词匹配。</span></div>
-        <div v-if="browseResult" class="memory-pagination"><span v-if="loading">正在读取记忆…</span><span v-else>{{browseResult.total?`${browseResult.offset+1}–${browseResult.offset+browseResult.items.length} / ${browseResult.total}`:'0 条'}} · 逐条浏览</span><button :disabled="busy||loading" @click="perform(reload)">刷新列表</button><button :disabled="busy||loading||!recordTrail.length" @click="perform(()=>loadRecordPage('previous'))">上一页记忆</button><button :disabled="busy||loading||!browseResult.nextCursor" @click="perform(()=>loadRecordPage('next'))">下一页记忆</button></div>
-        <div v-if="selectedIds.length" class="memory-summary-actions"><span>已选 {{selectedIds.length}} 条</span><input v-model="summaryTopic" aria-label="摘要主题" placeholder="摘要主题，例如 项目 / 部署"><button :disabled="busy" @click="perform(queueSummary)">按所选依据整理摘要</button></div>
-        <div class="memory-records" :aria-busy="loading"><div v-for="record in visibleRecords" :key="record.id" class="memory-record" :class="{selected:editingId===record.id}"><input v-model="selectedIds" type="checkbox" :value="record.id" :disabled="busy||loading||!record.active" :title="record.active?'选择为摘要依据':'非当前有效版本不能作为新的摘要依据'" :aria-label="'选择记忆 '+record.id"><button :disabled="busy||loading" @click="navigate(()=>choose(record.id,record.version))"><span class="memory-record-meta">{{kinds[record.kind]}} · {{origins[record.origin]}}<span v-if="record.confidence!=='confirmed'"> · {{record.confidence==='inferred'?'待核对':'存在争议'}}</span><span v-if="!record.active"> · 未生效或已失效</span><span v-if="record.conflicts.length"> · 有不同说法</span></span><strong>{{record.preview}}</strong><small v-if="record.moreText">打开查看完整正文</small><small>{{record.topic.join(' / ')||'未分类'}}<template v-if="record.reasons.length"> · {{record.reasons.join(' + ')}}</template></small></button></div></div>
-        <p v-if="!visibleRecords.length&&!loading" class="memory-empty">没有匹配的记忆。可以调整筛选条件、新增一条，或从当前对话提取。</p>
-        <section v-if="editing" ref="editor" class="memory-editor" aria-label="记忆编辑器">
-          <header><strong>{{historicalRevision?'查看历史修订':editingId?'编辑记忆':'新增记忆'}}</strong><span>{{scopeLabel(editingScopeId)}}</span><code v-if="editingId">{{editingId.slice(0,12)}} · v{{editingVersion}}</code></header>
-          <p v-if="historicalRevision" class="memory-warning">当前显示所选历史版本。<button :disabled="busy" @click="latestRevision">返回最新修订再编辑</button></p>
-          <nav v-if="editingId" class="memory-editor-tabs" aria-label="记忆查看方式"><button :aria-pressed="editorView==='edit'" @click="editorView='edit'">编辑正文</button><button :aria-pressed="editorView==='graph'" @click="editorView='graph'">查看关系</button></nav>
-          <template v-if="editorView==='graph'">
-            <p v-if="editorDirty" class="memory-warning">关系图显示已保存的版本，正在编辑的草稿仍然保留。</p>
-            <p v-if="graphLoading" class="memory-muted" role="status">正在读取实际来源与派生关系…</p><p v-if="graphError" class="memory-error" role="alert">{{graphError}}</p>
-            <MemoryGraph v-if="graph" :graph="graph" :busy="busy" :can-expand="graphLimit<100" @select="selectGraphNode" @more="graphLimit=Math.min(100,graphLimit+30)" />
-            <aside v-if="graphSource" class="memory-source-preview"><header><strong>来源原文 · {{origins[graphSource.origin]}}</strong><button @click="graphSource=undefined">收起原文</button></header><blockquote>{{graphSource.text}}</blockquote><MemorySourceFiles :key="graphSource.id" :source="graphSource" /></aside>
-          </template>
-          <div v-show="editorView==='edit'">
-          <p v-if="changedElsewhere" class="memory-muted">此范围刚有更新，当前编辑内容已保留。保存时会检查版本。</p>
-          <p v-if="detail&&detail.activeVersion!==editingVersion" class="memory-warning">此修订当前不参与召回，可能尚未生效、已经过期或来源已修订。下方可以查看依据。</p>
-          <label>正文<textarea v-model="form.text" :readonly="historicalRevision" rows="5" aria-label="记忆正文"></textarea></label>
-          <div class="memory-form-grid"><label>类别<select v-model="form.kind" :disabled="form.kind==='summary'||historicalRevision"><option v-for="(label,key) in kinds" :key="key" :value="key" :disabled="key==='summary'&&form.kind!=='summary'">{{label}}</option></select></label><label>确认状态<select v-model="form.confidence" :disabled="historicalRevision"><option value="confirmed">已确认</option><option value="inferred">尚待核对</option><option value="disputed">存在争议</option></select></label>
-            <label>主体<input v-model="form.subject" :readonly="historicalRevision" placeholder="留空表示当前账号"></label><label>主题层次<input v-model="form.topic" :readonly="historicalRevision" placeholder="个人 / 饮食，使用 / 分层"></label><label>属性<input v-model="form.attribute" :readonly="historicalRevision" placeholder="例如 部署端口、喜欢的饮料"></label><label>属性值<input v-model="form.value" :readonly="historicalRevision" placeholder="可选，用于识别不同说法"></label>
-            <label>生效时间（UTC）<input v-model="form.validFrom" :readonly="historicalRevision" type="datetime-local"></label><label>失效时间（UTC）<input v-model="form.validTo" :readonly="historicalRevision" type="datetime-local"></label><label>事件发生时间（UTC）<input v-model="form.eventAt" :readonly="historicalRevision" type="datetime-local"></label></div>
-          <div class="memory-editor-actions"><button :disabled="busy||historicalRevision||!form.text.trim()" @click="perform(save)">保存记忆</button><button v-if="editingId" :disabled="busy||historicalRevision" @click="perform(showImpact)">查看删除影响</button><button v-if="form.kind==='summary'&&editingId" :disabled="busy||historicalRevision" @click="perform(regenerateSummary)">按当前依据重新整理</button><button :disabled="busy" @click="navigate(resetEditor)">收起编辑器</button></div>
+      <main :class="{ 'has-selection': editing }">
+        <div v-if="result" class="memory-result-meta">
+          <span>
+            {{ result.method === 'hybrid' ? t('uiMemoryLibraryKeywordAndSemantic') : t('uiMemoryLibraryKeyword') }} · {{ result.hits.length }}
+            {{ t('uiMemoryLibraryRelevantResultsCount') }}
+          </span>
+          <span v-if="result.truncated">{{ t('uiMemoryLibraryRelevantResultsHelp') }}</span>
+        </div>
+        <div v-if="browseResult" class="memory-pagination">
+          <span v-if="loading">{{ t('uiMemoryLibraryLoadingMemories') }}</span>
+          <span v-else>
+            {{
+              browseResult.total
+                ? `${browseResult.offset + 1}–${browseResult.offset + browseResult.items.length} / ${browseResult.total}`
+                : t('uiMemoryLibraryNoEntriesCount')
+            }}
+            {{ t('uiMemoryLibraryBrowseEntriesSuffix') }}
+          </span>
+          <button :disabled="busy || loading" @click="perform(reload)">{{ t('uiMemoryLibraryRefreshList') }}</button>
+          <button :disabled="busy || loading || !recordTrail.length" @click="perform(() => loadRecordPage('previous'))">
+            {{ t('uiMemoryLibraryPreviousMemoryPage') }}
+          </button>
+          <button :disabled="busy || loading || !browseResult.nextCursor" @click="perform(() => loadRecordPage('next'))">
+            {{ t('uiMemoryLibraryNextMemoryPage') }}
+          </button>
+        </div>
+        <div v-if="selectedIds.length" class="memory-summary-actions">
+          <span>{{ t('uiMemoryLibrarySelected') }} {{ selectedIds.length }} {{ t('uiMemoryLibraryEntryCountSuffix') }}</span>
+          <input v-model="summaryTopic" :aria-label="t('uiMemoryLibrarySummaryTopic')" :placeholder="t('uiMemoryLibrarySummaryTopicPlaceholder')" />
+          <button :disabled="busy" @click="perform(queueSummary)">{{ t('uiMemoryLibrarySummarizeSelectedEvidence') }}</button>
+        </div>
+        <div class="memory-records" :aria-busy="loading">
+          <div v-for="record in visibleRecords" :key="record.id" class="memory-record" :class="{ selected: editingId === record.id }">
+            <input
+              v-model="selectedIds"
+              type="checkbox"
+              :value="record.id"
+              :disabled="busy || loading || !record.active"
+              :title="record.active ? t('uiMemoryLibrarySelectSummaryEvidence') : t('uiMemoryLibraryInvalidSummaryEvidence')"
+              :aria-label="t('uiMemoryLibrarySelectMemoryPrefix') + record.id"
+            />
+            <button :disabled="busy || loading" @click="navigate(() => choose(record.id, record.version))">
+              <span class="memory-record-meta">
+                {{ kinds[record.kind] }} · {{ origins[record.origin] }}
+                <span v-if="record.confidence !== 'confirmed'">
+                  · {{ record.confidence === 'inferred' ? t('uiMemoryLibraryNeedsVerification') : t('uiMemoryLibraryDisputed') }}
+                </span>
+                <span v-if="!record.active">{{ t('uiMemoryLibraryInactiveVersionSuffix') }}</span>
+                <span v-if="record.conflicts.length">{{ t('uiMemoryLibraryConflictingAccountsSuffix') }}</span>
+              </span>
+              <strong>{{ record.preview }}</strong>
+              <small v-if="record.moreText">{{ t('uiMemoryLibraryViewFullText') }}</small>
+              <small>
+                {{ record.topic.join(' / ') || t('uiMemoryLibraryUncategorized') }}
+                <template v-if="record.reasons.length">· {{ record.reasons.join(' + ') }}</template>
+              </small>
+            </button>
           </div>
-          <div v-if="deleteImpact" class="memory-confirm"><p>将移除 {{deleteImpact.recordCount}} 条记忆及派生内容，并清除有关来源摘录和旧修订。原始会话保留供你查看，相关来源和依赖内容会从后续模型上下文中排除。</p><ul><li v-for="item in deleteImpact.items" :key="item.id">{{kinds[item.kind]}}：{{item.text}}</li></ul><p v-if="deleteImpact.truncated">列表显示前 {{deleteImpact.items.length}} 条，其余引用这条来源的派生内容也会移除。</p><button :disabled="busy" class="memory-delete" @click="perform(remove)">确认删除这些内容</button><button @click="deleteImpact=null">取消</button></div>
-          <details v-if="detail" open class="memory-evidence"><summary>来源与依赖</summary><article v-for="source in detail.sources" :key="source.id+'@'+source.version"><div>{{origins[source.origin]}} · {{source.reference?.label||source.reference?.messageId||'来源摘录'}} · {{stamp(source.recordedAt)}}</div><blockquote>{{source.text}}</blockquote><MemorySourceFiles :source="source" /></article><article v-for="parent in detail.parents" :key="parent.id+'@'+parent.version"><button @click="scopeId=editingScopeId;navigate(()=>choose(parent.id,parent.version))">展开 {{kinds[parent.kind]}} · {{parent.id.slice(0,12)}}@{{parent.version}}</button><p>{{parent.text}}</p></article><p v-if="!detail.sources.length&&!detail.parents.length" class="memory-muted">来源内容已经移除，当前条目不可作为有效依据。</p></details>
-          <details v-if="detail&&detail.revisions.length>1" class="memory-revisions"><summary>修订记录（{{detail.revisions.length}}）</summary><article v-for="revision in detail.revisions" :key="revision.version"><small>v{{revision.version}} · {{stamp(revision.recordedAt)}} · 自 {{stamp(revision.validFrom)}} 生效</small><button :disabled="busy||revision.version===editingVersion" @click="scopeId=editingScopeId;navigate(()=>choose(revision.id,revision.version))">查看此修订</button><p>{{revision.text}}</p></article></details>
-          <details v-if="detail?.relations?.length" class="memory-evidence"><summary>关联记忆（{{detail.relations.length}}）</summary><article v-for="related in detail.relations" :key="related.id"><button @click="scopeId=editingScopeId;navigate(()=>choose(related.id,related.version))">查看关联 · {{related.subject}}</button><p>{{related.text}}</p></article></details>
+        </div>
+        <p v-if="!visibleRecords.length && !loading" class="memory-empty">{{ t('uiMemoryLibraryNoMatchingMemories') }}</p>
+        <section v-if="editing" ref="editor" class="memory-editor" :aria-label="t('uiMemoryLibraryMemoryEditor')">
+          <header>
+            <strong>
+              {{ historicalRevision ? t('uiMemoryLibraryViewRevisionHistory') : editingId ? t('uiMemoryLibraryEditMemory') : t('uiMemoryLibraryAddMemory') }}
+            </strong>
+            <span>{{ scopeLabel(editingScopeId) }}</span>
+            <code v-if="editingId">{{ editingId.slice(0, 12) }} · v{{ editingVersion }}</code>
+          </header>
+          <p v-if="historicalRevision" class="memory-warning">
+            {{ t('uiMemoryLibraryHistoricalVersionDisplayed') }}
+            <button :disabled="busy" @click="latestRevision">{{ t('uiMemoryLibraryReturnToLatestRevision') }}</button>
+          </p>
+          <nav v-if="editingId" class="memory-editor-tabs" :aria-label="t('uiMemoryLibraryMemoryViewMode')">
+            <button :aria-pressed="editorView === 'edit'" @click="editorView = 'edit'">{{ t('uiMemoryLibraryEditText') }}</button>
+            <button :aria-pressed="editorView === 'graph'" @click="editorView = 'graph'">{{ t('uiMemoryLibraryViewRelationships') }}</button>
+          </nav>
+          <template v-if="editorView === 'graph'">
+            <p v-if="editorDirty" class="memory-warning">{{ t('uiMemoryLibrarySavedGraphHelp') }}</p>
+            <p v-if="graphLoading" class="memory-muted" role="status">{{ t('uiMemoryLibraryLoadingRelationships') }}</p>
+            <p v-if="graphError" class="memory-error" role="alert">{{ graphError }}</p>
+            <MemoryGraph
+              v-if="graph"
+              :graph="graph"
+              :busy="busy"
+              :can-expand="graphLimit < 100"
+              @select="selectGraphNode"
+              @more="graphLimit = Math.min(100, graphLimit + 30)"
+            />
+            <aside v-if="graphSource" class="memory-source-preview">
+              <header>
+                <strong>{{ t('uiMemoryLibrarySourceTextLabel') }} {{ origins[graphSource.origin] }}</strong>
+                <button @click="graphSource = undefined">{{ t('uiMemoryLibraryCollapseOriginalText') }}</button>
+              </header>
+              <blockquote>{{ graphSource.text }}</blockquote>
+              <MemorySourceFiles :key="graphSource.id" :source="graphSource" />
+            </aside>
+          </template>
+          <div v-show="editorView === 'edit'">
+            <p v-if="changedElsewhere" class="memory-muted">{{ t('uiMemoryLibraryScopeUpdatedHelp') }}</p>
+            <p v-if="detail && detail.activeVersion !== editingVersion" class="memory-warning">{{ t('uiMemoryLibraryInactiveRevisionHelp') }}</p>
+            <label>
+              {{ t('uiComputerPaneBodyText') }}
+              <textarea v-model="form.text" :readonly="historicalRevision" rows="5" :aria-label="t('uiMemoryLibraryMemoryText')"></textarea>
+            </label>
+            <div class="memory-form-grid">
+              <label>
+                {{ t('uiMemoryLibraryCategory') }}
+                <select v-model="form.kind" :disabled="form.kind === 'summary' || historicalRevision">
+                  <option v-for="(label, key) in kinds" :key="key" :value="key" :disabled="key === 'summary' && form.kind !== 'summary'">{{ label }}</option>
+                </select>
+              </label>
+              <label>
+                {{ t('uiMemoryLibraryVerificationStatus') }}
+                <select v-model="form.confidence" :disabled="historicalRevision">
+                  <option value="confirmed">{{ t('uiMemoryLibraryConfirmed') }}</option>
+                  <option value="inferred">{{ t('uiMemoryLibraryAwaitingVerification') }}</option>
+                  <option value="disputed">{{ t('uiMemoryLibraryDisputed') }}</option>
+                </select>
+              </label>
+              <label>
+                {{ t('uiMemoryLibrarySubject') }}
+                <input v-model="form.subject" :readonly="historicalRevision" :placeholder="t('uiMemoryLibrarySubjectPlaceholder')" />
+              </label>
+              <label>
+                {{ t('uiMemoryLibraryTopicHierarchy') }}
+                <input v-model="form.topic" :readonly="historicalRevision" :placeholder="t('uiMemoryLibraryTopicHierarchyPlaceholder')" />
+              </label>
+              <label>
+                {{ t('uiMemoryLibraryAttribute') }}
+                <input v-model="form.attribute" :readonly="historicalRevision" :placeholder="t('uiMemoryLibraryAttributePlaceholder')" />
+              </label>
+              <label>
+                {{ t('uiMemoryLibraryAttributeValue') }}
+                <input v-model="form.value" :readonly="historicalRevision" :placeholder="t('uiMemoryLibraryAttributeValuePlaceholder')" />
+              </label>
+              <label>
+                {{ t('uiMemoryLibraryValidFrom') }}
+                <input v-model="form.validFrom" :readonly="historicalRevision" type="datetime-local" />
+              </label>
+              <label>
+                {{ t('uiMemoryLibraryValidUntil') }}
+                <input v-model="form.validTo" :readonly="historicalRevision" type="datetime-local" />
+              </label>
+              <label>
+                {{ t('uiMemoryLibraryEventTime') }}
+                <input v-model="form.eventAt" :readonly="historicalRevision" type="datetime-local" />
+              </label>
+            </div>
+            <div class="memory-editor-actions">
+              <button :disabled="busy || historicalRevision || !form.text.trim()" @click="perform(save)">{{ t('uiMemoryLibrarySaveMemory') }}</button>
+              <button v-if="editingId" :disabled="busy || historicalRevision" @click="perform(showImpact)">{{ t('uiMemoryLibraryViewDeletionImpact') }}</button>
+              <button v-if="form.kind === 'summary' && editingId" :disabled="busy || historicalRevision" @click="perform(regenerateSummary)">
+                {{ t('uiMemoryLibraryReorganizeCurrentEvidence') }}
+              </button>
+              <button :disabled="busy" @click="navigate(resetEditor)">{{ t('uiMemoryLibraryCollapseEditor') }}</button>
+            </div>
+          </div>
+          <div v-if="deleteImpact" class="memory-confirm">
+            <p>{{ t('uiMemoryLibraryRemoveMemoryPrefix') }} {{ deleteImpact.recordCount }} {{ t('uiMemoryLibraryRemoveMemorySuffix') }}</p>
+            <ul>
+              <li v-for="item in deleteImpact.items" :key="item.id">{{ kinds[item.kind] }}：{{ item.text }}</li>
+            </ul>
+            <p v-if="deleteImpact.truncated">
+              {{ t('uiMemoryLibraryDeletionListPrefix') }} {{ deleteImpact.items.length }} {{ t('uiMemoryLibraryDeletionListSuffix') }}
+            </p>
+            <button :disabled="busy" class="memory-delete" @click="perform(remove)">{{ t('uiMemoryLibraryConfirmDeleteContent') }}</button>
+            <button @click="deleteImpact = null">{{ t('uiBrowserPaneCancel') }}</button>
+          </div>
+          <details v-if="detail" open class="memory-evidence">
+            <summary>{{ t('uiMemoryLibrarySourcesAndDependencies') }}</summary>
+            <article v-for="source in detail.sources" :key="source.id + '@' + source.version">
+              <div>
+                {{ origins[source.origin] }} · {{ source.reference?.label || source.reference?.messageId || t('uiMemoryLibrarySourceExcerpts') }} ·
+                {{ stamp(source.recordedAt) }}
+              </div>
+              <blockquote>{{ source.text }}</blockquote>
+              <MemorySourceFiles :source="source" />
+            </article>
+            <article v-for="parent in detail.parents" :key="parent.id + '@' + parent.version">
+              <button
+                @click="
+                  scopeId = editingScopeId;
+                  navigate(() => choose(parent.id, parent.version));
+                "
+              >
+                {{ t('uiComputerPaneExpand') }} {{ kinds[parent.kind] }} · {{ parent.id.slice(0, 12) }}@{{ parent.version }}
+              </button>
+              <p>{{ parent.text }}</p>
+            </article>
+            <p v-if="!detail.sources.length && !detail.parents.length" class="memory-muted">{{ t('uiMemoryLibrarySourceRemovedHelp') }}</p>
+          </details>
+          <details v-if="detail && detail.revisions.length > 1" class="memory-revisions">
+            <summary>{{ t('uiMemoryLibraryRevisionHistoryPrefix') }}{{ detail.revisions.length }}）</summary>
+            <article v-for="revision in detail.revisions" :key="revision.version">
+              <small>
+                v{{ revision.version }} · {{ stamp(revision.recordedAt) }} {{ t('uiMemoryLibraryValidFromPrefix') }} {{ stamp(revision.validFrom) }}
+                {{ t('uiMemoryLibraryValidLabel') }}
+              </small>
+              <button
+                :disabled="busy || revision.version === editingVersion"
+                @click="
+                  scopeId = editingScopeId;
+                  navigate(() => choose(revision.id, revision.version));
+                "
+              >
+                {{ t('uiMemoryLibraryViewRevision') }}
+              </button>
+              <p>{{ revision.text }}</p>
+            </article>
+          </details>
+          <details v-if="detail?.relations?.length" class="memory-evidence">
+            <summary>{{ t('uiMemoryLibraryRelatedMemoriesPrefix') }}{{ detail.relations.length }}）</summary>
+            <article v-for="related in detail.relations" :key="related.id">
+              <button
+                @click="
+                  scopeId = editingScopeId;
+                  navigate(() => choose(related.id, related.version));
+                "
+              >
+                {{ t('uiMemoryLibraryViewRelatedPrefix') }} {{ related.subject }}
+              </button>
+              <p>{{ related.text }}</p>
+            </article>
+          </details>
         </section>
       </main>
     </div>
-    <MemoryImports v-if="section==='imports'" @browse="browseImport" />
-    <section v-show="section==='organize'" class="memory-organization" aria-label="记忆整理方式">
-      <div class="settings-guide"><strong>先从 5 条、1200 token 开始</strong><p>条数与预算同时生效，达到任一上限就停止加入记忆。个人偏好通常只需少量条目；复杂项目可增加到 8～12 条、2000～4000 token。提高预算会占用更多模型上下文，并可能增加输入费用。</p></div>
-      <div class="memory-form-grid"><fieldset><legend>本轮召回</legend><label class="memory-check"><input v-model="policy.enabled" type="checkbox">聊天时自动引用少量相关记忆</label><label>最多引用条数<input v-model.number="policy.recallLimit" type="number" min="1" max="50" aria-label="最多引用条数"><small class="settings-help">每轮最多自动带入的相关记忆，默认 5 条。条目很短但主题多时，可先增加条数；实际数量还受 token 预算限制。</small></label><label>记忆上下文预算（估算 token）<input v-model.number="policy.recallTokens" type="number" min="256" max="16000" aria-label="记忆上下文预算"><small class="settings-help">默认 1200，包含记忆文字与说明的估算总量。降低可节省上下文；若详细条目放不下，可提高预算。模型仍可通过记忆工具按需展开来源。</small></label><p class="memory-muted">工具循环复用本轮选择。纠正、删除和权限变化会优先使失效依据退出请求。</p></fieldset>
-        <fieldset><legend>后台整理</legend><label class="memory-check"><input v-model="policy.automaticExtraction" type="checkbox">对话完成后自动提取</label><div class="memory-scope-checks"><label v-for="(label,key) in {personal:'个人',workspace:'当前项目',group:'绑定群组'}" :key="key" class="memory-check"><input v-model="policy.automaticScopes" type="checkbox" :value="key">{{label}}</label></div><label>整理渠道<select v-model="policy.providerId" @change="policy.model=provider?.model||''"><option value="">选择已配置的渠道</option><option v-for="item in options?.providers" :key="item.id" :value="item.id">{{item.name}}</option></select></label><label>整理模型<input v-model="policy.model" list="memory-model-options" placeholder="选择或填写模型名称"><datalist id="memory-model-options"><option v-for="model in provider?.models" :key="model" :value="model" /></datalist></label><label>单次输出上限（含思考）<input v-model.number="policy.extractionOutputTokens" type="number" min="1024" max="32768" aria-label="单次输出上限"><small class="settings-help">默认 12288，是整理请求的输出上限，包含渠道计入的思考内容。调低可约束输出，但过低可能截断结构化结果；长来源或推理模型整理失败时，再检查并提高此值。</small></label><p class="memory-muted">自动提取会在对话完成后，针对勾选范围调用整理模型，因此会产生额外请求；它与聊天时自动引用记忆是两个独立开关。个人用于偏好与经历，项目用于当前工作区知识，群组用于绑定群的共同信息。失败与中断不会自动反复重试，实际用量可在后台任务查看。</p></fieldset></div>
-      <fieldset><legend>语义检索</legend><label class="memory-check"><input v-model="embeddingEnabled" type="checkbox">使用嵌入服务，与关键词结果合并</label><div v-if="embeddingEnabled" class="memory-form-grid"><label>嵌入接口完整地址<input v-model="embedding.url" placeholder="http://127.0.0.1:端口/v1/embeddings"></label><label>实际嵌入模型<input v-model="embedding.model" placeholder="服务所支持的模型名"></label><label>凭据<input v-model="embeddingCredential" type="password" autocomplete="new-password" :placeholder="embedding.credentialRef?'已保存；留空继续使用':'本地无认证服务可以留空'"></label><label>请求维度（可选）<input v-model="embedding.dimensions" type="number" min="1" max="16384" placeholder="按服务实际返回" aria-label="请求维度"><small class="settings-help">留空使用模型返回的维度。只填写服务明确支持的值；较低维度减少索引空间，但可能降低区分相似内容的能力。</small></label><label>查询前缀（按模型要求填写）<input v-model="embedding.queryPrefix" aria-label="查询前缀"><small class="settings-help">仅按嵌入模型文档填写，例如模型明确要求的 query:。它会添加在搜索问题前；不要求前缀的模型留空。</small></label><label>正文前缀（可选）<input v-model="embedding.documentPrefix" aria-label="正文前缀"><small class="settings-help">添加在记忆正文前的嵌入指令，与查询前缀成对遵循模型要求。改变前缀后需要重建索引。</small></label></div><p class="memory-muted">未启用或服务不可用时使用关键词。修改地址、模型或前缀后，旧向量不会与新配置混用；可重建当前范围全部版本的索引。</p></fieldset>
-      <div class="memory-editor-actions"><button :disabled="busy||!policyDirty" @click="perform(savePolicy)">保存整理方式</button><button :disabled="busy||policyDirty||!embeddingEnabled" @click="perform(testEmbedding)">测试嵌入连接</button><button :disabled="busy||policyDirty||!embeddingEnabled" @click="perform(rebuildIndex)">重建当前范围索引</button><button :disabled="busy||policyDirty||!state.conversationId||!policy.providerId" @click="perform(extractCurrent)">整理最近回合</button></div>
+    <MemoryImports v-if="section === 'imports'" @browse="browseImport" />
+    <section v-show="section === 'organize'" class="memory-organization" :aria-label="t('uiMemoryLibraryMemoryOrganizationSettings')">
+      <div class="settings-guide">
+        <strong>{{ t('uiMemoryLibraryDefaultBudgetSuggestion') }}</strong>
+        <p>{{ t('uiMemoryLibraryMemoryBudgetHelp') }}</p>
+      </div>
+      <div class="memory-form-grid">
+        <fieldset>
+          <legend>{{ t('uiMemoryLibraryTurnRecall') }}</legend>
+          <label class="memory-check">
+            <input v-model="policy.enabled" type="checkbox" />
+            {{ t('uiMemoryLibraryAutomaticRecall') }}
+          </label>
+          <label>
+            {{ t('uiMemoryLibraryMaxReferencedEntries') }}
+            <input v-model.number="policy.recallLimit" type="number" min="1" max="50" :aria-label="t('uiMemoryLibraryMaxReferencedEntries')" />
+            <small class="settings-help">{{ t('uiMemoryLibraryMaxReferencedEntriesHelp') }}</small>
+          </label>
+          <label>
+            {{ t('uiMemoryLibraryMemoryContextBudgetTokens') }}
+            <input v-model.number="policy.recallTokens" type="number" min="256" max="16000" :aria-label="t('uiMemoryLibraryMemoryContextBudget')" />
+            <small class="settings-help">{{ t('uiMemoryLibraryMemoryContextBudgetHelp') }}</small>
+          </label>
+          <p class="memory-muted">{{ t('uiMemoryLibraryTurnSelectionReuseHelp') }}</p>
+        </fieldset>
+        <fieldset>
+          <legend>{{ t('uiMemoryLibraryBackgroundOrganization') }}</legend>
+          <label class="memory-check">
+            <input v-model="policy.automaticExtraction" type="checkbox" />
+            {{ t('uiMemoryLibraryAutomaticExtraction') }}
+          </label>
+          <div class="memory-scope-checks">
+            <label
+              v-for="(label, key) in {
+                personal: t('uiMemoryLibraryPersonal'),
+                workspace: t('uiMemoryLibraryCurrentProject'),
+                group: t('uiMemoryLibraryLinkedGroup'),
+              }"
+              :key="key"
+              class="memory-check"
+            >
+              <input v-model="policy.automaticScopes" type="checkbox" :value="key" />
+              {{ label }}
+            </label>
+          </div>
+          <label>
+            {{ t('uiMemoryLibraryOrganizationChannel') }}
+            <select v-model="policy.providerId" @change="policy.model = provider?.model || ''">
+              <option value="">{{ t('uiMemoryLibrarySelectOrganizationChannel') }}</option>
+              <option v-for="item in options?.providers" :key="item.id" :value="item.id">{{ item.name }}</option>
+            </select>
+          </label>
+          <label>
+            {{ t('uiMemoryLibraryOrganizationModel') }}
+            <input v-model="policy.model" list="memory-model-options" :placeholder="t('uiMemoryLibraryOrganizationModelPlaceholder')" />
+            <datalist id="memory-model-options"><option v-for="model in provider?.models" :key="model" :value="model" /></datalist>
+          </label>
+          <label>
+            {{ t('uiMemoryLibraryOutputLimitIncludingReasoning') }}
+            <input v-model.number="policy.extractionOutputTokens" type="number" min="1024" max="32768" :aria-label="t('uiMemoryLibraryOutputLimit')" />
+            <small class="settings-help">{{ t('uiMemoryLibraryOutputLimitHelp') }}</small>
+          </label>
+          <p class="memory-muted">{{ t('uiMemoryLibraryAutomaticExtractionHelp') }}</p>
+        </fieldset>
+      </div>
+      <fieldset>
+        <legend>{{ t('uiMemoryLibrarySemanticSearch') }}</legend>
+        <label class="memory-check">
+          <input v-model="embeddingEnabled" type="checkbox" />
+          {{ t('uiMemoryLibraryEmbeddingSearch') }}
+        </label>
+        <div v-if="embeddingEnabled" class="memory-form-grid">
+          <label>
+            {{ t('uiMemoryLibraryEmbeddingEndpoint') }}
+            <input v-model="embedding.url" :placeholder="t('uiMemoryLibraryEmbeddingEndpointPlaceholder')" />
+          </label>
+          <label>
+            {{ t('uiMemoryLibraryEmbeddingModel') }}
+            <input v-model="embedding.model" :placeholder="t('uiMemoryLibraryEmbeddingModelPlaceholder')" />
+          </label>
+          <label>
+            {{ t('uiMemoryLibraryCredentials') }}
+            <input
+              v-model="embeddingCredential"
+              type="password"
+              autocomplete="new-password"
+              :placeholder="embedding.credentialRef ? t('uiMemoryLibrarySavedCredentialsPlaceholder') : t('uiMemoryLibraryLocalCredentialsPlaceholder')"
+            />
+          </label>
+          <label>
+            {{ t('uiMemoryLibraryRequestedDimensionsOptional') }}
+            <input
+              v-model="embedding.dimensions"
+              type="number"
+              min="1"
+              max="16384"
+              :placeholder="t('uiMemoryLibraryReturnedDimensionsPlaceholder')"
+              :aria-label="t('uiMemoryLibraryRequestedDimensions')"
+            />
+            <small class="settings-help">{{ t('uiMemoryLibraryRequestedDimensionsHelp') }}</small>
+          </label>
+          <label>
+            {{ t('uiMemoryLibraryQueryPrefixRequired') }}
+            <input v-model="embedding.queryPrefix" :aria-label="t('uiMemoryLibraryQueryPrefix')" />
+            <small class="settings-help">{{ t('uiMemoryLibraryQueryPrefixHelp') }}</small>
+          </label>
+          <label>
+            {{ t('uiMemoryLibraryTextPrefixOptional') }}
+            <input v-model="embedding.documentPrefix" :aria-label="t('uiMemoryLibraryTextPrefix')" />
+            <small class="settings-help">{{ t('uiMemoryLibraryTextPrefixHelp') }}</small>
+          </label>
+        </div>
+        <p class="memory-muted">{{ t('uiMemoryLibraryEmbeddingConfigurationHelp') }}</p>
+      </fieldset>
+      <div class="memory-editor-actions">
+        <button :disabled="busy || !policyDirty" @click="perform(savePolicy)">{{ t('uiMemoryLibrarySaveOrganizationSettings') }}</button>
+        <button :disabled="busy || policyDirty || !embeddingEnabled" @click="perform(testEmbedding)">{{ t('uiMemoryLibraryTestEmbeddingConnection') }}</button>
+        <button :disabled="busy || policyDirty || !embeddingEnabled" @click="perform(rebuildIndex)">{{ t('uiMemoryLibraryRebuildScopeIndex') }}</button>
+        <button :disabled="busy || policyDirty || !state.conversationId || !policy.providerId" @click="perform(extractCurrent)">
+          {{ t('uiMemoryLibraryOrganizeRecentTurns') }}
+        </button>
+      </div>
     </section>
-    <section v-show="section==='jobs'" class="memory-jobs" aria-label="记忆后台任务"><p class="memory-muted">按来源版本提交结果。思考 token 已包含在输出中；未返回的用量显示为未知。</p><p v-if="!jobs.length" class="memory-empty">暂无后台任务。可以在“整理方式”选择模型，然后整理最近回合。</p><article v-for="job in jobs" :key="job.id"><header><strong>{{job.kind==='embed'?'向量索引':job.kind==='summarize'?'分层摘要':'来源提取'}}</strong><span>{{statuses[job.status]}}</span><small>{{stamp(job.updatedAt)}}</small></header><p>{{job.usage?.servedModel||job.model||job.providerId}} · 尝试 {{job.attempts}} 次</p><div class="memory-job-usage"><span>输入 {{job.usage?.input??'未知'}}</span><span>输出 {{job.usage?.output??'未知'}}</span><span>其中思考 {{job.usage?.thoughts??'未知'}}</span><span>缓存读取 {{job.usage?.cacheRead??'未知'}}</span></div><p v-if="job.error" class="memory-error">{{job.error}}</p><button v-if="['failed','interrupted'].includes(job.status)" :disabled="busy" @click="perform(async()=>{await rpc('memory.job.retry',{scopeId:job.scopeId,id:job.id});await reload();})">重试此任务</button><button v-if="['pending','running'].includes(job.status)" :disabled="busy" @click="perform(async()=>{await rpc('memory.job.cancel',{scopeId:job.scopeId,id:job.id});await reload();})">停止此任务</button></article></section>
+    <section v-show="section === 'jobs'" class="memory-jobs" :aria-label="t('uiMemoryLibraryMemoryBackgroundTasks')">
+      <p class="memory-muted">{{ t('uiMemoryLibraryBackgroundTaskUsageHelp') }}</p>
+      <p v-if="!jobs.length" class="memory-empty">{{ t('uiMemoryLibraryNoBackgroundTasks') }}</p>
+      <article v-for="job in jobs" :key="job.id">
+        <header>
+          <strong>
+            {{
+              job.kind === 'embed'
+                ? t('uiMemoryLibraryVectorIndex')
+                : job.kind === 'summarize'
+                  ? t('uiMemoryLibraryHierarchicalSummaries')
+                  : t('uiMemoryLibrarySourceExtraction')
+            }}
+          </strong>
+          <span>{{ statuses[job.status] }}</span>
+          <small>{{ stamp(job.updatedAt) }}</small>
+        </header>
+        <p>
+          {{ job.usage?.servedModel || job.model || job.providerId }} {{ t('uiMemoryLibraryAttemptLabel') }} {{ job.attempts }} {{ t('uiMemoryLibraryCalls') }}
+        </p>
+        <div class="memory-job-usage">
+          <span>{{ t('uiMemoryLibraryType') }} {{ job.usage?.input ?? t('uiMemoryLibraryUnknown') }}</span>
+          <span>{{ t('uiMemoryLibraryOutput') }} {{ job.usage?.output ?? t('uiMemoryLibraryUnknown') }}</span>
+          <span>{{ t('uiMemoryLibraryIncludedReasoning') }} {{ job.usage?.thoughts ?? t('uiMemoryLibraryUnknown') }}</span>
+          <span>{{ t('uiMemoryLibraryCacheReads') }} {{ job.usage?.cacheRead ?? t('uiMemoryLibraryUnknown') }}</span>
+        </div>
+        <p v-if="job.error" class="memory-error">{{ job.error }}</p>
+        <button
+          v-if="['failed', 'interrupted'].includes(job.status)"
+          :disabled="busy"
+          @click="
+            perform(async () => {
+              await rpc('memory.job.retry', { scopeId: job.scopeId, id: job.id });
+              await reload();
+            })
+          "
+        >
+          {{ t('uiMemoryLibraryRetryTask') }}
+        </button>
+        <button
+          v-if="['pending', 'running'].includes(job.status)"
+          :disabled="busy"
+          @click="
+            perform(async () => {
+              await rpc('memory.job.cancel', { scopeId: job.scopeId, id: job.id });
+              await reload();
+            })
+          "
+        >
+          {{ t('uiMemoryLibraryStopTask') }}
+        </button>
+      </article>
+    </section>
   </section>
 </template>
 <style scoped src="./memoryLibrary.css"></style>

@@ -2,6 +2,7 @@ import type { ComputerCapture, ComputerObservation, ComputerWindow, ModelInput, 
 import { PlatformApplication } from '../../../apps/server/src/application';
 import type { ComputerNativePort, ComputerScreenPort } from '../../../apps/server/src/computer/port';
 import { fixture } from './fixtures';
+import sharp from 'sharp';
 const client = { actorId: 'owner', clientId: 'screen-client' };
 // 只验证采集边界与真实运行器存储；Windows 截图另由专用测试窗口验收。
 class CaptureFixture implements ComputerNativePort, ComputerScreenPort {
@@ -14,20 +15,30 @@ class CaptureFixture implements ComputerNativePort, ComputerScreenPort {
     if (method === 'capture') { this.nativeCaptures++; throw new Error('窗口感知不应采集可见屏幕区域'); }
     return {} as T;
   }
-  async capture(observation: ComputerObservation): Promise<ComputerCapture> { this.captures++; await this.hold?.(); return { capturedAt: Date.now(), windowId: '12', monitorId: 'display-1', dpi: 96, bounds: observation.window.bounds, width: 1, height: 1,
-    mimeType: 'image/png', data: 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aXz0AAAAASUVORK5CYII=', method: 'window' }; }
+  async capture(observation: ComputerObservation): Promise<ComputerCapture> {
+    this.captures++;
+    await this.hold?.();
+    const image = await sharp({ create: { width: 1, height: 1, channels: 3, background: { r: 255, g: 255, b: 255 } } }).png().toBuffer();
+    return { capturedAt: Date.now(), windowId: '12', monitorId: 'display-1', dpi: 96, bounds: observation.window.bounds,
+      width: 1, height: 1, mimeType: 'image/png', data: image.toString('base64'), method: 'window' };
+  }
   subscribe() { return () => {}; } async stop() {} async close() {}
 }
 describe('屏幕感知独立开启、范围与用量', () => {
   let f: Awaited<ReturnType<typeof fixture>>, app: PlatformApplication, native: CaptureFixture, inputs: ModelInput[], providerId: string, conversationId: string;
   const open = () => PlatformApplication.open({ dataDirectory: f.data, documentsDirectory: f.root, computerNative: native, computerCapture: native,
-    models: { generate: async input => { inputs.push(input); return { role: 'model', parts: [{ text: '已经根据所选画面回复。' }], usageMetadata: { promptTokenCount: 100, candidatesTokenCount: 20, cachedContentTokenCount: 30 } } as PlatformMessage; } } });
+    models: { generate: async input => { inputs.push(input); return { role: 'model', parts: [{ text: input.purpose === 'screen-sense'
+      ? JSON.stringify({ summary: '用户正在编辑文档。', shouldReply: true }) : '已经根据活动摘要回复。' }],
+      usageMetadata: { promptTokenCount: 100, candidatesTokenCount: 20, cachedContentTokenCount: 30 } } as PlatformMessage; } } });
   const rpc = (method: string, params: Record<string, unknown> = {}) => app.screenSense.call(client, method, params);
-  const config = (): ScreenSenseConfiguration => ({ target: { kind: 'window', window: native.window }, trigger: 'manual', delivery: 'preview', maxCaptures: 2, conversationId, providerId, prompt: '看看这个窗口。', prices: { currency: 'TEST', input: 2, output: 4, cacheRead: 1, cacheWrite: 3 } });
+  const config = (): ScreenSenseConfiguration => ({ target: { kind: 'window', window: native.window }, trigger: 'manual', delivery: 'preview',
+    maxCaptures: 2, conversationId, visionProviderId: providerId, visionModelId: 'vision-fixture', prompt: '看看这个窗口。',
+    prices: { currency: 'TEST', input: 2, output: 4, cacheRead: 1, cacheWrite: 3 } });
   const save = async (value = config()) => rpc('screenSense.configure', { configuration: value, revision: (await app.screenSense.snapshot()).revision });
   beforeEach(async () => { f = await fixture(); await f.store.close(); native = new CaptureFixture(); inputs = []; app = await open(); const draft = await app.product.draft();
     providerId = await draft.configs.createConfig({ name: '屏幕测试渠道', type: 'openai', url: 'http://127.0.0.1:1/v1', model: 'fixture', apiKey: '', enabled: true, contextManagementEnabled: false, timeout: 1000 }); await app.product.save(draft);
-    conversationId = (await app.createConversation('owner', '屏幕交流', undefined, { platformMode: 'chat' }, [], { automaticWorkspace: true })).id;
+    conversationId = (await app.createConversation('owner', '屏幕交流', undefined,
+      { platformMode: 'chat', inputModelConfig: { configId: providerId, modelId: 'main-fixture' } }, [], { automaticWorkspace: true })).id;
   });
   afterEach(async () => { await app.close(); await f.cleanup(); });
   test('保存不采集，显式预览不发送，重启后保持关闭', async () => {
@@ -47,9 +58,24 @@ describe('屏幕感知独立开启、范围与用量', () => {
   test('仅显式发送进入原对话，重复发送不重复运行，用量按真实任务隔离', async () => {
     await save(); await rpc('screenSense.start'); const preview = await rpc('screenSense.capture') as ScreenSenseSnapshot;
     const result = await rpc('screenSense.send', { previewId: preview.preview!.id }) as { runId: string }; expect((await app.runtime.wait(result.runId))?.status).toBe('completed');
-    await expect(rpc('screenSense.send', { previewId: preview.preview!.id })).rejects.toThrow('预览'); expect(inputs).toHaveLength(1); expect(inputs[0]!.messages.flatMap(message => message.parts).some(part => part.inlineData)).toBe(true);
+    await expect(rpc('screenSense.send', { previewId: preview.preview!.id })).rejects.toThrow('预览');
+    expect(inputs).toHaveLength(2);
+    expect(inputs[0]).toMatchObject({ purpose: 'screen-sense', modelOverride: 'vision-fixture', tools: [] });
+    expect(inputs[0]!.messages.flatMap(message => message.parts).some(part => part.inlineData)).toBe(true);
+    expect(inputs[1]!.modelOverride).toBe('main-fixture');
+    expect(inputs[1]!.messages.flatMap(message => message.parts).some(part => part.inlineData)).toBe(false);
+    expect(JSON.stringify(inputs[1]!.messages)).toContain('用户正在编辑文档');
+    const unchanged = await rpc('screenSense.capture') as ScreenSenseSnapshot;
+    expect(unchanged.status.skipped).toBe(1);
+    expect(unchanged.preview).toBeUndefined();
+    expect(inputs).toHaveLength(2);
     const other = await app.pets.call(client, 'pets.chat.send', { conversationId, configId: providerId, message: '无关的另一条消息', streamId: 'separate-text' }) as { runId: string }; await app.runtime.wait(other.runId);
-    const history = (await app.screenSense.snapshot()).history; expect(history).toHaveLength(1); expect(history[0]).toMatchObject({ runId: result.runId, usage: { inputTokens: 100, outputTokens: 20, cacheReadTokens: 30, requests: 1, unknownRequests: 0 } }); expect(history[0]!.usage.estimatedCost).toBeCloseTo(0.00025);
+    const history = (await app.screenSense.snapshot()).history; expect(history).toHaveLength(1);
+    expect(history[0]).toMatchObject({ runId: result.runId,
+      usage: { inputTokens: 100, outputTokens: 20, cacheReadTokens: 30, requests: 1, unknownRequests: 0 },
+      mainUsage: { inputTokens: 100, outputTokens: 20, requests: 1 },
+    });
+    expect(history[0]!.usage.estimatedCost).toBeCloseTo(0.00025);
     await expect(app.screenSense.call({ actorId: 'stranger', clientId: 'x' }, 'screenSense.get', {})).rejects.toThrow();
   });
 });

@@ -15,7 +15,7 @@ export interface CharacterDefinition {
 export interface CharacterChatConfig {
   kind: ChatKind; characterId?: string; greetingIndex?: number; userName: string; persona: string;
   worldbookIds: string[]; regexIds: string[];
-  /** Explicit user configuration is used when a book omits these fields. */
+  /** 未填写世界书预算时按当前模型上下文的 5% 分配；显式 0 关闭注入。 */
   scanDepth: number; worldTokenBudget?: number; recursiveScan?: boolean; maxRecursionSteps?: number;
 }
 /** 资料列表和详情共享同一份元数据，原文件正文仍由 original 单独读取。 */
@@ -61,8 +61,10 @@ export interface WorldbookDefinition {
 }
 export interface WorldTimedEffect { activatedAt: number; stickyUntil: number; cooldownUntil: number }
 export interface WorldActivation {
+  tokenBudget?: number;
   regexErrors?: { id: string; message: string }[];
+  vectorError?: string;
   timedEffects?: Record<string, WorldTimedEffect>;
-  entries: { bookId: string; entry: WorldEntry; text: string; reason?: 'constant' | 'sticky' | 'keyword' | 'recursion' }[];
+  entries: { bookId: string; entry: WorldEntry; text: string; reason?: 'constant' | 'sticky' | 'keyword' | 'recursion' | 'vector' }[];
   skipped: { bookId: string; entryId: string; reason: string }[];
 }

@@ -20,6 +20,8 @@ export type * from './storage/memoryTypes';
 export {memoryTokens as estimateMemoryTokens} from './storage/longMemory/text';
 export { countTextTokens, countJsonTokens, describeTextTokenizer } from './tokenizer';
 export type { TokenizerOptions } from './tokenizer';
+export { VectorRanker } from './storage/longMemory/vectorWorker';
+export { VectorMatrixCache, vectorMatrixBytes } from './storage/longMemory/vectors';
 
 export { readCharacterFile, identifyCharacterResource, readCharacterDefinition, readRegexRules, readWorldbook } from './characters/import';
 

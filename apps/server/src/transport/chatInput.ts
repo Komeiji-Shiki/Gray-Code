@@ -10,6 +10,7 @@ export function chatUserMessage(data: Record<string, any>, text = data.message):
     if (typeof attachment.data !== 'string' || typeof attachment.mimeType !== 'string') throw new Error('附件内容无效。');
   }
   return { id: data.messageId || randomUUID(), role: 'user',
+    ...(data.screenSenseAllowSilent === true ? { screenSenseAllowSilent: true } : {}),
     parts: new MessageBuilderService().buildUserMessageParts(text ? String(text) : '', data.attachments).map(part => ({ ...part })),
     ...(typeof data.deepSeekVisionTileSplit === 'boolean' ? { deepSeekVisionTileSplit: data.deepSeekVisionTileSplit } : {}) };
 }

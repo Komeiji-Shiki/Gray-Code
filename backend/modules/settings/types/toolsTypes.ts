@@ -790,7 +790,8 @@ export function getDefaultExecuteCommandConfig(): ExecuteCommandToolConfig {
  */
 export const DEFAULT_TOOL_AUTO_EXEC_CONFIG: ToolAutoExecConfig = {
     delete_file: false,      // 需要确认
-    execute_command: false   // 需要确认
+    execute_command: false, // 需要确认
+    pet_control: true       // 陪伴表达默认自动执行，用户显式设置继续覆盖。
 };
 
 /**

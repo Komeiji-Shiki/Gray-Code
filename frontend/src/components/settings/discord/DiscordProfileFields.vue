@@ -5,6 +5,8 @@ import type { CharacterChatConfig, CharacterResource } from '../../../../../pack
 import { sendToExtension } from '../../../utils/vscode';
 import DiscordOutputFields from './DiscordOutputFields.vue';
 import BotConversationFields from './BotConversationFields.vue';
+import { useI18n } from '../../../i18n';
+const { t } = useI18n();
 const props = defineProps<{
   modelValue: DiscordReplyProfile; inherited: DiscordReplyProfile; settings: AppSettings;
   modes: Array<{ id: string; name: string }>; resources: Pick<CharacterResource, 'id' | 'name' | 'kind'>[]; output: DiscordOutputSettings;
@@ -68,7 +70,13 @@ watch(() => character.value?.characterId, async (id, _previous, onCleanup) => {
       <label><span>用户设定</span><textarea rows="3" :value="character.persona" @input="setCharacter('persona', ($event.target as HTMLTextAreaElement).value)" /></label>
       <div v-for="kind in (['worldbook', 'regex'] as const)" :key="kind" class="discord-resource-row"><span>{{ kind === 'worldbook' ? '额外世界书' : '额外正则' }}</span><div class="discord-options"><label v-for="item in resources.filter(item => item.kind === kind)" :key="item.id"><input type="checkbox" :checked="character[kind === 'worldbook' ? 'worldbookIds' : 'regexIds'].includes(item.id)" @change="toggleResource(kind === 'worldbook' ? 'worldbookIds' : 'regexIds', item.id, ($event.target as HTMLInputElement).checked)" />{{ item.name }}</label><small v-if="!resources.some(item => item.kind === kind)">资料库中还没有此类资源。</small></div></div>
       <label><span>关键词扫描范围<small>扫描最近几条消息；条目或世界书自己的范围优先。0 不扫描历史消息，常驻条目与额外来源仍可参与激活。增大有助于延续较早话题，也可能命中已经转移的话题。</small></span><input type="number" min="0" step="1" :value="character.scanDepth" @change="setCharacter('scanDepth', Number(($event.target as HTMLInputElement).value))" /></label>
-      <label><span>世界书最大注入 Token<small>留空不设默认预算；0 表示不注入。增大可加入更多已命中的设定，同时占用更多上下文和输入 Token。</small></span><input type="number" min="0" step="1" :value="character.worldTokenBudget ?? ''" placeholder="由主人填写" @change="setCharacter('worldTokenBudget', ($event.target as HTMLInputElement).value === '' ? undefined : Number(($event.target as HTMLInputElement).value))" /></label>
+      <label>
+        <span>世界书最大注入 Token<small>{{ t('desktop.shell.characterWorldBudgetHelp') }}</small></span>
+        <input type="number" min="0" step="1" :value="character.worldTokenBudget ?? ''"
+          :placeholder="t('desktop.shell.characterWorldBudgetPlaceholder')"
+          @change="setCharacter('worldTokenBudget', ($event.target as HTMLInputElement).value === ''
+            ? undefined : Number(($event.target as HTMLInputElement).value))" />
+      </label>
     </div>
     <label><span>单独配置回复显示</span><input type="checkbox" :checked="!!modelValue.output" @change="set('output', ($event.target as HTMLInputElement).checked ? { ...inheritedOutput } : undefined)" /></label>
     <DiscordOutputFields v-if="modelValue.output" :model-value="modelValue.output" :inherited="inheritedOutput" @update:model-value="set('output', $event)" />

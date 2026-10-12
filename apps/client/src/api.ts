@@ -1,3 +1,4 @@
+import { shellText as t } from './i18n';
 import type { RpcCall, UiRequestCall } from '@graycode/contracts';
 import { callDesktopBridge, type DesktopBridge } from '../../../shared/desktopBridge';
 import { requiresJsonRoundTrip } from '../../../shared/hostPayload';
@@ -7,12 +8,8 @@ declare global {
     graycode: DesktopBridge;
   }
 }
-export function call<T = any>(
-  method: string,
-  params: object = {},
-): Promise<T> {
-  if (!window.graycode)
-    return Promise.reject(new Error("请从 GrayCode 桌面应用打开此界面。"));
+export function call<T = any>(method: string, params: object = {}): Promise<T> {
+  if (!window.graycode) return Promise.reject(new Error(t('uiapiDesktopAppRequired')));
   // 仅为代理对象及非 JSON 数据解包；普通文档和附件参数直接传输，避免复制正文。
   if (method === 'files.upload' && 'bytes' in params && params.bytes instanceof Uint8Array) {
     const { bytes, ...fields } = params;
@@ -21,9 +18,7 @@ export function call<T = any>(
   const payload = requiresJsonRoundTrip(params) ? JSON.parse(JSON.stringify(params)) : params;
   return callDesktopBridge<T>(window.graycode, method, payload);
 }
-export function subscribe(
-  listener: (event: Record<string, any>) => void,
-): () => void {
+export function subscribe(listener: (event: Record<string, any>) => void): () => void {
   return window.graycode?.subscribe(listener) ?? (() => {});
 }
 /** 已有契约的方法共用原有传输实现，同时由方法名推导参数和结果。 */

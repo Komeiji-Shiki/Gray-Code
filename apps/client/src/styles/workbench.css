@@ -3,10 +3,29 @@
   display: grid;
   grid-template-columns: 170px minmax(0, 1fr);
 }
-.workbench.monitor-active { display: flex; flex-direction: column; min-height: 0; }
-.monitor-workbench-heading { display: flex; align-items: center; gap: 12px; padding: 9px 14px; border-bottom: 1px solid var(--gc-border-subtle); }
-.monitor-workbench-heading strong { flex: 1; font-size: 13px; font-weight: 500; }
-.monitor-frame { border: 0; width: 100%; flex: 1; min-height: 0; }
+.workbench.monitor-active {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+.monitor-workbench-heading {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 9px 14px;
+  border-bottom: 1px solid var(--gc-border-subtle);
+}
+.monitor-workbench-heading strong {
+  flex: 1;
+  font-size: 13px;
+  font-weight: 500;
+}
+.monitor-frame {
+  border: 0;
+  width: 100%;
+  flex: 1;
+  min-height: 0;
+}
 .file-tree {
   border-right: 1px solid var(--gc-border-subtle);
   overflow: auto;
@@ -244,19 +263,83 @@ kbd {
   color: var(--gc-text-muted);
 }
 
-.diff-panel { display: flex; min-height: 0; height: 100%; background: var(--gc-surface-raised); }
-.diff-list { width: 280px; overflow: auto; border-right: 1px solid var(--gc-border-subtle); }
-.diff-row { display: flex; width: 100%; gap: 8px; align-items: center; padding: 8px 12px; border: 0; border-bottom: 1px solid var(--gc-border-subtle); background: transparent; color: var(--gc-text-primary); text-align: left; cursor: pointer; }
-.diff-row.active { background: var(--gc-surface-selected); }
-.diff-row-path, .diff-path { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.diff-row-path { flex: 1; }
-.diff-status { font-size: 10px; text-transform: uppercase; color: var(--gc-text-muted); }
-.status-pending { color: var(--gc-accent); }
-.status-accepted { color: var(--gc-success); }
-.status-rejected, .status-cancelled, .diff-error { color: var(--gc-danger); }
-.diff-view { display: flex; flex: 1; min-width: 0; min-height: 0; flex-direction: column; }
-.diff-toolbar { display: flex; align-items: center; gap: 10px; padding: 8px 12px; }
-.diff-path { flex: 1; font-size: 12px; }
-.diff-toolbar button { padding: 4px 10px; }
-.diff-editor { flex: 1; min-height: 180px; }
-.diff-empty { align-self: center; margin-top: 48px; }
+.diff-panel {
+  display: flex;
+  min-height: 0;
+  height: 100%;
+  background: var(--gc-surface-raised);
+}
+.diff-list {
+  width: 280px;
+  overflow: auto;
+  border-right: 1px solid var(--gc-border-subtle);
+}
+.diff-row {
+  display: flex;
+  width: 100%;
+  gap: 8px;
+  align-items: center;
+  padding: 8px 12px;
+  border: 0;
+  border-bottom: 1px solid var(--gc-border-subtle);
+  background: transparent;
+  color: var(--gc-text-primary);
+  text-align: left;
+  cursor: pointer;
+}
+.diff-row.active {
+  background: var(--gc-surface-selected);
+}
+.diff-row-path,
+.diff-path {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.diff-row-path {
+  flex: 1;
+}
+.diff-status {
+  font-size: 10px;
+  text-transform: uppercase;
+  color: var(--gc-text-muted);
+}
+.status-pending {
+  color: var(--gc-accent);
+}
+.status-accepted {
+  color: var(--gc-success);
+}
+.status-rejected,
+.status-cancelled,
+.diff-error {
+  color: var(--gc-danger);
+}
+.diff-view {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  flex-direction: column;
+}
+.diff-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 12px;
+}
+.diff-path {
+  flex: 1;
+  font-size: 12px;
+}
+.diff-toolbar button {
+  padding: 4px 10px;
+}
+.diff-editor {
+  flex: 1;
+  min-height: 180px;
+}
+.diff-empty {
+  align-self: center;
+  margin-top: 48px;
+}

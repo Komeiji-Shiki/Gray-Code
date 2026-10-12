@@ -77,6 +77,17 @@ Windows CI 和桌面打包（含 nightly）统一使用 `windows-2022`，原生�
 
 类型和组件测试不能代替真实流程。受影响的桌面场景使用隔离应用数据与合成模型端点验证：启动、发送、编辑、重生成、确认、取消、设置、截图、工作树和退出。
 
+桌宠的真实播放器验证可在桌面构建后运行 `npx electron scripts/smoke-desktop.cjs --pet-only`。默认验证精灵图；设置 `GRAYCODE_PET_CORE` 为本机 Cubism Core 脚本路径，并在 `GRAYCODE_PET_MODELS` 中用分号分隔 `.model3.json` 路径后，会把这些模型导入隔离数据目录并使用实际 Core、贴图、动作和表情。素材保留在忽略目录，不加入源码或发行包。例如：
+
+~~~powershell
+$env:GRAYCODE_PET_CORE = '.tmp/live2d-samples/core/live2dcubismcore.min.js'
+$env:GRAYCODE_PET_MODELS = '.tmp/live2d-samples/Haru/Haru.model3.json;.tmp/live2d-samples/Mao/Mao.model3.json'
+$env:GRAYCODE_SMOKE_OUTPUT = '.tmp/desktop-smoke-pets-local'
+npx electron scripts/smoke-desktop.cjs --pet-only
+~~~
+
+脚本覆盖空闲刷新、四通道叠加和分别过期、组合回执、语义标注、停止恢复及流式行内标签。模型具备相应数据时，还检查口型参数、动作音频、BlendShape 参数和乘算色／屏幕色。聊天使用本机合成端点，检查行内控制只有一次请求、标签不进入正文；模型画面由真实播放器生成。报告与截图写入指定的 `.tmp/desktop-smoke-*`，失败时保留已完成模型的结果及当前阶段。
+
 截图操作要确认实际目标、返回图片尺寸和动作结果。动作后截图失败与动作失败分别验证。后台浏览器同时检查可见/后台切换和同一页面身份。真实外部模型、Bot 或双设备结果单独记录来源。
 
 浏览器交互可单独运行 `node scripts/smoke-browser.cjs`：脚本启动自己的 Electron、隔离数据、本机研究目录网页和合成模型 HTTP 端点，覆盖检索分页、异步搜索、原生表单、悬停菜单、Shadow DOM、同源/跨域 iframe、遮挡与大元素点击，以及截图进入模型上下文的连续工具流程。报告和截图保留在 `.tmp/browser-smoke-*`，只退出本次启动的应用。

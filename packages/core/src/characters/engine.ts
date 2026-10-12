@@ -6,9 +6,28 @@ export function expandCharacterMacros(text: string, values: Record<string, strin
     return typeof value !== 'string' ? match : escape ? value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') : value;
   });
 }
-function compile(pattern: string): RegExp {
+const compiledPatterns = new Map<string, RegExp | Error>();
+
+function compile(pattern: string, flags?: string): RegExp {
+  const key = JSON.stringify([pattern, flags]);
+  const cached = compiledPatterns.get(key);
+  if (cached) {
+    if (cached instanceof Error) throw cached;
+    cached.lastIndex = 0;
+    return cached;
+  }
   const end = pattern.startsWith('/') ? pattern.lastIndexOf('/') : -1;
-  return end > 0 ? new RegExp(pattern.slice(1, end), pattern.slice(end + 1)) : new RegExp(pattern);
+  try {
+    const regex = flags !== undefined ? new RegExp(pattern, flags)
+      : end > 0 ? new RegExp(pattern.slice(1, end), pattern.slice(end + 1)) : new RegExp(pattern);
+    if (compiledPatterns.size >= 512) compiledPatterns.delete(compiledPatterns.keys().next().value!);
+    compiledPatterns.set(key, regex);
+    return regex;
+  } catch (error) {
+    if (compiledPatterns.size >= 512) compiledPatterns.delete(compiledPatterns.keys().next().value!);
+    compiledPatterns.set(key, error as Error);
+    throw error;
+  }
 }
 
 /** This module executes exclusively in the terminable character worker. */
@@ -48,9 +67,11 @@ export interface WorldEvaluation {
   macros: Record<string, string>; tokenCosts: Record<string, number>; randomValues: Record<string, number>;
   messageCount?: number; timedEffects?: NonNullable<WorldActivation['timedEffects']>;
   recursive?: boolean; maxRecursionSteps?: number; additionalSources?: Record<string, string>;
+  renderedTexts?: Record<string, string>; vectorMatches?: Record<string, number>; vectorError?: string;
 }
 export function evaluateWorldbooks(input: WorldEvaluation): WorldActivation {
-  const output: WorldActivation = { entries: [], skipped: [], timedEffects: { ...input.timedEffects } };
+  const output: WorldActivation = { entries: [], skipped: [], tokenBudget: input.tokenBudget, timedEffects: { ...input.timedEffects },
+    ...(input.vectorError ? { vectorError: input.vectorError } : {}) };
   const selected = new Set<string>(), declined = new Set<string>(), activeGroups = new Set<string>();
   const usedByBook = new Map<string, number>();
   let used = 0;
@@ -63,8 +84,8 @@ export function evaluateWorldbooks(input: WorldEvaluation): WorldActivation {
   const skip = (bookId: string, entryId: string, reason: string) => output.skipped.push({ bookId, entryId, reason });
   for (let pass = 0; pass < totalPasses; pass++) {
     const activated: (typeof candidates[number] & { score: number; sticky: boolean; text: string })[] = [];
-    // 递归正文只在轮次之间追加；仅保留最近的扫描组，避免不同来源的大文本同时占用内存。
-    let scan: { depth: number; extra: string; text: string; lowercase?: string } | undefined;
+    // 同一轮的递归正文固定，混合扫描深度和额外来源可以共用已展开的历史。
+    const scans = new Map<string, { text: string; lowercase?: string }>();
     for (const node of candidates) {
       const { book, entry, key } = node;
       if (selected.has(key) || declined.has(key) || !entry.enabled || !entry.content.trim()) continue;
@@ -74,7 +95,9 @@ export function evaluateWorldbooks(input: WorldEvaluation): WorldActivation {
       const sticky = !!timing && count > timing.activatedAt && count <= timing.stickyUntil;
       if (count < (entry.delay ?? 0)) { declined.add(key); skip(book.id, entry.id, 'delay'); continue; }
       if (!sticky && timing && count > timing.activatedAt && count <= timing.cooldownUntil) { declined.add(key); skip(book.id, entry.id, 'cooldown'); continue; }
-      if (entry.vectorized && !entry.constant && !sticky) { declined.add(key); skip(book.id, entry.id, '未配置向量激活'); continue; }
+      if (entry.vectorized && !entry.constant && !sticky && !input.vectorMatches) {
+        declined.add(key); skip(book.id, entry.id, input.vectorError ?? '请在记忆整理方式中配置嵌入服务后使用向量激活'); continue;
+      }
       const depth = Math.max(0, Math.floor(entry.scanDepth ?? book.scanDepth ?? input.scanDepth));
       let history = histories.get(depth);
       if (history === undefined) {
@@ -82,8 +105,12 @@ export function evaluateWorldbooks(input: WorldEvaluation): WorldActivation {
         histories.set(depth, history);
       }
       const extra = (entry.additionalSources ?? []).map(name => input.additionalSources?.[name] ?? '').join('\n');
-      if (!scan || scan.depth !== depth || scan.extra !== extra) {
-        scan = { depth, extra, text: expandCharacterMacros(`${history}\n${recursionText}\n${extra}`, input.macros) };
+      const scanKey = JSON.stringify([depth, extra]);
+      let scan = scans.get(scanKey);
+      if (!scan) {
+        scan = { text: expandCharacterMacros(`${history}\n${recursionText}\n${extra}`, input.macros) };
+        if (scans.size >= 64) scans.delete(scans.keys().next().value!);
+        scans.set(scanKey, scan);
       }
       const haystack = scan;
       let active = entry.constant || sticky;
@@ -96,11 +123,16 @@ export function evaluateWorldbooks(input: WorldEvaluation): WorldActivation {
           const source = entry.caseSensitive ? haystack.text : (haystack.lowercase ??= haystack.text.toLowerCase());
           const target = entry.caseSensitive ? keyword : keyword.toLowerCase();
           if (!entry.wholeWords) return source.includes(target);
-          return new RegExp(`(?<![\\p{L}\\p{N}_])${target.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?![\\p{L}\\p{N}_])`, 'u').test(source);
+          return compile(`(?<![\\p{L}\\p{N}_])${target.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?![\\p{L}\\p{N}_])`, 'u').test(source);
         };
-        const primary = entry.keys.map(matches);
-        score = primary.filter(Boolean).length;
-        if (!active) active = primary.some(Boolean);
+        if (entry.vectorized && !active) {
+          score = input.vectorMatches?.[key] ?? 0;
+          active = score > 0;
+        } else {
+          const primary = entry.keys.map(matches);
+          score = primary.filter(Boolean).length;
+          if (!active) active = primary.some(Boolean);
+        }
         if (active && !entry.constant && !sticky && entry.selective && entry.secondaryKeys.length) {
           const secondary = entry.secondaryKeys.map(matches);
           active = entry.selectiveLogic === 1 ? !secondary.every(Boolean) : entry.selectiveLogic === 2 ? !secondary.some(Boolean) : entry.selectiveLogic === 3 ? secondary.every(Boolean) : secondary.some(Boolean);
@@ -109,7 +141,7 @@ export function evaluateWorldbooks(input: WorldEvaluation): WorldActivation {
       } catch (error) { declined.add(key); skip(book.id, entry.id, `关键词正则无效：${(error as Error).message}`); continue; }
       if (!active) continue;
       if (!sticky && (input.randomValues[key] ?? 0) * 100 >= entry.probability) { declined.add(key); skip(book.id, entry.id, 'probability'); continue; }
-      activated.push({ ...node, score, sticky, text: expandCharacterMacros(entry.content, input.macros) });
+      activated.push({ ...node, score, sticky, text: input.renderedTexts?.[key] ?? expandCharacterMacros(entry.content, input.macros) });
     }
     const eligible = new Set(activated.map(node => node.key));
     // 分组只遍历一次已激活条目，保持组首次出现和条目顺序，避免每个组重新扫描整批候选。
@@ -153,7 +185,8 @@ export function evaluateWorldbooks(input: WorldEvaluation): WorldActivation {
       }
       selected.add(key); entry.group?.forEach(group => activeGroups.add(group));
       used += cost; usedByBook.set(book.id, (usedByBook.get(book.id) ?? 0) + cost);
-      output.entries.push({ bookId: book.id, entry, text: node.text, reason: node.sticky ? 'sticky' : entry.constant ? 'constant' : pass > 0 ? 'recursion' : 'keyword' });
+      output.entries.push({ bookId: book.id, entry, text: node.text,
+        reason: node.sticky ? 'sticky' : entry.constant ? 'constant' : pass > 0 ? 'recursion' : entry.vectorized ? 'vector' : 'keyword' });
       if (!node.sticky) {
         const stickyUntil = count + (entry.sticky ?? 0);
         output.timedEffects![key] = { activatedAt: count, stickyUntil, cooldownUntil: stickyUntil + (entry.cooldown ?? 0) };

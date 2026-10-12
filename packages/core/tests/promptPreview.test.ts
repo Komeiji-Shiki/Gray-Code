@@ -122,18 +122,47 @@ describe('当前完整提示词的只读预览', () => {
   });
 
   test('角色和本次输入触发的世界书变量在预设内展开，激活结果可检查', async () => {
+    const draft = await app.product.draft();
+    await draft.configs.updateConfig(providerId, { models: [
+      { id: 'fixture-model', name: '默认模型', contextWindow: 64000 },
+      { id: 'override-model', name: '本次覆盖模型', contextWindow: 2000 },
+    ] });
+    await app.product.save(draft);
+    const regex = await app.characters.import({ name: '世界书正则.json', data: Buffer.from(JSON.stringify([
+      { id: 'recursion', findRegex: '每日黄昏', replaceString: '每日黄昏，潮汐', placement: [5] },
+    ])).toString('base64') });
     const card = await app.characters.import({ name: '角色.json', data: Buffer.from(JSON.stringify({ spec: 'chara_card_v2', spec_version: '2.0', data: {
       name: '守灯人', description: '角色描述：守护海边灯塔。', personality: '冷静', scenario: '海岸', first_mes: '你好', mes_example: '',
-      character_book: { name: '港口', entries: [{ id: 0, keys: ['灯塔'], content: '世界书：灯塔在每日黄昏点亮。', enabled: true, insertion_order: 1, position: 'before_char' }] },
+      character_book: { name: '港口', entries: [
+        { id: 0, keys: ['灯塔'], content: '世界书：灯塔在每日黄昏点亮。', enabled: true, insertion_order: 1, position: 'before_char' },
+        { id: 1, keys: ['潮汐'], content: '世界书：潮汐带来航线。', enabled: true, insertion_order: 2, position: 'before_char' },
+      ] },
     } })).toString('base64') });
     const state = await app.storage.readConversationState('preview-chat');
     await app.storage.commitConversation({ conversationId: 'preview-chat', expectedRevision: state.history.revision, expectedMetadataToken: state.metadataToken,
       metadata: { ...state.metadata, custom: { ...state.metadata.custom as object, platformMode: 'character', characterConfig: { kind: 'character', characterId: card.id,
-        userName: '访客', persona: '', worldbookIds: [], regexIds: [], scanDepth: 2, worldTokenBudget: 1000, recursiveScan: false } } } });
+        userName: '访客', persona: '', worldbookIds: [], regexIds: [regex.id], scanDepth: 2, recursiveScan: true } } } });
     const before = await app.storage.readConversationState('preview-chat');
-    const result = await preview({ ...request(), message: '灯塔什么时候亮？' });
-    expect(JSON.stringify(result.body)).toContain('角色描述：守护海边灯塔'); expect(JSON.stringify(result.body)).toContain('世界书：灯塔在每日黄昏点亮');
+    const transform = jest.spyOn(app.characterPipeline.engine, 'transformBatch');
+    const data = { ...request(), modelOverride: 'override-model', message: '灯塔什么时候亮？' };
+    const result = await preview(data);
+    expect(JSON.stringify(result.body)).toContain('角色描述：守护海边灯塔');
+    expect(JSON.stringify(result.body)).toContain('世界书：灯塔在每日黄昏，潮汐点亮');
+    expect(JSON.stringify(result.body)).toContain('世界书：潮汐带来航线');
+    expect(result.character?.activation).toMatchObject({ tokenBudget: 100,
+      entries: [expect.objectContaining({ reason: 'keyword' }), expect.objectContaining({ reason: 'recursion' })] });
     expect(JSON.stringify(result.character)).toContain('before_char'); expect(await app.storage.readConversationState('preview-chat')).toEqual(before);
+    await preview(data);
+    expect(transform.mock.calls.filter(([items]) => items.some(item => item.context.placement === 5))).toHaveLength(2);
+    const config = (before.metadata.custom as { characterConfig: object }).characterConfig;
+    await app.storage.commitConversation({ conversationId: 'preview-chat', expectedRevision: before.history.revision,
+      expectedMetadataToken: before.metadataToken, metadata: { ...before.metadata,
+        custom: { ...before.metadata.custom as object, characterConfig: { ...config, worldTokenBudget: 0 } } } });
+    const disabled = await preview(data);
+    expect(disabled.character?.activation).toMatchObject({ tokenBudget: 0, entries: [] });
+    expect(JSON.stringify(disabled.body)).not.toContain('世界书：');
+    expect(transform.mock.calls.filter(([items]) => items.some(item => item.context.placement === 5))).toHaveLength(2);
+    expect(generated).toEqual([]);
   });
 
   test('新对话的草稿可以预览，不额外创建历史或任务', async () => {

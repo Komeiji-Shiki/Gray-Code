@@ -10,13 +10,16 @@ const root = path.resolve(__dirname, '..');
 // 与正式界面共用隔离桥回执解包，不能把 { ok, value } 当成设置或任务正文。
 const bridgeSource = require('esbuild').buildSync({ entryPoints: [path.join(root, 'shared/desktopBridge.ts')],
   bundle: true, write: false, format: 'iife', globalName: 'GraycodeSmokeBridge' }).outputFiles[0].text;
-const output = process.env.GRAYCODE_SMOKE_OUTPUT || path.join(root, '.tmp', `desktop-smoke-${randomUUID().slice(0, 8)}`);
+const output = path.resolve(root, process.env.GRAYCODE_SMOKE_OUTPUT || path.join('.tmp', `desktop-smoke-${randomUUID().slice(0, 8)}`));
 assert(path.dirname(path.resolve(output)) === path.join(root, '.tmp') && path.basename(output).startsWith('desktop-smoke-'));
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 const errors = [];
 const rendererBenchmark = process.env.GRAYCODE_RENDER_BENCHMARK === '1' ? require('./renderer-performance.cjs') : undefined;
 let requests = 0;
 let server;
+const petOnly = process.argv.includes('--pet-only');
+let petReply = '';
+const petRequests = [];
 async function until(check, label, timeout = 20000) {
   const deadline = Date.now() + timeout;
   while (Date.now() < deadline) { const result = await check(); if (result) return result; await sleep(100); }
@@ -169,6 +172,34 @@ async function main() {
   server = createServer(async (req, res) => {
     const chunks = []; for await (const chunk of req) chunks.push(chunk);
     const body = JSON.parse(Buffer.concat(chunks)); requests++;
+    if (petOnly) {
+      petRequests.push(body);
+      const querying = body.messages.some(message => message.role === 'user' &&
+        JSON.stringify(message.content).includes('pet-query-smoke'));
+      const hasResult = body.messages.some(message => message.role === 'tool');
+      const tool = querying && !hasResult ? {
+        id: 'pet-smoke-query', type: 'function', function: { name: 'pet_control', arguments: '{"action":"query"}' },
+      } : undefined;
+      if (body.stream) {
+        res.setHeader('Content-Type', 'text/event-stream');
+        if (tool) res.write('data: ' + JSON.stringify({ choices: [{ index: 0, delta: { tool_calls: [{ index: 0, ...tool }] } }] }) + '\n\n');
+        else {
+          // 故意把行内标签名称和属性拆到不同 SSE 帧，覆盖流式缓冲与隐藏。
+          const marker = petReply.indexOf('<pet');
+          const cuts = marker < 0 ? [0, petReply.length] : [0, marker + 2, marker + 9, marker + 17, petReply.length];
+          for (let index = 1; index < cuts.length; index++) {
+            res.write('data: ' + JSON.stringify({ choices: [{ index: 0, delta: { content: petReply.slice(cuts[index - 1], cuts[index]) } }] }) + '\n\n');
+            await sleep(10);
+          }
+        }
+        res.end('data: ' + JSON.stringify({ choices: [{ index: 0, delta: {}, finish_reason: tool ? 'tool_calls' : 'stop' }] }) + '\n\ndata: [DONE]\n\n');
+      } else {
+        res.setHeader('Content-Type', 'application/json');
+        res.end(JSON.stringify({ choices: [{ message: { role: 'assistant', content: tool ? null : petReply,
+          ...(tool ? { tool_calls: [tool] } : {}) }, finish_reason: tool ? 'tool_calls' : 'stop' }] }));
+      }
+      return;
+    }
     if (rendererBenchmark?.streamRendererWorkload(body, res)) return;
     const answerReceived = body.messages.some(message => typeof message.content === 'string' && message.content.includes('Answer to optional question'));
     const call = (id, name, args) => ({ id, type: 'function', function: { name, arguments: JSON.stringify(args) } });
@@ -201,7 +232,7 @@ async function main() {
   await ui('platform.settings.update', { settings });
   const configId = await ui('config.createConfig', { name: '本地验证模型', type: 'openai' });
   await ui('config.updateConfig', { configId, updates: { url: `http://127.0.0.1:${server.address().port}/v1`, apiKey: 'smoke-only', model: 'smoke-model',
-    models: [{ id: 'smoke-model', name: 'smoke-model' }], preferStream: false, timeout: 10000 } });
+    models: [{ id: 'smoke-model', name: 'smoke-model' }], preferStream: petOnly, timeout: 10000 } });
   await ui('settings.setActiveChannelId', { channelId: configId });
   // 写文件由既有 Diff 配置自动应用，后续仍单独验证危险命令的审批拒绝。
   await ui('tools.updateApplyDiffConfig', { config: { autoSave: true, autoApplyWithoutDiffView: true } });
@@ -213,6 +244,15 @@ async function main() {
   window.webContents.reload();
   await until(() => evaluate('!!document.querySelector(".desktop-workspace") && document.body.innerText.includes("桌面验证项目")'), 'configured application');
   await until(() => chat('!!document.querySelector(".input-editor") && document.body.innerText.includes("smoke-model")'), 'configured original input');
+  if (petOnly) {
+    const pets = await require('./smoke-pets.cjs')({ window, rpc, ui, evaluate, until, root, output, configId,
+      setReply: value => { petReply = value; }, getRequests: () => petRequests });
+    const report = { ok: true, electron: process.versions.electron, node: process.versions.node, requests, ...pets, errors, output };
+    assert.deepEqual(errors, [], 'Pet smoke renderer errors');
+    await fs.writeFile(path.join(output, 'report.json'), JSON.stringify(report, null, 2));
+    process.stdout.write(JSON.stringify(report) + '\n');
+    server.closeAllConnections(); server.close(); app.quit(); return;
+  }
   if (process.env.GRAYCODE_SMOKE_IMAGES_ONLY === '1') {
     await require('./smoke-image-preview.cjs')({ window, evaluate, ui, until, root, output });
     const report = { verified: ['image layout', 'image context menu', 'native PNG clipboard'], errors, output };
@@ -223,6 +263,7 @@ async function main() {
     const report = await rendererBenchmark.measureRendererWorkload({ rpc, ui, chat, until, output, configId, contents: window.webContents });
     process.stdout.write(JSON.stringify({ report, errors, output }) + '\n'); server.closeAllConnections(); server.close(); app.quit(); return;
   }
+  const petSmoke = await require('./smoke-pets.cjs')({ window, rpc, ui, evaluate, until, root, output, configId });
   await until(() => evaluate('Array.from(document.querySelectorAll(".navigation-project-select")).some(node => node.textContent.includes("桌面验证项目"))'), 'project navigation');
   await evaluate('Array.from(document.querySelectorAll(".navigation-project-select")).find(node => node.textContent.includes("桌面验证项目")).click()');
   // 选择项目只切换工作台；通过项目新建按钮明确建立绑定该工作区的代码任务。
@@ -354,7 +395,7 @@ async function main() {
   closingSettings.appearance.codeFontSize += 1;
   await ui('platform.settings.update', { settings: closingSettings });
   const shutdownRetryVerified = await verifyShutdownRetry(rpc, window);
-  const report = { ok: true, electron: process.versions.electron, node: process.versions.node, requests, regexSearchVerified: true, editorFlowVerified: true, chatLayout, rendererPerformance,
+  const report = { ok: true, electron: process.versions.electron, node: process.versions.node, requests, regexSearchVerified: true, editorFlowVerified: true, chatLayout, rendererPerformance, pets: petSmoke,
     verified: ['SQLite worker', 'encrypted settings', 'Monaco', 'native PTY', 'HTTP model/tool loop', 'partial read yellow warning', 'on-demand context status', 'user retention immediate save', 'async question', 'approval denial', 'HTML preview', 'original tabs and input', 'full-width user messages', 'tool header layout at 760/320/240px', 'straight selection markers', 'centered channel checkbox ticks', '20 settings sections', 'system fonts', 'shared settings draft', 'MCP JSON draft and encrypted configuration', 'original UI reroll and branch switching', 'background import preview, discard and atomic save', ...(shutdownRetryVerified ? ['shutdown failure and retry with owned process'] : [])], fontCount: fonts.length, errors, output };
   await fs.writeFile(path.join(output, 'report.json'), JSON.stringify(report, null, 2));
   process.stdout.write(`${JSON.stringify(report)}\n`);

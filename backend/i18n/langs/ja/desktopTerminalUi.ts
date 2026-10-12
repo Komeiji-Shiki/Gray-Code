@@ -1,0 +1,16 @@
+export default {
+    "uiTerminalPanelCurrentTerminal": "現在のターミナル",
+    "uiTerminalPanelNoOpenTerminal": "ターミナルはまだ開いていません",
+    "uiTerminalPanelExitedSuffix": " · 終了済み",
+    "uiTerminalPanelNewTerminalDirectory": "新しいターミナルのディレクトリ",
+    "uiTerminalPanelOpening": "開いています…",
+    "uiTerminalPanelNewTerminal": "新しいターミナル",
+    "uiTerminalPanelCloseTerminalProcess": "選択したターミナルとそのプロセスを終了",
+    "uiTerminalPanelTerminalConnectionHelp": "ワークスペースを選択してからターミナルを開いてください。ページの接続が切れても、プロセスはホストのコンピューターで実行を続けます。",
+    "uiTerminalPanelTerminalExitCodePrefix": "ターミナルが終了しました。終了コード：",
+    "uiTerminalPanelTerminalOutputRetainedSuffix": "。出力はターミナルを閉じるか、コアサービスが終了するまで保持します。",
+    "uiTerminalPanelResumingTerminalOutput": "ターミナルの出力を再接続中…",
+    "uiTerminalPanelTerminalCommand": "ターミナルのコマンド",
+    "uiTerminalPanelCommandPlaceholder": "コマンドを入力",
+    "uiTerminalPanelSendCommand": "送信 ↵",
+};

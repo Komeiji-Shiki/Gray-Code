@@ -1,13 +1,15 @@
 import { mount, flushPromises } from '@vue/test-utils';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import PetManager from '../../../../apps/client/src/components/PetManager.vue';
+import { setShellLanguage } from '../../../../apps/client/src/i18n';
 const { call } = vi.hoisted(() => ({ call: vi.fn() }));
-vi.mock('../../../../apps/client/src/api', () => ({ call }));
+vi.mock('../../../../apps/client/src/api', () => ({ call, rpc: call }));
 const resources = ['first', 'second'].map(id => ({ id, name: id, kind: 'sprite', sprite: { version: 2 }, files: [], actions: [], expressions: [] }));
 const configuration = { resourceId: 'first', visible: false, surface: 'app', scale: 1, reducedMotion: false, stopped: false, taskAnimations: true, mappings: {} };
 const wrappers: ReturnType<typeof mount>[] = [];
 const button = (wrapper: ReturnType<typeof mount>, label: string) => wrapper.findAll('button').find(item => item.text() === label)!;
 beforeEach(() => {
+  setShellLanguage('zh-CN');
   HTMLDialogElement.prototype.showModal = vi.fn(); call.mockReset();
   call.mockImplementation(async method => method === 'pets.list' ? resources : { configuration: structuredClone(configuration), revision: 1, floatingAvailable: true });
 });

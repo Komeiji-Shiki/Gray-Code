@@ -119,7 +119,7 @@ export interface ModelInput {
   /** 可信运行器登记且仍待结果的调用；仅用于支持原生异步的请求完整性检查。 */
   pendingToolCallIds?: string[];
   /** 仅标注内部请求用途，不改变渠道、模型、工具或缓存标识。 */
-  purpose?: 'summary' | 'memory';
+  purpose?: 'summary' | 'memory' | 'screen-sense';
   /** 核心捕获的回合资料，供应方适配器不直接发送此对象。 */
   turnContext?: Record<string, unknown>;
   /** 在供应方格式化完成后捕获请求正文；不包含认证请求头。 */

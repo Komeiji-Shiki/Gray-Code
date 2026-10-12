@@ -15,6 +15,9 @@
   --gc-surface-overlay: #1f222a;
   --gc-surface-sunken: #121419;
   --gc-surface-input: #1f222a;
+  --gc-surface-document: #ffffff;
+  --gc-surface-media-overlay: #00000099;
+  --gc-text-on-media-overlay: #ffffff;
   --gc-text-primary: #ece9e1;
   --gc-text-muted: #9da2b0;
   --gc-text-disabled: #6d7280;

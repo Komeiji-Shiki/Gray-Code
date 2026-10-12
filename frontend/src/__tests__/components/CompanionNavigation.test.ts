@@ -3,7 +3,7 @@ import { afterEach, beforeEach, expect, test, vi } from 'vitest';
 import CompanionSetup from '../../../../apps/client/src/components/CompanionSetup.vue';
 import CharacterSetup from '../../../../apps/client/src/components/CharacterSetup.vue';
 const mocks = vi.hoisted(() => ({ call: vi.fn(), state: { conversationId: 'original', mode: 'character', chatFocused: false } }));
-vi.mock('../../../../apps/client/src/api', () => ({ call: mocks.call,
+vi.mock('../../../../apps/client/src/api', () => ({ call: mocks.call, rpc: mocks.call,
   uiRequest: (type: string, data?: object) => mocks.call('ui.request', { type, data: data ?? {} }) }));
 vi.mock('../../../../apps/client/src/state', () => ({ state: mocks.state }));
 const wrappers: ReturnType<typeof mount>[] = [];
@@ -11,7 +11,10 @@ const button = (wrapper: ReturnType<typeof mount>, label: string) => wrapper.fin
 beforeEach(() => {
   mocks.call.mockReset(); mocks.state.conversationId = 'original'; HTMLDialogElement.prototype.showModal = vi.fn();
   mocks.call.mockImplementation(async (method, params) => {
-    if (method === 'companion.get') return { configuration: { enabled: true, name: '伙伴', userName: '', tone: '' }, defaultsRevision: null, hasDefaults: false, characters: [] };
+    if (method === 'companion.get') return {
+      configuration: { enabled: true, name: '伙伴', userName: '', tone: '' },
+      defaultsRevision: null, hasDefaults: false, characters: [], pets: [], petHostAvailable: false,
+    };
     if (method === 'ui.request' && params.type === 'characters.list') return [];
     if (method === 'ui.request' && params.type === 'characters.conversation.get') return { config: { kind: 'character', userName: '用户', persona: '', worldbookIds: [], regexIds: [], scanDepth: 2 }, mode: 'character', metadataToken: 'original-revision' };
     return {};

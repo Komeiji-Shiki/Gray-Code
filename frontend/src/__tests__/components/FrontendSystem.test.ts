@@ -5,7 +5,7 @@ import AppSource from '../../App.vue?raw'
 import SettingsPanelSource from '../../components/settings/SettingsPanel.vue?raw'
 import ToolItemSource from '../../components/message/toolMessage/ToolItem.vue?raw'
 import { resolveAppearancePalette } from '../../../../shared/appearance'
-import { semanticTokens } from '../../../../shared/appearanceTokens'
+import { appearanceCssVariables, semanticTokens } from '../../../../shared/appearanceTokens'
 
 function collectTypeScriptFiles(directory: string): string[] {
   const files: string[] = []
@@ -93,11 +93,15 @@ describe('frontend visual and async architecture contracts', () => {
   test('两个文档的启动默认值与默认色板一致，避免加载设置前闪色', () => {
     const palette = resolveAppearancePalette('dark')
     const chat = readFileSync(path.resolve(process.cwd(), 'src/platform/theme.css'), 'utf8')
-    const shell = readFileSync(path.resolve(process.cwd(), '../apps/client/src/styles/base.css'), 'utf8')
-    // Web 登录与工作区加载页在读取设置前显示，启动默认值必须覆盖全部语义 token。
+    const shell = readFileSync(path.resolve(process.cwd(), '../apps/client/src/main.ts'), 'utf8')
+    const shellDefaults = appearanceCssVariables(palette)
+    // 外壳挂载前同步写入共享色板，聊天首帧由 theme.css 提供同样的默认值。
+    expect(shell).toContain("const bootstrapPalette = appearanceCssVariables(resolveAppearancePalette('dark', {}, false));")
+    expect(shell).toMatch(/for \(const \[token, value\] of Object\.entries\(bootstrapPalette\)\) document\.documentElement\.style\.setProperty\(token, value\);/)
+    expect(shell.indexOf('style.setProperty')).toBeLessThan(shell.indexOf('createApp(App).mount'))
     for (const [key, tokens] of Object.entries(semanticTokens)) for (const token of tokens) {
       expect(chat).toContain(`${token}: ${palette[key]};`)
-      expect(shell).toContain(`${token}: ${palette[key]};`)
+      expect(shellDefaults[token]).toBe(palette[key])
     }
   })
 
@@ -129,9 +133,9 @@ describe('frontend visual and async architecture contracts', () => {
 
   test('外壳结构使用外壳色，选中项为浅底加左侧强调条', () => {
     const sidebar = readFileSync(path.join(repoRoot, 'apps/client/src/components/navigation/conversationSidebar.css'), 'utf8')
-    expect(sidebar).toMatch(/\.conversation-sidebar\{[^}]*background:var\(--gc-surface-chrome\)/)
-    expect(sidebar).toMatch(/\.navigation-draft\.active\{[^}]*background:var\(--gc-surface-chrome-hover\)/)
-    expect(sidebar).toMatch(/\.navigation-draft\.active::before[^}]*width:2px;[^}]*border-radius:0;[^}]*background:var\(--gc-accent\)/)
+    expect(sidebar).toMatch(/\.conversation-sidebar\s*\{[^}]*background:\s*var\(--gc-surface-chrome\)/)
+    expect(sidebar).toMatch(/\.navigation-draft\.active\s*\{[^}]*background:\s*var\(--gc-surface-chrome-hover\)/)
+    expect(sidebar).toMatch(/\.navigation-draft\.active::before[^}]*width:\s*2px;[^}]*border-radius:\s*0;[^}]*background:\s*var\(--gc-accent\)/)
     const tabs = readFileSync(path.resolve(process.cwd(), 'src/components/tabs/ConversationTabs.vue'), 'utf8')
     expect(tabs).toMatch(/\.tab-item\.active\s*\{[^}]*background:\s*var\(--gc-surface-base\)/)
     const base = readFileSync(path.join(repoRoot, 'apps/client/src/styles/base.css'), 'utf8')

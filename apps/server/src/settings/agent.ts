@@ -11,7 +11,9 @@ import { upgradeToolNames } from '../../../../shared/toolNameUpgrades';
  * 由提示词准备按会话环境追加的工具：Bot 附件只属于 Bot 会话，上下文笔记只在笔记管理或恢复时提供。
  * 默认 Agent 预先携带它们会让每次普通请求都多发这些声明，也让环境判断失去作用。
  */
-const ENVIRONMENT_TOOL_NAMES: ReadonlySet<string> = new Set(['bot_read_attachment', 'bot_send_attachment', 'context_status', ...CONTEXT_TOOL_NAMES]);
+const ENVIRONMENT_TOOL_NAMES: ReadonlySet<string> = new Set([
+  'bot_read_attachment', 'bot_send_attachment', 'context_status', 'pet_control', ...CONTEXT_TOOL_NAMES,
+]);
 
 /** 默认 Agent 预先携带的工具：不含环境工具和当前宿主没有的浏览器。 */
 function defaultToolName(app: PlatformApplication, name: string): boolean {

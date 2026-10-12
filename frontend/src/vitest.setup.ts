@@ -1,5 +1,6 @@
 import { beforeEach } from 'vitest'
 import { setDetectedLanguage, setLanguage } from './i18n'
+import { setShellLanguage } from '../../apps/client/src/i18n'
 
 // Node 26 exposes its own global localStorage accessor. Without
 // --localstorage-file that accessor resolves to undefined, and its presence
@@ -25,4 +26,5 @@ beforeEach(() => {
   // 生产环境仍由 i18n 模块按浏览器/VS Code 语言自动探测。
   setDetectedLanguage('zh-CN')
   setLanguage('auto')
+  setShellLanguage('zh-CN')
 })

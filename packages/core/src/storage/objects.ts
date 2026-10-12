@@ -165,8 +165,8 @@ export class ObjectStore {
           .filter(([, item]) => item !== undefined)
           .map(([name, item]) => [name, transform(item, name, depth + 1)]);
         const transformed = Object.fromEntries(entries);
-        if (shareLargeMaps && depth > 0 && entries.length >= SHARED_MAP_ENTRIES) {
-          // 大型文件清单与内容索引按内容共享；沿用已有引用格式和对象边，恢复、备份及回收无需新路径。
+        if (depth > 0 && (key === 'characterTurn' || shareLargeMaps && entries.length >= SHARED_MAP_ENTRIES)) {
+          // 角色回合与大型字典共用既有值引用，专门用例覆盖旧历史、备份、分叉与回收。
           const child = writeValue(transformed, children.splice(start));
           children.push(child);
           return new ExtData(VALUE_REFERENCE, child);

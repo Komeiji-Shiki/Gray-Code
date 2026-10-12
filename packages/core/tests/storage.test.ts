@@ -2,9 +2,13 @@ import * as fs from 'node:fs/promises';
 import path from 'node:path';
 import { randomBytes } from 'node:crypto';
 import Database from 'better-sqlite3';
+import { encode } from '@msgpack/msgpack';
 import { PlatformStorage } from '@graycode/core';
 import { fixture, message, metadata } from './fixtures';
-import { SCHEMA_VERSION } from '../src/storage/schema';
+import { openDatabase, SCHEMA_VERSION } from '../src/storage/schema';
+import { ObjectStore } from '../src/storage/objects';
+import { restoreCharacterTurn, storeCharacterTurn } from '../../../apps/server/src/characters/snapshot';
+import type { CharacterTurn } from '../../../apps/server/src/characters/pipeline';
 
 describe('independent SQLite storage worker', () => {
   let f: Awaited<ReturnType<typeof fixture>>;
@@ -85,6 +89,63 @@ describe('independent SQLite storage worker', () => {
     await f.store.collectGarbage();
     expect(await f.store.getRecord('snapshot', 'one')).toBeNull();
     expect(await f.store.getRecord('snapshot', 'two')).toEqual(value);
+  });
+
+  test('角色回合值引用兼容旧历史、备份恢复和垃圾回收', async () => {
+    const text = '森林中今天下着小雨。';
+    const entry = { id: 'before', content: text, keys: ['森林'], secondaryKeys: [], enabled: true, constant: true,
+      selective: false, selectiveLogic: 0, caseSensitive: false, wholeWords: false, useRegex: false,
+      order: 0, priority: 0, position: 'before_char', depth: 0, role: 'system' as const, probability: 100,
+      preventRecursion: false, excludeRecursion: false };
+    const turn: CharacterTurn = {
+      config: { kind: 'character', userName: '访客', persona: '', worldbookIds: ['book'], regexIds: [], scanDepth: 2 },
+      resources: [{ id: 'book', revision: 1, sha256: 'fixture' }],
+      modules: { CHARACTER: '灰魂', WORLDBOOK_BEFORE_CHARACTER: text },
+      injections: [{ role: 'system', parts: [{ text }], promptAnchor: { messageId: 'new-user', edge: 'after', order: 0 } }],
+      outlets: { weather: text }, macros: { char: '灰魂' }, rules: [], capturedAt: 1, messagePosition: 1,
+      activation: { entries: [{ bookId: 'book', entry, text, reason: 'constant' },
+        { bookId: 'book', entry: { ...entry, id: 'depth', position: 'at_depth' }, text },
+        { bookId: 'book', entry: { ...entry, id: 'outlet', position: 'outlet', outletName: 'weather' }, text }], skipped: [] },
+    };
+    const snapshot = storeCharacterTurn(turn);
+    expect(snapshot.texts).toEqual([text, '灰魂']);
+    expect(restoreCharacterTurn(snapshot)).toEqual(turn);
+    const originals = [{ ...message(0), id: 'new-user', characterTurn: snapshot },
+      { ...message(1), id: 'new-model', characterTurn: snapshot }, { ...message(2), id: 'legacy', characterTurn: turn }];
+    await f.store.createConversation(metadata('character'));
+    await f.store.appendHistory('character', originals);
+    await f.store.close();
+    const db = openDatabase(path.join(f.data, 'platform.sqlite'));
+    let shared: Buffer[];
+    try {
+      const objects = new ObjectStore(db, path.join(f.data, 'objects'));
+      // 新写入走当前源代码；旧正文直接使用既有 MessagePack 格式，读取仍走正式存储线程。
+      for (const content of originals) {
+        const hash = content.id === 'legacy' ? objects.put(encode(content, { sortKeys: true })) : objects.putValue(content);
+        db.prepare('UPDATE segment_entries SET body_hash=? WHERE message_id=?').run(hash, content.id);
+      }
+      shared = (db.prepare(`SELECT e.child_hash FROM segment_entries s JOIN object_edges e ON e.parent_hash=s.body_hash
+        WHERE s.message_id IN('new-user','new-model') ORDER BY s.message_id`).all() as Array<{ child_hash: Buffer }>).map(row => row.child_hash);
+    } finally { db.close(); }
+    f.store = await PlatformStorage.open(f.data);
+    expect((await f.store.readHistory('character')).messages).toEqual(originals);
+    await f.store.forkConversation('character', metadata('character-fork'));
+    await f.store.deleteConversation('character');
+    await f.store.collectGarbage();
+    expect((await f.store.readHistory('character-fork')).messages).toEqual(originals);
+    const backup = await f.store.backupSnapshot();
+    await f.store.deleteConversation('character-fork');
+    await f.store.collectGarbage();
+    const saved = await PlatformStorage.open(backup.directory);
+    try {
+      const restored = (await saved.readHistory('character-fork')).messages;
+      expect(restored).toEqual(originals);
+      expect(restoreCharacterTurn(restored[0].characterTurn)).toEqual(turn);
+      expect(restoreCharacterTurn(restored[2].characterTurn)).toEqual(turn);
+      expect((await saved.verify()).ok).toBe(true);
+    } finally { await saved.close(); }
+    expect(shared).toHaveLength(2);
+    expect(shared![0].equals(shared![1])).toBe(true);
   });
 
   test('嵌套字段投影保留数组、共享字典与既有路径统计的语义', async () => {

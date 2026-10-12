@@ -39,14 +39,16 @@ const PLAN_EXECUTION_TOOL_NAMES: ReadonlySet<string> = new Set([
 export function filterPromptModeToolNames(
     mode: Pick<PromptMode, 'toolPolicy' | 'toolPolicyCustomized'>,
     names: string[],
-    options: { planExecution?: boolean } = {}
+    options: { planExecution?: boolean; platformMode?: 'chat' | 'code' | 'character' } = {}
 ): string[] {
+    const modeNames = options.platformMode === 'chat' || options.platformMode === 'character'
+        ? names : names.filter(name => name !== 'pet_control');
     if (mode.toolPolicy) {
         const allowed = new Set(upgradeToolNames(mode.toolPolicy));
-        return names.filter(name => allowed.has(name));
+        return modeNames.filter(name => allowed.has(name));
     }
-    if (mode.toolPolicyCustomized === true) return names;
-    return names.filter(name => !DOCUMENT_TOOL_NAMES.has(name) || options.planExecution === true && PLAN_EXECUTION_TOOL_NAMES.has(name));
+    if (mode.toolPolicyCustomized === true) return modeNames;
+    return modeNames.filter(name => !DOCUMENT_TOOL_NAMES.has(name) || options.planExecution === true && PLAN_EXECUTION_TOOL_NAMES.has(name));
 }
 
 /** search_in_files 的 replace 操作按此名称参与审批，受限模式可以单独拒绝它而保留搜索。 */

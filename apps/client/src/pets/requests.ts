@@ -1,3 +1,5 @@
+import { PET_APPLY_TIMEOUT_MS } from '@graycode/contracts';
+
 /** 等待动作已应用的回执，不等待动画播放结束；超时也不能宣称动作未执行。 */
 export class PetRequests {
   private readonly pending = new Map<string, (error?: Error) => void>();
@@ -11,7 +13,7 @@ export class PetRequests {
         if (error) reject(error); else resolve();
       };
       const abort = () => finish(new Error('桌宠请求已取消。'));
-      const timer = setTimeout(() => finish(new Error('播放器未及时确认，实际结果未知，请重试或查看预览。')), 5000);
+      const timer = setTimeout(() => finish(new Error('播放器未及时确认，实际结果未知，请重试或查看预览。')), PET_APPLY_TIMEOUT_MS);
       this.pending.set(id, finish);
       signal?.addEventListener('abort', abort, { once: true });
     });

@@ -1,15 +1,119 @@
+import { shellText as t } from '../i18n';
 export type WorkbenchIcon = 'file' | 'folder' | 'browser' | 'terminal' | 'git' | 'review' | 'warning' | 'chat' | 'search' | 'computer';
-export interface WorkbenchTab { id: string; label: string; title?: string; icon: WorkbenchIcon; dirty?: boolean }
+export interface WorkbenchTab {
+  id: string;
+  label: string;
+  title?: string;
+  icon: WorkbenchIcon;
+  dirty?: boolean;
+}
 export const workbenchPanels: Array<{ id: string; label: string; icon: WorkbenchIcon; description: string }> = [
-  { id: 'diff', label: '审查', icon: 'review', description: '查看与接受 AI 修改' },
-  { id: 'terminal', label: '终端', icon: 'terminal', description: '运行命令与查看输出' },
-  { id: 'debug', label: '调试', icon: 'terminal', description: '启动与附加程序，查看断点、调用栈和变量' },
-  { id: 'browser', label: '浏览器', icon: 'browser', description: '打开网页与预览内容' },
-  { id: 'computer', label: '电脑', icon: 'computer', description: '选择窗口、查看控件与画面，执行或停止电脑操作' },
-  { id: 'nodes', label: '设备', icon: 'computer', description: '配对执行设备、派发远端任务与观看操作画面' },
-  { id: 'editor', label: '文件', icon: 'folder', description: '浏览工作区与编辑代码' },
-  { id: 'search', label: '搜索', icon: 'search', description: '在项目中搜索与替换文本' },
-  { id: 'outline', label: '大纲', icon: 'file', description: '查看当前文件的函数与符号' },
-  { id: 'git', label: 'Git', icon: 'git', description: '查看仓库状态与差异' },
-  { id: 'problems', label: '问题', icon: 'warning', description: '查看代码诊断' },
+  {
+    id: 'diff',
+    get label() {
+      return t('reviewTitle');
+    },
+    icon: 'review',
+    get description() {
+      return t('uiworkbenchPanelsReviewAiChanges');
+    },
+  },
+  {
+    id: 'terminal',
+    get label() {
+      return t('uiworkbenchPanelsTerminal');
+    },
+    icon: 'terminal',
+    get description() {
+      return t('uiworkbenchPanelsRunCommandsViewOutput');
+    },
+  },
+  {
+    id: 'debug',
+    get label() {
+      return t('uiworkbenchPanelsDebug');
+    },
+    icon: 'terminal',
+    get description() {
+      return t('uiworkbenchPanelsDebugPanelDescription');
+    },
+  },
+  {
+    id: 'browser',
+    get label() {
+      return t('uiworkbenchPanelsBrowser');
+    },
+    icon: 'browser',
+    get description() {
+      return t('uiworkbenchPanelsBrowserPanelDescription');
+    },
+  },
+  {
+    id: 'computer',
+    get label() {
+      return t('uiworkbenchPanelsComputer');
+    },
+    icon: 'computer',
+    get description() {
+      return t('uiworkbenchPanelsComputerPanelDescription');
+    },
+  },
+  {
+    id: 'nodes',
+    get label() {
+      return t('uiworkbenchPanelsDevices');
+    },
+    icon: 'computer',
+    get description() {
+      return t('uiworkbenchPanelsDevicePanelDescription');
+    },
+  },
+  {
+    id: 'editor',
+    get label() {
+      return t('uiFileTreeFile');
+    },
+    icon: 'folder',
+    get description() {
+      return t('uiworkbenchPanelsFilesPanelDescription');
+    },
+  },
+  {
+    id: 'search',
+    get label() {
+      return t('uiMemoryLibrarySearch');
+    },
+    icon: 'search',
+    get description() {
+      return t('uiworkbenchPanelsSearchPanelDescription');
+    },
+  },
+  {
+    id: 'outline',
+    get label() {
+      return t('uiCodeEditorOutline');
+    },
+    icon: 'file',
+    get description() {
+      return t('uiworkbenchPanelsOutlinePanelDescription');
+    },
+  },
+  {
+    id: 'git',
+    label: 'Git',
+    icon: 'git',
+    get description() {
+      return t('uiworkbenchPanelsGitPanelDescription');
+    },
+  },
+  {
+    id: 'problems',
+    get label() {
+      return t('uiworkbenchPanelsFindings');
+    },
+    icon: 'warning',
+    get description() {
+      return t('uiworkbenchPanelsProblemsPanelDescription');
+    },
+  },
 ];

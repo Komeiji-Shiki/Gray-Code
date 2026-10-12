@@ -1,3 +1,19 @@
+import desktopWorkspaceUi from './zh-CN/desktopWorkspaceUi';
+import desktopAutomationUi from './zh-CN/desktopAutomationUi';
+import desktopBrowserUi from './zh-CN/desktopBrowserUi';
+import desktopEditorUi from './zh-CN/desktopEditorUi';
+import desktopComputerUi from './zh-CN/desktopComputerUi';
+import desktopGeneralUi from './zh-CN/desktopGeneralUi';
+import desktopNavigationUi from './zh-CN/desktopNavigationUi';
+import desktopDebugUi from './zh-CN/desktopDebugUi';
+import desktopFilesUi from './zh-CN/desktopFilesUi';
+import desktopGitUi from './zh-CN/desktopGitUi';
+import desktopMemoryUi from './zh-CN/desktopMemoryUi';
+import desktopNodesUi from './zh-CN/desktopNodesUi';
+import desktopResourcesUi from './zh-CN/desktopResourcesUi';
+import desktopRunsUi from './zh-CN/desktopRunsUi';
+import desktopSearchUi from './zh-CN/desktopSearchUi';
+import desktopTerminalUi from './zh-CN/desktopTerminalUi';
 /**
  * GrayCode Backend - 中文语言包
  *
@@ -5,6 +21,11 @@
  * 因此这里不做类型标注（避免循环定义）。修改结构后 en/ja 会自动受到类型约束。
  */
 
+
+import desktopScreenSense from './zh-CN/desktopScreenSense';
+import desktopCompanion from './zh-CN/desktopCompanion';
+import desktopPets from './zh-CN/desktopPets';
+import desktopMaintenance from './zh-CN/desktopMaintenance';
 
 const zhCN = {
     desktop: {
@@ -77,6 +98,26 @@ const zhCN = {
             "saveAllUnavailable": "编辑界面不可用，应用保持打开。",
             "saveAllIncomplete": "仍有未保存的修改，请处理后重试。",
             "shell": {
+                ...desktopScreenSense,
+                ...desktopCompanion,
+                ...desktopPets,
+                ...desktopMaintenance,
+                ...desktopWorkspaceUi,
+                ...desktopAutomationUi,
+                ...desktopBrowserUi,
+                ...desktopEditorUi,
+                ...desktopComputerUi,
+                ...desktopGeneralUi,
+                ...desktopNavigationUi,
+                ...desktopDebugUi,
+                ...desktopFilesUi,
+                ...desktopGitUi,
+                ...desktopMemoryUi,
+                ...desktopNodesUi,
+                ...desktopResourcesUi,
+                ...desktopRunsUi,
+                ...desktopSearchUi,
+                ...desktopTerminalUi,
                 "documentRecoveryConflict": "文件已发生变化，当前草稿已保留。请先复制内容，再重新打开文件并合并修改。",
                 "connectionTimeout": "连接超时，请检查网络后重试。",
                 "initializationFailed": "工作台初始化失败",
@@ -766,6 +807,7 @@ const zhCN = {
                 "key": "按键",
                 "query": "查询桌宠",
                 "play": "播放动作",
+                "set": "组合控制",
                 "expression": "设置表情",
                 "look": "调整视线",
                 "parameters": "设置参数",

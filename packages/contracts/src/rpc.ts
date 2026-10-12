@@ -6,6 +6,10 @@ import type { ComputerAction, ComputerObservation, ComputerObserveInput, Compute
 import type { BrowserLayout, BrowserProfile, BrowserState, BrowserTab } from './browser';
 import type { VisualActionResult } from './visual';
 import type { UiRequestEnvelope, UiRequestName, UiRequestResult } from './uiRequests';
+import type { ScreenSenseRpcMethods } from './screenSense';
+import type { PetRpcMethods } from './pets';
+import type { CompanionRpcMethods } from './companion';
+import type { PetInteractionRpcMethods } from './petInteractions';
 
 export interface ModelRequestSnapshot {
   runId: string; iteration: number; capturedAt: number; protocol: string; model: string; body: unknown;
@@ -20,7 +24,7 @@ type TabId = { tabId: string };
 export type BrowserControlAction = 'navigate' | 'back' | 'forward' | 'reload' | 'stop' | 'devtools';
 
 /** 每个领域只在这里声明参数和返回值，桌面与 Web 共用同一调用签名。 */
-export interface RpcMethods {
+export interface RpcMethods extends ScreenSenseRpcMethods, PetRpcMethods, CompanionRpcMethods, PetInteractionRpcMethods {
   'ui.request': Method<UiRequestEnvelope, UiRequestResult<UiRequestName>>;
   'diagnostics.get': Method<Empty, RuntimeDiagnostics>;
   'settings.get': Method<Empty, SettingsSnapshot>;
@@ -83,9 +87,36 @@ const optional = (check: Check): Check => ({ ...check, optional: true });
 const oneOf = (...values: string[]): Check => ({ accepts: value => typeof value === 'string' && values.includes(value) });
 const file = { workspaceId: text, path: text };
 const tab = { tabId: text };
+const revision: Check = { accepts: value => value === null || Number.isSafeInteger(value) };
+const array: Check = { accepts: Array.isArray };
+const renderer = { rendererId: text, generation: text };
 
 // 字段表受方法参数类型约束；新增字段时，遗漏入口检查会触发编译错误。
 const checks: { [M in RpcMethod]: { [K in keyof RpcParams<M>]-?: Check } } = {
+  'screenSense.status': {}, 'screenSense.get': {}, 'screenSense.options': {},
+  'screenSense.configure': { configuration: object, revision },
+  'screenSense.start': {}, 'screenSense.stop': {}, 'screenSense.capture': {},
+  'screenSense.send': { previewId: text }, 'screenSense.cancelRun': {},
+  'companion.get': { conversationId: optional(text) },
+  'companion.save': { conversationId: optional(text), configuration: object, metadataToken: optional(text),
+    defaultsRevision: optional(revision), saveAsDefault: optional(boolean) },
+  'companion.defaults.clear': { defaultsRevision: revision },
+  'pets.position': { position: object }, 'pets.list': {}, 'pets.status': {},
+  'pets.import': { entry: text, files: array, name: optional(text), source: optional(text), license: optional(text) },
+  'pets.bundle': { id: text },
+  'pets.resource.annotate': { id: text, description: optional(text), actions: optional(array), expressions: optional(array), hitAreas: optional(array) },
+  'pets.remove': { id: text, revision }, 'pets.configure': { configuration: object, revision },
+  'pets.runtime.import': { data: text, name: text }, 'pets.runtime.get': {}, 'pets.runtime.remove': {},
+  'pets.renderer.claim': { ...renderer, surface: oneOf('app', 'floating') },
+  'pets.renderer.ready': { ...renderer, parameters: array },
+  'pets.renderer.heartbeat': renderer, 'pets.renderer.closed': renderer,
+  'pets.renderer.failed': { ...renderer, error: text },
+  'pets.renderer.applied': { ...renderer, requestId: text, success: boolean, error: optional(text) },
+  'pets.command': { command: object },
+  'pets.chat.create': {},
+  'pets.chat.send': { conversationId: text, message: text, streamId: text, configId: optional(text),
+    modelOverride: optional(text), attachments: optional(array) },
+  'pets.inbox': { conversationId: optional(text) },
   // 旧 UI 操作的数据形态继续兼容，稳定接口的参数与结果由 UiRequests 关联。
   'ui.request': { type: text, data: optional(unknownValue) },
   'diagnostics.get': {},

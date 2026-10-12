@@ -1,0 +1,16 @@
+export default {
+    "uiTerminalPanelCurrentTerminal": "当前终端",
+    "uiTerminalPanelNoOpenTerminal": "尚未打开终端",
+    "uiTerminalPanelExitedSuffix": " · 已退出",
+    "uiTerminalPanelNewTerminalDirectory": "新终端目录",
+    "uiTerminalPanelOpening": "正在打开…",
+    "uiTerminalPanelNewTerminal": "新建终端",
+    "uiTerminalPanelCloseTerminalProcess": "关闭所选终端及其进程",
+    "uiTerminalPanelTerminalConnectionHelp": "选择工作区后打开终端。页面断开后，进程会继续在部署电脑运行。",
+    "uiTerminalPanelTerminalExitCodePrefix": "终端已退出，退出码",
+    "uiTerminalPanelTerminalOutputRetainedSuffix": "。输出保留到关闭终端或退出核心服务。",
+    "uiTerminalPanelResumingTerminalOutput": "正在接续终端输出…",
+    "uiTerminalPanelTerminalCommand": "终端命令",
+    "uiTerminalPanelCommandPlaceholder": "输入命令",
+    "uiTerminalPanelSendCommand": "发送 ↵",
+};

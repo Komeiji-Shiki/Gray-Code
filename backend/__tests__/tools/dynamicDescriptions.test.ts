@@ -244,7 +244,7 @@ describe('图片工具批量互斥说明', () => {
  * zh 输出中允许出现的英文单词（小写）。全部为有意保留的专有名词 / 标识符：
  * - 工具与参数标识符：get_symbols / goto_definition / find_references / list_files /
  *   find_files、read_file 行号参数 startLine/endLine（1-based）、workspace_name、
- *   path/files/images/prompt/output 等 schema 键、图片工具参数名
+ *   path/files/images/prompt/output 等 schema 键、批量回执 index 与图片工具参数名
  *   （image_path、aspect_ratio、image_size、subject_description、width/height/angle/format…）；
  * - 图片格式专有名词：PNG / JPEG / WebP / PDF；模型/厂商名：OpenAI / Gemini / Anthropic / API；
  * - read_file 的编码字段 encoding / encodingGuessed 与编码名 Shift-JIS（shift_jis）；
@@ -255,7 +255,7 @@ describe('图片工具批量互斥说明', () => {
 const ZH_ALLOWED_EN_WORDS = new Set([
     'startline', 'endline', 'based', 'symbols', 'definition', 'references', 'files',
     'workspace', 'images', 'prompt', 'output', 'remove', 'background', 'aspect', 'ratio',
-    'image', 'subject', 'description', 'width', 'height', 'angle', 'format',
+    'image', 'subject', 'description', 'width', 'height', 'angle', 'format', 'index',
     'orange', 'sitting', 'windowsill', 'sunlight', 'lighting', 'quality',
     'openai', 'gemini', 'anthropic', 'api', 'pdf', 'png', 'jpeg', 'webp',
     'encoding', 'encodingguessed', 'shift'

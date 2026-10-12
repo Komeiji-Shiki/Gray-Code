@@ -1,8 +1,28 @@
+import desktopWorkspaceUi from './ja/desktopWorkspaceUi';
+import desktopAutomationUi from './ja/desktopAutomationUi';
+import desktopBrowserUi from './ja/desktopBrowserUi';
+import desktopEditorUi from './ja/desktopEditorUi';
+import desktopComputerUi from './ja/desktopComputerUi';
+import desktopGeneralUi from './ja/desktopGeneralUi';
+import desktopNavigationUi from './ja/desktopNavigationUi';
+import desktopDebugUi from './ja/desktopDebugUi';
+import desktopFilesUi from './ja/desktopFilesUi';
+import desktopGitUi from './ja/desktopGitUi';
+import desktopMemoryUi from './ja/desktopMemoryUi';
+import desktopNodesUi from './ja/desktopNodesUi';
+import desktopResourcesUi from './ja/desktopResourcesUi';
+import desktopRunsUi from './ja/desktopRunsUi';
+import desktopSearchUi from './ja/desktopSearchUi';
+import desktopTerminalUi from './ja/desktopTerminalUi';
 /**
  * GrayCode Backend - 日本語言語パック
  */
 
 import type { BackendLanguageMessages } from '../types';
+import desktopScreenSense from './ja/desktopScreenSense';
+import desktopCompanion from './ja/desktopCompanion';
+import desktopPets from './ja/desktopPets';
+import desktopMaintenance from './ja/desktopMaintenance';
 
 const ja: BackendLanguageMessages = {
     desktop: {
@@ -75,6 +95,26 @@ const ja: BackendLanguageMessages = {
             "saveAllUnavailable": "エディターを利用できないため、終了しません。",
             "saveAllIncomplete": "未保存の変更を確認して再試行してください。",
             "shell": {
+                ...desktopScreenSense,
+                ...desktopCompanion,
+                ...desktopPets,
+                ...desktopMaintenance,
+                ...desktopWorkspaceUi,
+                ...desktopAutomationUi,
+                ...desktopBrowserUi,
+                ...desktopEditorUi,
+                ...desktopComputerUi,
+                ...desktopGeneralUi,
+                ...desktopNavigationUi,
+                ...desktopDebugUi,
+                ...desktopFilesUi,
+                ...desktopGitUi,
+                ...desktopMemoryUi,
+                ...desktopNodesUi,
+                ...desktopResourcesUi,
+                ...desktopRunsUi,
+                ...desktopSearchUi,
+                ...desktopTerminalUi,
                 "documentRecoveryConflict": "ファイルが変更されました。編集中の内容は保持されています。内容をコピーしてからファイルを開き直し、変更を統合してください。",
                 "connectionTimeout": "接続がタイムアウトしました。ネットワークを確認して再試行してください。",
                 "initializationFailed": "ワークスペースの初期化に失敗しました",
@@ -764,6 +804,7 @@ const ja: BackendLanguageMessages = {
                 "key": "キー入力",
                 "query": "ペットを照会",
                 "play": "動作を再生",
+                "set": "組み合わせ操作",
                 "expression": "表情を設定",
                 "look": "視線を変更",
                 "parameters": "パラメータを設定",

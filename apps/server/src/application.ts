@@ -307,7 +307,8 @@ export class PlatformApplication {
       });
     const models = options.models ?? this.modelAdapter;
     this.models = {
-      generate: input => this.automations.meter.generate(input, () => withDependencyRuntime(this.dependencies, () => models.generate(input))),
+      generate: input => this.automations.meter.generate(input, () => this.companion.generate(input,
+        prepared => withDependencyRuntime(this.dependencies, () => models.generate(prepared)))),
       supportsAsyncTools: input => models.supportsAsyncTools?.(input) ?? false,
       steer: (runId, message) => withDependencyRuntime(this.dependencies, () => models.steer?.(runId, message) ?? Promise.resolve(false)),
       hasContinuation: runId => models.hasContinuation?.(runId) ?? false,
@@ -443,6 +444,11 @@ export class PlatformApplication {
       if (event.type === 'event' && ['run.completed', 'run.cancelled', 'run.failed'].includes(event.event.type)) this.checkpointLifecycle.clear(event.event.runId);
       if (event.type === 'event' && event.event.type === 'run.completed') {
         this.longMemory.background.afterRun(event.event.runId);
+      }
+      if (event.type === 'event' && ['run.completed', 'run.cancelled', 'run.failed', 'run.interrupted'].includes(event.event.type)) {
+        void this.companion.finishRun(event.event.runId).catch(error => {
+          this.publish({ type: 'notification', severity: 'warning', message: String(error) });
+        });
       }
       this.notify(event as unknown as Record<string, unknown>);
     });

@@ -12,7 +12,7 @@ describe('侧栏选中标记', () => {
     ['frontend/src/components/settings/panel/SettingsSidebar.vue', '.settings-tab.active'],
     ['apps/client/src/components/navigation/ConversationNavigationRow.vue', '.navigation-row.active'],
     ['apps/client/src/components/navigation/conversationSidebar.css', '.navigation-draft.active'],
-    ['apps/client/src/components/navigation/conversationSidebar.css', '.navigation-bottom button[aria-pressed=true]'],
+    ['apps/client/src/components/navigation/conversationSidebar.css', '.navigation-bottom button[aria-pressed="true"]'],
   ])('%s %s 的竖线独立于圆角背景', (file, selector) => {
     const source = read(file)
     expect(rules(source, selector)).not.toMatch(/box-shadow:/)

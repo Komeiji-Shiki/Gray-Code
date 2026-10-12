@@ -1,8 +1,16 @@
 import { randomUUID } from 'node:crypto';
-import type { CharacterChatConfig, PlatformConversation, PlatformMessage, RegexRule, WorldActivation, WorldbookDefinition } from '@graycode/contracts';
-import { CharacterEngine, expandCharacterMacros, readCharacterDefinition, readRegexRules, readWorldbook } from '@graycode/core';
-import { MessageTokenEstimator } from '../../../../backend/modules/api/chat/services/MessageTokenEstimator';
+import type {
+  CharacterChatConfig, PlatformConversation, PlatformMessage, RegexRule, WorldActivation, WorldbookDefinition,
+} from '@graycode/contracts';
+import { CharacterEngine, expandCharacterMacros, readCharacterDefinition, readRegexRules } from '@graycode/core';
+import type { ChannelConfig } from '../../../../backend/modules/config/types';
+import {
+  DEFAULT_MAX_CONTEXT_TOKENS, resolveMaxContextTokensForConfig, resolveModelContextWindowForConfig,
+} from '../../../../backend/modules/api/chat/services/contextTrim/contextWindowResolution';
 import type { PlatformApplication } from '../application';
+import { WorldbookPreparation } from './preparation';
+import { restoreCharacterTurn, storeCharacterTurn, WORLD_SLOTS } from './snapshot';
+import { WorldbookVectors } from './vectors';
 
 export interface CharacterTurn {
   config: CharacterChatConfig;
@@ -16,16 +24,22 @@ export interface CharacterTurn {
   capturedAt: number;
   messagePosition?: number;
 }
-const worldSlots: Record<string, string> = { before_char: 'WORLDBOOK_BEFORE_CHARACTER', after_char: 'WORLDBOOK_AFTER_CHARACTER',
-  examples_before: 'WORLDBOOK_BEFORE_EXAMPLES', examples_after: 'WORLDBOOK_AFTER_EXAMPLES',
-  authors_note_before: 'WORLDBOOK_BEFORE_NOTE', authors_note_after: 'WORLDBOOK_AFTER_NOTE' };
-const messageText = (message: PlatformMessage) => message.parts.filter(part => !part.thought && typeof part.text === 'string').map(part => part.text).join('\n');
+const messageText = (message: PlatformMessage) => message.parts
+  .filter(part => !part.thought && typeof part.text === 'string').map(part => part.text).join('\n');
+
+export interface CharacterCaptureOptions {
+  actorId?: string;
+  channel?: ChannelConfig;
+  modelOverride?: string;
+  preview?: boolean;
+}
 
 /** 每个用户回合捕获一次资源与随机结果，工具迭代沿用快照。 */
 export class CharacterPipeline {
   readonly engine = new CharacterEngine();
-  private readonly estimator = new MessageTokenEstimator();
-  constructor(private readonly app: PlatformApplication) {}
+  private readonly preparation = new WorldbookPreparation();
+  private readonly vectors: WorldbookVectors;
+  constructor(private readonly app: PlatformApplication) { this.vectors = new WorldbookVectors(app); }
   async greeting(config: CharacterChatConfig): Promise<PlatformMessage | undefined> {
     if (!config.characterId || config.greetingIndex === -1) return undefined;
     const { resource, revision } = await this.app.characters.get(config.characterId);
@@ -48,9 +62,10 @@ export class CharacterPipeline {
     return { id: randomUUID(), parentId: null, role: 'model', parts: source.parts, timestamp: Date.now(), characterGreeting: true,
       characterMode: true, characterOriginalParts: original, characterDisplayParts: display.parts, characterStages: source.stages, characterDisplayStages: display.stages };
   }
-  async capture(conversation: PlatformConversation, history: PlatformMessage[], source?: PlatformMessage, previousTurn?: PlatformMessage, signal?: AbortSignal): Promise<CharacterTurn | undefined> {
+  async capture(conversation: PlatformConversation, history: PlatformMessage[], source?: PlatformMessage, previousTurn?: PlatformMessage,
+    signal?: AbortSignal, options: CharacterCaptureOptions = {}): Promise<CharacterTurn | undefined> {
     signal?.throwIfAborted();
-    if (previousTurn?.characterTurn) return structuredClone(previousTurn.characterTurn) as CharacterTurn;
+    if (previousTurn?.characterTurn) return restoreCharacterTurn(structuredClone(previousTurn.characterTurn));
     const custom = conversation.custom as Record<string, unknown> | undefined;
     const config = (custom?.characterConfig as CharacterChatConfig | undefined) ?? { kind: 'character', userName: '', persona: '', worldbookIds: [], regexIds: [], scanDepth: 2 } as CharacterChatConfig;
     if (custom?.platformMode !== 'character') return undefined;
@@ -81,41 +96,61 @@ export class CharacterPipeline {
     const sourceForWorld: PlatformMessage | undefined = source ? { ...source, role: 'user', parts: (await this.transformParts(source.parts, { macros, rules }, 1, 'source', signal)).parts } : undefined;
     const books: WorldbookDefinition[] = [];
     for (const id of new Set([...(character?.bindings.worldbookIds ?? []), ...config.worldbookIds])) {
-      const resource = await read(id); books.push(readWorldbook(resource.raw, id));
+      const resource = await read(id);
+      books.push(this.preparation.read(resource, resources.at(-1)!.revision));
     }
     let messagePosition: number | undefined;
     let activation: WorldActivation = { entries: [], skipped: [] };
     const injections: PlatformMessage[] = [], outlets: Record<string, string> = {};
     if (books.length) {
-      if (config.worldTokenBudget === undefined) throw new Error('请在角色配置中填写世界书最大注入 Token，填 0 可关闭注入。');
-      const tokenCosts: Record<string, number> = {}, randomValues: Record<string, number> = {};
-      const worldEntries = books.flatMap(book => book.entries.map(entry => ({ bookId: book.id, entry })));
-      const worldRules = rules.filter(rule => rule.placements.includes(5));
-      const sourceText = await this.engine.transformBatch(worldEntries.map(item => ({ text: expand(item.entry.content),
-        context: { placement: 5, phase: 'source' as const, macros } })), worldRules, signal);
-      const promptText = await this.engine.transformBatch(sourceText.map(item => ({ text: item.text,
-        context: { placement: 5, phase: 'prompt' as const, macros } })), worldRules, signal);
-      const renderedWorld = new Map(worldEntries.map((item, index) => [`${item.bookId}/${item.entry.id}`, promptText[index].text]));
-      for (const book of books) for (const entry of book.entries) {
-        const key = `${book.id}/${entry.id}`;
-        tokenCosts[key] = this.estimator.estimateMessageTokens({ role: 'user', parts: [{ text: renderedWorld.get(key) ?? '' }] });
-        randomValues[key] = Math.random();
-        for (const group of entry.group ?? []) randomValues[`group:${group}`] ??= Math.random();
-      }
-      const messages = [...history, ...(sourceForWorld ? [sourceForWorld] : [])].filter(message => message.role === 'model' || message.role === 'user' && message.isUserInput !== false)
-        .filter(message => !message.parts.some(part => part.functionCall || part.functionResponse));
+      const contextWindow = options.channel
+        ? (resolveModelContextWindowForConfig(options.channel, options.modelOverride)
+          ?? resolveMaxContextTokensForConfig(options.channel, options.modelOverride)).maxContextTokens
+        : DEFAULT_MAX_CONTEXT_TOKENS;
+      const tokenBudget = config.worldTokenBudget ?? Math.floor(contextWindow * 0.05);
+      const messages = [...history, ...(sourceForWorld ? [sourceForWorld] : [])].filter(message => {
+        const conversational = message.role === 'model' || message.role === 'user' && message.isUserInput !== false;
+        return conversational && !message.parts.some(part => part.functionCall || part.functionResponse);
+      });
       const previousIndex = messages.findLastIndex(message => message !== sourceForWorld && message.isUserInput && message.characterTurn);
       const prior = previousIndex >= 0 ? messages[previousIndex].characterTurn as CharacterTurn : undefined;
       messagePosition = prior?.messagePosition === undefined ? messages.length : prior.messagePosition + messages.length - previousIndex - 1;
-      activation = await this.engine.worldbooks({ books, history: messages.map(message => `\u0001${message.role === 'model' ? macros.char ?? 'assistant' : macros.user ?? 'user'}: ${messageText(message)}`),
-        scanDepth: config.scanDepth, tokenBudget: config.worldTokenBudget, macros, tokenCosts, randomValues,
-        messageCount: messagePosition, timedEffects: prior?.activation.timedEffects, recursive: config.recursiveScan, maxRecursionSteps: config.maxRecursionSteps,
-        additionalSources: { matchPersonaDescription: config.persona, matchCharacterDescription: definition?.description ?? '', matchCharacterPersonality: definition?.personality ?? '',
-          matchCharacterDepthPrompt: definition?.postHistory ?? '', matchScenario: definition?.scenario ?? '', matchCreatorNotes: definition?.creatorNotes ?? '' } }, signal);
-      activation.regexErrors = [...new Map([...sourceText, ...promptText].flatMap(result => result.errors).map(error => [error.id + error.message, error])).values()];
+      activation = { entries: [], skipped: [], tokenBudget, timedEffects: { ...prior?.activation.timedEffects } };
+      if (tokenBudget > 0) {
+        const prepared = await this.preparation.prepare(this.engine, books, resources, rules, macros, signal);
+        const randomValues: Record<string, number> = {};
+        let maximumDepth = 0;
+        for (const book of books) for (const entry of book.entries) {
+          if (!entry.enabled || !entry.content.trim()) continue;
+          maximumDepth = Math.max(maximumDepth, Math.floor(entry.scanDepth ?? book.scanDepth ?? config.scanDepth));
+          randomValues[`${book.id}/${entry.id}`] = Math.random();
+          for (const group of entry.group ?? []) randomValues[`group:${group}`] ??= Math.random();
+        }
+        // 时效计数与插入锚点保留完整消息索引，只有关键词扫描范围内的正文转成字符串。
+        const scanHistory = maximumDepth === 0 ? [] : messages.slice(-maximumDepth).map(message =>
+          `\u0001${message.role === 'model' ? macros.char ?? 'assistant' : macros.user ?? 'user'}: ${messageText(message)}`
+        );
+        const additionalSources = {
+          matchPersonaDescription: config.persona,
+          matchCharacterDescription: definition?.description ?? '',
+          matchCharacterPersonality: definition?.personality ?? '',
+          matchCharacterDepthPrompt: definition?.postHistory ?? '',
+          matchScenario: definition?.scenario ?? '',
+          matchCreatorNotes: definition?.creatorNotes ?? '',
+        };
+        const actorId = options.actorId ?? (typeof conversation.actorId === 'string' ? conversation.actorId : '');
+        const vector = await this.vectors.activate({ actorId, books, history: scanHistory,
+          scanDepth: config.scanDepth, macros, texts: prepared.texts, additionalSources, preview: options.preview }, signal);
+        activation = await this.engine.worldbooks({ books, history: scanHistory,
+          scanDepth: config.scanDepth, tokenBudget, macros, tokenCosts: prepared.tokenCosts, renderedTexts: prepared.texts, randomValues,
+          messageCount: messagePosition, timedEffects: prior?.activation.timedEffects,
+          recursive: config.recursiveScan, maxRecursionSteps: config.maxRecursionSteps, additionalSources,
+          vectorMatches: vector.matches, vectorError: vector.error }, signal);
+        activation.regexErrors = prepared.regexErrors;
+      }
       for (let index = 0; index < activation.entries.length; index++) {
-        const item = activation.entries[index]; item.text = renderedWorld.get(`${item.bookId}/${item.entry.id}`) ?? item.text;
-        const slot = worldSlots[item.entry.position];
+        const item = activation.entries[index];
+        const slot = WORLD_SLOTS[item.entry.position];
         if (slot) modules[slot] = [modules[slot], item.text].filter(Boolean).join('\n\n');
         else if (item.entry.position === 'at_depth') {
           const depth = Math.max(0, Math.floor(item.entry.depth));
@@ -144,6 +179,7 @@ export class CharacterPipeline {
     return { parts: output, stages: stages.map((stage, index) => ({ ...stage, afterRegex: transformed[index].text, applied: transformed[index].applied, errors: transformed[index].errors })) };
   }
   async modelHistory(messages: PlatformMessage[], snapshot: CharacterTurn | undefined, signal: AbortSignal) {
+    snapshot = restoreCharacterTurn(snapshot);
     if (!snapshot) return messages;
     const targets: Array<{ message: PlatformMessage; part: PlatformMessage['parts'][number]; index: number; partIndex: number }> = [];
     for (let index = 0; index < messages.length; index++) {
@@ -170,15 +206,17 @@ export class CharacterPipeline {
     return result;
   }
   async output(turn: CharacterTurn | undefined, message: PlatformMessage, signal: AbortSignal) {
+    turn = restoreCharacterTurn(turn);
     if (!turn) return message;
+    const storedTurn = storeCharacterTurn(turn);
     // 中断时保留用户已经看到的原文和角色来源，不再执行依赖完整输出的转换。
-    if (message.incompleteReason) return { ...message, characterMode: true, characterOriginalParts: message.parts, characterTurn: turn };
+    if (message.incompleteReason) return { ...message, characterMode: true, characterOriginalParts: message.parts, characterTurn: storedTurn };
     let transformed: Awaited<ReturnType<CharacterPipeline['transformParts']>>;
     try { transformed = await this.transformParts(message.parts, turn, 2, 'source', signal); }
     catch (error) {
       signal.throwIfAborted();
       return { ...message, characterMode: true, characterOriginalParts: message.parts,
-        characterDisplayStages: [{ errors: [{ message: (error as Error).message }] }], characterTurn: turn };
+        characterDisplayStages: [{ errors: [{ message: (error as Error).message }] }], characterTurn: storedTurn };
     }
     let display: Awaited<ReturnType<CharacterPipeline['transformParts']>>;
     try { display = await this.transformParts(transformed.parts, turn, 2, 'display', signal); }
@@ -187,7 +225,11 @@ export class CharacterPipeline {
       display = { parts: transformed.parts, stages: [{ raw: '', afterMacro: '', afterRegex: '', applied: [], errors: [{ id: 'display', message: (error as Error).message }] }] };
     }
     return { ...message, parts: transformed.parts, characterOriginalParts: message.parts, characterDisplayParts: display.parts,
-      characterStages: transformed.stages, characterDisplayStages: display.stages, characterTurn: turn };
+      characterStages: transformed.stages, characterDisplayStages: display.stages, characterTurn: storedTurn };
   }
-  close() { return this.engine.close(); }
+  snapshot(turn: CharacterTurn | undefined) { return turn ? storeCharacterTurn(turn) : undefined; }
+  async close(): Promise<void> {
+    this.preparation.clear();
+    await Promise.all([this.engine.close(), this.vectors.close()]);
+  }
 }

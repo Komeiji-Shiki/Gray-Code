@@ -12,6 +12,7 @@ export const semanticTokens: Record<string, string[]> = {
   border: ['--gc-border-control'], divider: ['--gc-border-subtle'], hover: ['--gc-surface-hover'],
   selection: ['--gc-surface-selected', '--gc-surface-active'], selectionText: ['--gc-text-selected'],
   button: ['--gc-button-primary'], buttonHover: ['--gc-button-primary-hover'], buttonText: ['--gc-text-on-primary'],
+  documentPaper: ['--gc-surface-document'], mediaOverlay: ['--gc-surface-media-overlay'], mediaOverlayText: ['--gc-text-on-media-overlay'],
   buttonSecondary: ['--gc-button-secondary'], buttonSecondaryHover: ['--gc-button-secondary-hover'], buttonSecondaryText: ['--gc-text-on-secondary'],
   danger: ['--gc-danger'], success: ['--gc-success'], warning: ['--gc-warning'],
   scrollbar: ['--gc-scrollbar'], scrollbarHover: ['--gc-scrollbar-hover'],

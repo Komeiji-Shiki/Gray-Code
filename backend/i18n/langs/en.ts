@@ -1,8 +1,28 @@
+import desktopWorkspaceUi from './en/desktopWorkspaceUi';
+import desktopAutomationUi from './en/desktopAutomationUi';
+import desktopBrowserUi from './en/desktopBrowserUi';
+import desktopEditorUi from './en/desktopEditorUi';
+import desktopComputerUi from './en/desktopComputerUi';
+import desktopGeneralUi from './en/desktopGeneralUi';
+import desktopNavigationUi from './en/desktopNavigationUi';
+import desktopDebugUi from './en/desktopDebugUi';
+import desktopFilesUi from './en/desktopFilesUi';
+import desktopGitUi from './en/desktopGitUi';
+import desktopMemoryUi from './en/desktopMemoryUi';
+import desktopNodesUi from './en/desktopNodesUi';
+import desktopResourcesUi from './en/desktopResourcesUi';
+import desktopRunsUi from './en/desktopRunsUi';
+import desktopSearchUi from './en/desktopSearchUi';
+import desktopTerminalUi from './en/desktopTerminalUi';
 /**
  * GrayCode Backend - English Language Pack
  */
 
 import type { BackendLanguageMessages } from '../types';
+import desktopScreenSense from './en/desktopScreenSense';
+import desktopCompanion from './en/desktopCompanion';
+import desktopPets from './en/desktopPets';
+import desktopMaintenance from './en/desktopMaintenance';
 
 const en: BackendLanguageMessages = {
     desktop: {
@@ -75,6 +95,26 @@ const en: BackendLanguageMessages = {
             "saveAllUnavailable": "The editor is unavailable. The app will stay open.",
             "saveAllIncomplete": "Some changes remain unsaved. Resolve them and try again.",
             "shell": {
+                ...desktopScreenSense,
+                ...desktopCompanion,
+                ...desktopPets,
+                ...desktopMaintenance,
+                ...desktopWorkspaceUi,
+                ...desktopAutomationUi,
+                ...desktopBrowserUi,
+                ...desktopEditorUi,
+                ...desktopComputerUi,
+                ...desktopGeneralUi,
+                ...desktopNavigationUi,
+                ...desktopDebugUi,
+                ...desktopFilesUi,
+                ...desktopGitUi,
+                ...desktopMemoryUi,
+                ...desktopNodesUi,
+                ...desktopResourcesUi,
+                ...desktopRunsUi,
+                ...desktopSearchUi,
+                ...desktopTerminalUi,
                 "documentRecoveryConflict": "The file has changed and your draft has been kept. Copy your text, reopen the file, and merge the changes.",
                 "connectionTimeout": "The connection timed out. Check the network and try again.",
                 "initializationFailed": "Workspace initialization failed",
@@ -764,6 +804,7 @@ const en: BackendLanguageMessages = {
                 "key": "Press key",
                 "query": "Query pet",
                 "play": "Play action",
+                "set": "Combined control",
                 "expression": "Set expression",
                 "look": "Look direction",
                 "parameters": "Set parameters",

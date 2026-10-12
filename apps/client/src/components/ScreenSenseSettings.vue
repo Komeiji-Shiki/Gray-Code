@@ -1,70 +1,339 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, reactive, ref } from 'vue';
-import type { ComputerWindows, ScreenSenseConfiguration, ScreenSensePrices, ScreenSenseSnapshot, ScreenSenseTarget } from '@graycode/contracts';
-import { call, subscribe } from '../api';
+import type { ScreenSenseConfiguration, ScreenSenseOptions, ScreenSensePrices, ScreenSenseSnapshot, ScreenSenseTarget } from '@graycode/contracts';
+import { rpc, subscribe } from '../api';
+import { shellText as t } from '../i18n';
+
 const emit = defineEmits<{ close: [] }>();
-const dialog = ref<HTMLDialogElement>(), snapshot = ref<ScreenSenseSnapshot>(), error = ref(''), notice = ref(''), busy = ref(false), confirmClose = ref(false);
-const options = ref<{ targets: ComputerWindows; conversations: { id: string; title: string }[]; providers: { id: string; name: string; model: string; models: { id: string; name?: string }[] }[] }>();
-const form = reactive({ target: '', trigger: '', interval: '', delivery: '', maximum: '', conversationId: '', providerId: '', modelId: '', prompt: '', currency: '', input: '', output: '', cacheRead: '', cacheWrite: '' });
-let saved = '', unsubscribe: (() => void) | undefined, timer: ReturnType<typeof setTimeout> | undefined, sequence = 0;
+const dialog = ref<HTMLDialogElement>();
+const snapshot = ref<ScreenSenseSnapshot>();
+const options = ref<ScreenSenseOptions>();
+const error = ref('');
+const notice = ref('');
+const busy = ref(false);
+const confirmClose = ref(false);
+const form = reactive({
+  target: '', trigger: '' as ScreenSenseConfiguration['trigger'] | '', interval: '',
+  delivery: '' as ScreenSenseConfiguration['delivery'] | '', maximum: '', conversationId: '',
+  visionProviderId: '', visionModelId: '', prompt: '', allowSilent: false,
+  currency: '', input: '', output: '', cacheRead: '', cacheWrite: '',
+});
+let saved = '';
+let unsubscribe: (() => void) | undefined;
+let timer: ReturnType<typeof setTimeout> | undefined;
+let sequence = 0;
 let disposed = false;
 const dirty = computed(() => !!saved && JSON.stringify(form) !== saved);
-const provider = computed(() => options.value?.providers.find(item => item.id === form.providerId));
-const targets = computed(() => options.value ? [...options.value.targets.windows.map(window => ({ key: `window:${window.id}`, label: `${window.title} · PID ${window.processId}`, value: { kind: 'window', window } as ScreenSenseTarget })), ...options.value.targets.displays.map(display => ({ key: `display:${display.id}`, label: `显示器 ${display.id} · ${display.bounds.width} × ${display.bounds.height}`, value: { kind: 'display', display } as ScreenSenseTarget }))] : []);
-const previewUrl = computed(() => { const capture = snapshot.value?.preview?.capture; return capture ? `data:${capture.mimeType};base64,${capture.data}` : ''; });
+const provider = computed(() => options.value?.providers.find(item => item.id === form.visionProviderId));
+const targets = computed(() => options.value ? [
+  ...options.value.targets.windows.map(window => ({
+    key: `window:${window.id}`, label: `${window.title} · PID ${window.processId}`,
+    value: { kind: 'window', window } as ScreenSenseTarget,
+  })),
+  ...options.value.targets.displays.map(display => ({
+    key: `display:${display.id}`, label: t('screenDisplay', { id: display.id, width: display.bounds.width, height: display.bounds.height }),
+    value: { kind: 'display', display } as ScreenSenseTarget,
+  })),
+] : []);
+const previewUrl = computed(() => {
+  const capture = snapshot.value?.preview?.capture;
+  return capture ? `data:${capture.mimeType};base64,${capture.data}` : '';
+});
+
 function loadForm(configuration?: ScreenSenseConfiguration) {
-  if (configuration) Object.assign(form, { target: configuration.target.kind === 'window' ? `window:${configuration.target.window.id}` : `display:${configuration.target.display.id}`, trigger: configuration.trigger, interval: String(configuration.intervalSeconds ?? ''),
-    delivery: configuration.delivery, maximum: String(configuration.maxCaptures), conversationId: configuration.conversationId, providerId: configuration.providerId, modelId: configuration.modelId ?? '', prompt: configuration.prompt,
-    currency: configuration.prices?.currency ?? '', ...Object.fromEntries(['input','output','cacheRead','cacheWrite'].map(key => [key, String(configuration.prices?.[key as keyof ScreenSensePrices] ?? '')])) });
+  if (configuration) Object.assign(form, {
+    target: configuration.target.kind === 'window' ? `window:${configuration.target.window.id}` : `display:${configuration.target.display.id}`,
+    trigger: configuration.trigger, interval: String(configuration.intervalSeconds ?? ''), delivery: configuration.delivery,
+    maximum: String(configuration.maxCaptures), conversationId: configuration.conversationId,
+    visionProviderId: configuration.visionProviderId ?? '', visionModelId: configuration.visionModelId ?? '',
+    prompt: configuration.prompt, allowSilent: configuration.allowSilent === true,
+    currency: configuration.prices?.currency ?? '',
+    ...Object.fromEntries(['input', 'output', 'cacheRead', 'cacheWrite'].map(key => [key,
+      String(configuration.prices?.[key as keyof ScreenSensePrices] ?? ''),
+    ])),
+  });
   saved = JSON.stringify(form);
 }
-async function refresh() { if (disposed) return; const request = ++sequence; const value = await call<ScreenSenseSnapshot>('screenSense.get'); if (disposed || request !== sequence) return; snapshot.value = value; if (!saved) loadForm(value.configuration); }
-async function refreshOptions() { if (disposed) return; const value = await call<NonNullable<typeof options.value>>('screenSense.options'); if (!disposed) options.value = value; }
-async function perform(work: () => Promise<unknown>) { if (disposed || busy.value) return; busy.value = true; error.value = ''; notice.value = ''; try { await work(); if (!disposed) await refresh(); } catch (cause) { if (!disposed) error.value = (cause as Error).message; } finally { if (!disposed) busy.value = false; } }
-// 停止采集独立于慢截图的互斥状态，关闭页面后也不再发起补读。
-async function stop() { try { await call('screenSense.stop'); if (!disposed) await refresh(); } catch (cause) { if (!disposed) error.value = (cause as Error).message; } }
+
+async function refresh() {
+  if (disposed) return;
+  const request = ++sequence;
+  const value = await rpc('screenSense.get');
+  if (disposed || request !== sequence) return;
+  snapshot.value = value;
+  if (!saved) loadForm(value.configuration);
+}
+
+async function refreshOptions() {
+  const value = await rpc('screenSense.options');
+  if (!disposed) options.value = value;
+}
+
+async function perform(work: () => Promise<unknown>) {
+  if (disposed || busy.value) return;
+  busy.value = true;
+  error.value = '';
+  notice.value = '';
+  try {
+    await work();
+    if (!disposed) await refresh();
+  } catch (cause) {
+    if (!disposed) error.value = (cause as Error).message;
+  } finally {
+    if (!disposed) busy.value = false;
+  }
+}
+
+// 停止采集不等待慢截图或识图请求完成，界面关闭后也不再补读。
+async function stop() {
+  try {
+    await rpc('screenSense.stop');
+    if (!disposed) await refresh();
+  } catch (cause) {
+    if (!disposed) error.value = (cause as Error).message;
+  }
+}
+
 async function save() {
   const target = targets.value.find(item => item.key === form.target)?.value;
-  if (!target) throw new Error('请刷新窗口列表并重新选择范围。');
-  const pricing = [form.currency, form.input, form.output, form.cacheRead, form.cacheWrite].map(value => String(value));
-  if (pricing.some(Boolean) && !pricing.every(value => value.trim())) throw new Error('请完整填写参考单价，或清空全部费用估算字段。');
-  const configuration = { target, trigger: form.trigger, intervalSeconds: form.interval ? Number(form.interval) : undefined, delivery: form.delivery,
-    maxCaptures: Number(form.maximum), conversationId: form.conversationId, providerId: form.providerId, modelId: form.modelId || undefined, prompt: form.prompt,
-    ...(pricing.some(Boolean) ? { prices: { currency: form.currency, input: Number(form.input), output: Number(form.output), cacheRead: Number(form.cacheRead), cacheWrite: Number(form.cacheWrite) } } : {}) };
-  const value = await call<ScreenSenseSnapshot>('screenSense.configure', { configuration, revision: snapshot.value?.revision });
+  if (!target) throw new Error(t('screenSelectTargetError'));
+  if (!form.trigger || !form.delivery) throw new Error(t('screenSelectModesError'));
+  const pricing = [form.currency, form.input, form.output, form.cacheRead, form.cacheWrite];
+  if (pricing.some(Boolean) && !pricing.every(value => value.trim())) throw new Error(t('screenPricesError'));
+  const configuration: ScreenSenseConfiguration = {
+    target, trigger: form.trigger, intervalSeconds: form.interval ? Number(form.interval) : undefined, delivery: form.delivery,
+    maxCaptures: Number(form.maximum), conversationId: form.conversationId,
+    visionProviderId: form.visionProviderId, visionModelId: form.visionModelId || undefined,
+    prompt: form.prompt, allowSilent: form.allowSilent,
+    ...(pricing.some(Boolean) ? { prices: {
+      currency: form.currency, input: Number(form.input), output: Number(form.output),
+      cacheRead: Number(form.cacheRead), cacheWrite: Number(form.cacheWrite),
+    } } : {}),
+  };
+  const value = await rpc('screenSense.configure', { configuration, revision: snapshot.value?.revision ?? null });
   if (disposed) return;
-  sequence++; snapshot.value = value; loadForm(value.configuration); notice.value = '已保存。点击开启后才会采集屏幕。';
+  sequence++;
+  snapshot.value = value;
+  loadForm(value.configuration);
+  notice.value = t('screenSaved');
 }
-function close() { if (busy.value) return; if (dirty.value) confirmClose.value = true; else emit('close'); }
-onMounted(() => { dialog.value?.showModal(); void perform(async () => { await refresh(); if (!disposed) await refreshOptions(); }); unsubscribe = subscribe(event => {
-  if (event.type === 'screenSense.changed' || event.type === 'transport.resumed' || event.type === 'event' && /run\.(completed|failed|cancelled|interrupted)/.test(event.event?.type ?? '')) {
-    if (!disposed && !timer) timer = setTimeout(() => { timer = undefined; void refresh().catch(cause => { if (!disposed) error.value = cause.message; }); }, 160);
-  }
-}); });
+
+function close() {
+  if (busy.value) return;
+  if (dirty.value) confirmClose.value = true;
+  else emit('close');
+}
+
+onMounted(() => {
+  dialog.value?.showModal();
+  void perform(async () => { await refresh(); if (!disposed) await refreshOptions(); });
+  unsubscribe = subscribe(event => {
+    if (event.type === 'screenSense.changed' || event.type === 'transport.resumed'
+      || event.type === 'event' && /run\.(completed|failed|cancelled|interrupted)/.test(event.event?.type ?? '')) {
+      if (!disposed && !timer) timer = setTimeout(() => {
+        timer = undefined;
+        void refresh().catch(cause => { if (!disposed) error.value = cause.message; });
+      }, 160);
+    }
+  });
+});
+
 onBeforeUnmount(() => { disposed = true; sequence++; unsubscribe?.(); clearTimeout(timer); });
 </script>
-<template><dialog ref="dialog" class="screen-sense-settings" aria-labelledby="sense-title" @cancel.prevent="close">
-  <header><div><h2 id="sense-title">屏幕感知</h2><p>独立选择采集范围和发送方式，重启后需要重新开启。</p></div><button :disabled="busy" @click="close">关闭</button></header>
-  <div class="sense-content"><p v-if="error" role="alert" class="error">{{ error }}</p><p v-if="notice" role="status">{{ notice }}</p>
-    <section class="sense-current"><strong>{{ snapshot?.status.active ? '本次屏幕感知已开启' : '屏幕感知未开启' }}</strong><p v-if="snapshot?.status.active">{{ snapshot.status.target }} · 已采集 {{ snapshot.status.captures }} / {{ snapshot.status.maxCaptures }} 次<span v-if="snapshot.status.nextCaptureAt"> · 下次 {{ new Date(snapshot.status.nextCaptureAt).toLocaleTimeString() }}</span></p><p v-if="snapshot?.status.error">{{ snapshot.status.error }}</p>
-      <button v-if="snapshot?.status.active" @click="stop">立即停止采集</button>
-      <button v-else :disabled="busy || !snapshot?.configuration || dirty" @click="perform(() => call('screenSense.start'))">开启本次屏幕感知</button>
-      <button v-if="snapshot?.status.active" :disabled="busy || snapshot.status.capturing || snapshot.status.captures >= (snapshot.status.maxCaptures ?? 0)" @click="perform(() => call('screenSense.capture'))">立即采集一次</button>
-      <button v-if="snapshot?.status.lastRunId" @click="perform(() => call('screenSense.cancelRun'))">停止当前屏幕任务</button>
-      <p>停止采集会清除未发送预览；已经发送的交流任务可单独停止。</p>
-    </section>
-    <section v-if="snapshot?.preview" class="sense-preview"><h3>待发送预览 · {{ snapshot.preview.target }}</h3><p>{{ new Date(snapshot.preview.capture.capturedAt).toLocaleString() }} · {{ snapshot.preview.capture.width }} × {{ snapshot.preview.capture.height }}</p><img :src="previewUrl" alt="当前选择范围的屏幕预览"><button :disabled="busy || snapshot.status.capturing" @click="perform(() => call('screenSense.send', { previewId: snapshot!.preview!.id }))">把这张图片发送到所选对话</button></section>
-    <div class="settings-guide"><strong>按用途选择采集方式</strong><p>偶尔询问当前画面可用手动采集、先预览；持续关注进度可用间隔采集。自动发送会直接发起模型任务，较短间隔会增加截图、上下文和请求开销。</p></div>
-    <form @submit.prevent="perform(save)"><fieldset :disabled="busy"><legend>采集与发送设置</legend>
-      <label>采集范围<select v-model="form.target"><option value="">请选择窗口或显示器</option><option v-for="target in targets" :key="target.key" :value="target.key">{{ target.label }}</option></select></label><button type="button" @click="perform(refreshOptions)">刷新窗口列表</button><p>窗口模式仅采集该窗口；显示器模式包含整个所选屏幕。窗口关闭、进程更换或显示器坐标变化后会停止。</p>
-      <div class="sense-grid"><label>触发方式<select v-model="form.trigger"><option value="">请选择</option><option value="manual">手动采集</option><option value="interval">按间隔采集</option></select></label><label v-if="form.trigger === 'interval'">采集间隔（秒）<input v-model="form.interval" type="number" min="1" max="86400" required aria-label="采集间隔"><small class="settings-help">1～86400 秒。变化很快的操作可用较短间隔；关注下载或构建进度可用 30～60 秒，缓慢变化可用几分钟。实际还受上一轮采集及任务状态影响。</small></label><label>发送方式<select v-model="form.delivery"><option value="">请选择</option><option value="preview">先预览，再由我发送</option><option value="automatic">采集后自动发送</option></select></label><label>本次最多采集次数<input v-model="form.maximum" type="number" min="1" max="10000" required aria-label="本次最多采集次数"><small class="settings-help">达到上限后停止继续采集。次数包含预览采集；例如间隔 60 秒、上限 10 次可用于约十分钟的短时观察，实际时长取决于采集耗时。</small></label></div>
-      <label>接收图片的普通对话<select v-model="form.conversationId" required><option value="">请选择</option><option v-for="conversation in options?.conversations" :key="conversation.id" :value="conversation.id">{{ conversation.title }}</option></select></label><div class="sense-grid"><label>渠道<select v-model="form.providerId" required @change="form.modelId = ''"><option value="">请选择</option><option v-for="channel in options?.providers" :key="channel.id" :value="channel.id">{{ channel.name }}</option></select></label><label>模型<select v-model="form.modelId"><option value="">{{ provider?.model || '渠道默认模型' }}</option><option v-for="model in provider?.models" :key="model.id" :value="model.id">{{ model.name || model.id }}</option></select></label></div><label>发送图片时的交流内容<textarea v-model="form.prompt" rows="3" required maxlength="10000" placeholder="写下希望根据画面交流的内容" /></label>
-      <details><summary>费用估算参考单价（可选）</summary><p>按每百万 Token 填写，来源为你填写的参考单价。估算覆盖这些屏幕交流任务的完整上下文与回复；实际费用以渠道账单为准。</p><label>币种<input v-model="form.currency" maxlength="20" placeholder="例如 USD"></label><div class="sense-grid"><label>普通输入<input v-model="form.input" type="number" min="0" step="any"></label><label>输出<input v-model="form.output" type="number" min="0" step="any"></label><label>缓存读取<input v-model="form.cacheRead" type="number" min="0" step="any"></label><label>缓存写入<input v-model="form.cacheWrite" type="number" min="0" step="any"></label></div></details>
-      <button class="primary">保存屏幕感知设置</button><p v-if="snapshot?.status.active">保存更改会停止当前采集，检查设置后可重新开启。</p>
-    </fieldset></form>
-    <section class="sense-history"><h3>最近发送与用量</h3><p v-if="!snapshot?.history.length">尚未通过屏幕感知发送图片。</p><article v-for="record in snapshot?.history" :key="record.id"><strong>{{ record.target }}</strong><p>{{ new Date(record.createdAt).toLocaleString() }} · 任务 {{ record.runId?.slice(0,8) || '尚未确认' }} · {{ record.status || record.error || '等待确认' }}</p><p>渠道报告：输入 {{ record.usage.inputTokens }} / 输出 {{ record.usage.outputTokens }} Token；其中缓存读取 {{ record.usage.cacheReadTokens }}、缓存写入 {{ record.usage.cacheWriteTokens }}。</p><p v-if="record.usage.unknownRequests">{{ record.usage.unknownRequests }} 次请求的完整用量未知。</p><p>{{ record.prices ? `${record.usage.unknownRequests ? '已知部分' : ''}费用估算：${record.usage.estimatedCost?.toFixed(6)} ${record.prices.currency}` : '未填写参考单价，费用未知。' }}</p></article></section>
-  </div><footer v-if="confirmClose"><p>还有未保存的设置。</p><button @click="confirmClose = false">继续编辑</button><button @click="emit('close')">放弃并关闭</button></footer>
-</dialog></template>
+
+<template>
+  <dialog ref="dialog" class="screen-sense-settings" aria-labelledby="sense-title" @cancel.prevent="close">
+    <header>
+      <div><h2 id="sense-title">{{ t('screenTitle') }}</h2><p>{{ t('screenIntro') }}</p></div>
+      <button :disabled="busy" @click="close">{{ t('close') }}</button>
+    </header>
+    <div class="sense-content">
+      <p v-if="error" role="alert" class="error">{{ error }}</p>
+      <p v-if="notice" role="status">{{ notice }}</p>
+      <section class="sense-current">
+        <strong>{{ t(snapshot?.status.active ? 'screenActive' : 'screenInactive') }}</strong>
+        <p v-if="snapshot?.status.active">
+          {{ snapshot.status.target }} · {{ t('screenCaptureCount', { count: snapshot.status.captures, max: snapshot.status.maxCaptures ?? 0 }) }}
+          · {{ t('screenSkipped', { count: snapshot.status.skipped ?? 0 }) }}
+          <span v-if="snapshot.status.nextCaptureAt"> · {{ new Date(snapshot.status.nextCaptureAt).toLocaleTimeString() }}</span>
+        </p>
+        <p v-if="snapshot?.status.error">{{ snapshot.status.error }}</p>
+        <button v-if="snapshot?.status.active" @click="stop">{{ t('screenStop') }}</button>
+        <button v-else :disabled="busy || !snapshot?.configuration || dirty" @click="perform(() => rpc('screenSense.start'))">
+          {{ t('screenStart') }}
+        </button>
+        <button v-if="snapshot?.status.active"
+          :disabled="busy || snapshot.status.capturing || snapshot.status.captures >= (snapshot.status.maxCaptures ?? 0)"
+          @click="perform(() => rpc('screenSense.capture'))">{{ t('screenCapture') }}</button>
+        <button v-if="snapshot?.status.lastRunId" @click="perform(() => rpc('screenSense.cancelRun'))">{{ t('screenCancelRun') }}</button>
+        <p>{{ t('screenStopHelp') }}</p>
+      </section>
+      <section v-if="snapshot?.preview" class="sense-preview">
+        <h3>{{ t('screenPreview') }} · {{ snapshot.preview.target }}</h3>
+        <p>{{ new Date(snapshot.preview.capture.capturedAt).toLocaleString() }}</p>
+        <img :src="previewUrl" :alt="t('screenPreviewAlt')">
+        <p v-if="snapshot.preview.summary">{{ snapshot.preview.summary }}</p>
+        <button :disabled="busy || snapshot.status.capturing"
+          @click="perform(() => rpc('screenSense.send', { previewId: snapshot!.preview!.id }))">{{ t('screenSend') }}</button>
+      </section>
+      <div class="settings-guide"><strong>{{ t('screenPipelineTitle') }}</strong><p>{{ t('screenPipelineHelp') }}</p></div>
+      <form @submit.prevent="perform(save)">
+        <fieldset :disabled="busy">
+          <legend>{{ t('screenSettings') }}</legend>
+          <label>{{ t('screenTarget') }}
+            <select v-model="form.target" required>
+              <option value="">{{ t('screenSelect') }}</option>
+              <option v-for="target in targets" :key="target.key" :value="target.key">{{ target.label }}</option>
+            </select>
+          </label>
+          <button type="button" @click="perform(refreshOptions)">{{ t('screenRefreshTargets') }}</button>
+          <p>{{ t('screenTargetHelp') }}</p>
+          <div class="sense-grid">
+            <label>{{ t('screenTrigger') }}
+              <select v-model="form.trigger" required>
+                <option value="">{{ t('screenSelect') }}</option>
+                <option value="manual">{{ t('screenManual') }}</option>
+                <option value="interval">{{ t('screenInterval') }}</option>
+              </select>
+            </label>
+            <label v-if="form.trigger === 'interval'">{{ t('screenIntervalSeconds') }}
+              <input v-model="form.interval" type="number" min="1" max="86400" required>
+              <small>{{ t('screenIntervalHelp') }}</small>
+            </label>
+            <label>{{ t('screenDelivery') }}
+              <select v-model="form.delivery" required>
+                <option value="">{{ t('screenSelect') }}</option>
+                <option value="preview">{{ t('screenPreviewFirst') }}</option>
+                <option value="automatic">{{ t('screenAutomatic') }}</option>
+              </select>
+            </label>
+            <label>{{ t('screenMaximum') }}
+              <input v-model="form.maximum" type="number" min="1" max="10000" required>
+              <small>{{ t('screenMaximumHelp') }}</small>
+            </label>
+          </div>
+          <label>{{ t('screenConversation') }}
+            <select v-model="form.conversationId" required>
+              <option value="">{{ t('screenSelect') }}</option>
+              <option v-for="conversation in options?.conversations" :key="conversation.id" :value="conversation.id">{{ conversation.title }}</option>
+            </select>
+          </label>
+          <div class="sense-grid">
+            <label>{{ t('screenVisionProvider') }}
+              <select v-model="form.visionProviderId" required @change="form.visionModelId = ''">
+                <option value="">{{ t('screenSelect') }}</option>
+                <option v-for="channel in options?.providers" :key="channel.id" :value="channel.id">{{ channel.name }}</option>
+              </select>
+            </label>
+            <label>{{ t('screenVisionModel') }}
+              <select v-model="form.visionModelId">
+                <option value="">{{ provider?.model || t('screenProviderDefault') }}</option>
+                <option v-for="model in provider?.models" :key="model.id" :value="model.id">{{ model.name || model.id }}</option>
+              </select>
+            </label>
+          </div>
+          <p>{{ t('screenModelHelp') }}</p>
+          <label>{{ t('screenPrompt') }}<textarea v-model="form.prompt" rows="3" required maxlength="10000" /></label>
+          <label class="check"><input v-model="form.allowSilent" type="checkbox">{{ t('screenAllowSilent') }}</label>
+          <details>
+            <summary>{{ t('screenPriceTitle') }}</summary><p>{{ t('screenPriceHelp') }}</p>
+            <label>{{ t('screenCurrency') }}<input v-model="form.currency" maxlength="20" placeholder="USD"></label>
+            <div class="sense-grid">
+              <label>{{ t('screenInput') }}<input v-model="form.input" type="number" min="0" step="any"></label>
+              <label>{{ t('screenOutput') }}<input v-model="form.output" type="number" min="0" step="any"></label>
+              <label>{{ t('screenCacheRead') }}<input v-model="form.cacheRead" type="number" min="0" step="any"></label>
+              <label>{{ t('screenCacheWrite') }}<input v-model="form.cacheWrite" type="number" min="0" step="any"></label>
+            </div>
+          </details>
+          <button class="primary">{{ t('screenSave') }}</button>
+          <p v-if="snapshot?.status.active">{{ t('screenSaveHelp') }}</p>
+        </fieldset>
+      </form>
+      <section class="sense-history">
+        <h3>{{ t('screenHistory') }}</h3><p v-if="!snapshot?.history.length">{{ t('screenEmptyHistory') }}</p>
+        <article v-for="record in snapshot?.history" :key="record.id">
+          <strong>{{ record.target }}</strong>
+          <p>{{ new Date(record.createdAt).toLocaleString() }} · {{ record.silent ? t('screenSilent') : record.status || record.error }}</p>
+          <p v-if="record.summary">{{ record.summary }}</p>
+          <p>{{ t(record.visionUsage ? 'screenVisionUsage' : 'screenMainUsage', {
+            input: record.usage.inputTokens, output: record.usage.outputTokens,
+            read: record.usage.cacheReadTokens, write: record.usage.cacheWriteTokens,
+          }) }}</p>
+          <p v-if="record.mainUsage?.requests">{{ t('screenMainUsage', {
+            input: record.mainUsage.inputTokens, output: record.mainUsage.outputTokens,
+            read: record.mainUsage.cacheReadTokens, write: record.mainUsage.cacheWriteTokens,
+          }) }}</p>
+          <p v-if="record.usage.unknownRequests || record.mainUsage?.unknownRequests">
+            {{ t('screenUnknownUsage', { count: record.usage.unknownRequests + (record.mainUsage?.unknownRequests ?? 0) }) }}
+          </p>
+          <p v-if="record.prices">{{ t('screenEstimatedCost', { cost: record.usage.estimatedCost?.toFixed(6) ?? '—', currency: record.prices.currency }) }}</p>
+        </article>
+      </section>
+    </div>
+    <footer v-if="confirmClose">
+      <p>{{ t('screenUnsaved') }}</p>
+      <button @click="confirmClose = false">{{ t('screenContinueEditing') }}</button>
+      <button @click="emit('close')">{{ t('screenDiscard') }}</button>
+    </footer>
+  </dialog>
+</template>
+
 <style scoped>
-.screen-sense-settings{width:min(800px,calc(100vw - 20px));height:min(820px,calc(100dvh - 30px));padding:0;border:1px solid var(--gc-border-subtle);border-radius:var(--gc-radius-md);background:var(--gc-surface-base);color:var(--gc-text-primary);box-sizing:border-box;overflow:hidden}.screen-sense-settings[open]{display:flex;flex-direction:column}.screen-sense-settings::backdrop{background:#0009}header,footer{padding:16px 20px;border-bottom:1px solid var(--gc-border-subtle)}header>button{flex-shrink:0;white-space:nowrap;align-self:flex-start}header{display:flex;justify-content:space-between;gap:20px}h2,h3{margin:0;font-weight:500}h2{font-size:18px}h3{font-size:14px}p{font-size:12px;line-height:1.7;color:var(--gc-text-muted)}header p{margin-bottom:0}.sense-content{overflow:auto;padding:20px;min-height:0;flex:1}.sense-content>p[role]{position:sticky;top:0;z-index:1;padding:10px;background:var(--gc-surface-raised);border:1px solid var(--gc-border-subtle)}.sense-grid{display:grid;grid-template-columns:1fr 1fr;gap:0 18px}label{display:flex;flex-direction:column;gap:6px;min-width:0;font-size:12px;margin:12px 0}button,input,select,textarea{font:inherit;border:1px solid var(--gc-border-control);border-radius:var(--gc-radius-sm);background:var(--gc-surface-sunken);color:var(--gc-text-primary);padding:7px 9px;min-width:0;box-sizing:border-box}button{cursor:pointer;font-size:12px}button+button{margin-left:8px}button:disabled{opacity:.5;cursor:default}fieldset{margin:22px 0;padding:16px;border:1px solid var(--gc-border-subtle);min-width:0}legend{padding:0 6px}summary{cursor:pointer;font-size:13px}details{margin:20px 0}.primary{background:var(--gc-button-primary);color:var(--gc-text-on-primary)}.sense-current,.sense-preview,article{padding:14px 0;border-bottom:1px solid var(--gc-border-subtle)}.sense-preview img{width:100%;max-height:360px;object-fit:contain;display:block;border:1px solid var(--gc-border-subtle);background:var(--gc-surface-sunken);margin:12px 0}.sense-history p{overflow-wrap:anywhere}.error{color:var(--gc-danger)}footer{border-top:1px solid var(--gc-border-subtle)}@media(max-width:600px){.sense-grid{grid-template-columns:1fr}.sense-content{padding:12px}header{padding:12px}.sense-current button{margin:4px 8px 4px 0}fieldset{padding:12px}}
+.screen-sense-settings {
+  width: min(800px, calc(100vw - 20px));
+  height: min(820px, calc(100dvh - 30px));
+  padding: 0;
+  border: 1px solid var(--gc-border-subtle);
+  border-radius: 0;
+  background: var(--gc-surface-base);
+  color: var(--gc-text-primary);
+  box-sizing: border-box;
+  overflow: hidden;
+}
+.screen-sense-settings[open] { display: flex; flex-direction: column; }
+.screen-sense-settings::backdrop { background: var(--gc-backdrop); }
+header, footer { padding: 16px 20px; border-bottom: 1px solid var(--gc-border-subtle); }
+header { display: flex; justify-content: space-between; gap: 20px; }
+header > button { flex-shrink: 0; white-space: nowrap; align-self: flex-start; }
+h2, h3 { margin: 0; font-weight: 500; }
+h2 { font-size: 18px; }
+h3 { font-size: 14px; }
+p, small { font-size: 12px; line-height: 1.7; color: var(--gc-text-muted); }
+header p { margin-bottom: 0; }
+.sense-content { overflow: auto; padding: 20px; min-height: 0; flex: 1; }
+.sense-content > p[role] { position: sticky; top: 0; z-index: 1; padding: 10px; background: var(--gc-surface-raised); }
+.sense-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 0 18px; }
+label { display: flex; flex-direction: column; gap: 6px; min-width: 0; font-size: 12px; margin: 12px 0; }
+label.check { flex-direction: row; align-items: center; }
+button, input, select, textarea {
+  font: inherit;
+  border: 1px solid var(--gc-border-control);
+  border-radius: var(--gc-radius-sm);
+  background: var(--gc-surface-sunken);
+  color: var(--gc-text-primary);
+  padding: 7px 9px;
+  min-width: 0;
+  box-sizing: border-box;
+}
+button { cursor: pointer; font-size: 12px; }
+button + button { margin-left: 8px; }
+button:disabled { opacity: .5; cursor: default; }
+fieldset { margin: 22px 0; padding: 16px; border: 1px solid var(--gc-border-subtle); min-width: 0; }
+legend { padding: 0 6px; }
+summary { cursor: pointer; font-size: 13px; }
+details { margin: 20px 0; }
+.primary { background: var(--gc-button-primary); color: var(--gc-text-on-primary); }
+.sense-current, .sense-preview, article { padding: 14px 0; border-bottom: 1px solid var(--gc-border-subtle); }
+.sense-preview img {
+  width: 100%; max-height: 360px; object-fit: contain; display: block;
+  background: var(--gc-surface-sunken); margin: 12px 0;
+}
+.sense-history p { overflow-wrap: anywhere; }
+.error { color: var(--gc-danger); }
+footer { border-top: 1px solid var(--gc-border-subtle); }
+@media (max-width: 600px) {
+  .sense-grid { grid-template-columns: 1fr; }
+  .sense-content, header, fieldset { padding: 12px; }
+  .sense-current button { margin: 4px 8px 4px 0; }
+}
 </style>

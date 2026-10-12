@@ -57,6 +57,10 @@
   --gc-surface-panel: var(--vscode-sideBar-background, var(--gc-surface-base));
   --gc-surface-raised: var(--vscode-editorWidget-background, var(--gc-surface-panel));
   --gc-surface-overlay: var(--vscode-editorWidget-background, var(--gc-surface-raised));
+  --gc-backdrop: color-mix(in srgb, var(--gc-surface-base) 70%, transparent);
+  --gc-surface-document: var(--gc-surface-base);
+  --gc-surface-media-overlay: var(--gc-surface-chrome);
+  --gc-text-on-media-overlay: var(--gc-text-on-chrome);
   --gc-surface-sunken: var(--vscode-textCodeBlock-background, color-mix(in srgb, var(--gc-surface-base) 80%, #000));
   --gc-surface-input: var(--vscode-input-background, var(--gc-surface-raised));
   --gc-surface-muted: color-mix(in srgb, var(--gc-text-primary) 5%, var(--gc-surface-raised));

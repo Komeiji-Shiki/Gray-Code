@@ -1,28 +1,43 @@
 import { createHash, randomUUID } from 'node:crypto';
 import sharp from 'sharp';
-import type { PetImport, PetResource, RecordMutation } from '@graycode/contracts';
+import {
+  PET_SPRITE_CELL_HEIGHT, PET_SPRITE_CELL_WIDTH, type PetImport, type PetResource,
+  type PetResourceAnnotation, type RecordMutation,
+} from '@graycode/contracts';
 import type { PlatformStorage } from '@graycode/core';
 import { live2dReferences, petAnimations, petAssetPath } from '../../../../shared/petFormat';
 
 const infoNamespace = 'pet-resource';
 const fileNamespace = 'pet-resource-file';
 const hash = (bytes: Uint8Array) => createHash('sha256').update(bytes).digest('hex');
-const mimeTypes: Record<string, string> = { png: 'image/png', webp: 'image/webp', jpg: 'image/jpeg', jpeg: 'image/jpeg', json: 'application/json', moc3: 'application/octet-stream', wav: 'audio/wav', mp3: 'audio/mpeg' };
+const mimeTypes: Record<string, string> = {
+  png: 'image/png', webp: 'image/webp', jpg: 'image/jpeg', jpeg: 'image/jpeg',
+  json: 'application/json', moc3: 'application/octet-stream', wav: 'audio/wav', mp3: 'audio/mpeg',
+};
 function json(bytes: Uint8Array, name: string): Record<string, any> {
-  try { const value = JSON.parse(Buffer.from(bytes).toString('utf8')); if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error(); return value; }
-  catch { throw new Error(`${name} 不是有效的 JSON 对象。`); }
+  try {
+    const value = JSON.parse(Buffer.from(bytes).toString('utf8'));
+    if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error();
+    return value;
+  } catch {
+    throw new Error(`${name} 不是有效的 JSON 对象。`);
+  }
 }
 export class PetResources {
   constructor(private readonly storage: PlatformStorage) {}
   async list(): Promise<PetResource[]> {
-    return (await Promise.all((await this.storage.listRecords(infoNamespace)).map(id => this.storage.getRecord(infoNamespace, id)))).filter(Boolean) as PetResource[];
+    const ids = await this.storage.listRecords(infoNamespace);
+    const records = await Promise.all(ids.map(id => this.storage.getRecord(infoNamespace, id)));
+    return records.filter(Boolean) as PetResource[];
   }
   async get(id: string): Promise<PetResource> {
     const info = await this.storage.getRecord(infoNamespace, id) as PetResource | null;
-    if (!info) throw new Error('桌宠资源不存在。'); return info;
+    if (!info) throw new Error('桌宠资源不存在。');
+    return info;
   }
   async file(id: string, name: string) {
-    const info = await this.get(id); const meta = info.files.find(file => file.path === name);
+    const info = await this.get(id);
+    const meta = info.files.find(file => file.path === name);
     if (!meta) throw new Error('资源文件不存在。');
     const record = await this.storage.getRecord(fileNamespace, `${id}/${name}`) as { bytes: Uint8Array } | null;
     if (!record || hash(record.bytes) !== meta.sha256) throw new Error('资源文件缺失或校验不一致。');
@@ -30,76 +45,174 @@ export class PetResources {
   }
   async bundle(id: string): Promise<PetImport> {
     const info = await this.get(id);
-    return { entry: info.entry, name: info.name, source: info.source, license: info.license,
-      files: await Promise.all(info.files.map(async file => ({ path: file.path, data: Buffer.from((await this.file(id, file.path)).bytes).toString('base64') }))) };
+    return {
+      entry: info.entry, name: info.name, source: info.source, license: info.license,
+      files: await Promise.all(info.files.map(async file => ({
+        path: file.path, data: Buffer.from((await this.file(id, file.path)).bytes).toString('base64'),
+      }))),
+    };
+  }
+  async annotate(input: PetResourceAnnotation): Promise<PetResource> {
+    const info = structuredClone(await this.get(input.id));
+    const description = (value: string, limit = 1000) => {
+      if (typeof value !== 'string' || value.length > limit) throw new Error(`描述最多 ${limit} 个字符。`);
+      return value.trim();
+    };
+    if (input.description !== undefined) info.description = description(input.description, 4000);
+    for (const field of ['actions', 'expressions'] as const) {
+      const annotations = input[field];
+      if (annotations === undefined) continue;
+      if (annotations.length > info[field].length) throw new Error('动作或表情标注无效。');
+      const seen = new Set<string>();
+      for (const annotation of annotations) {
+        const item = annotation && info[field].find(item => item.id === annotation.id);
+        if (!item || seen.has(annotation.id)) throw new Error('动作或表情不存在，或标注重复。');
+        seen.add(annotation.id);
+        item.description = description(annotation.description);
+      }
+    }
+    if (input.hitAreas !== undefined) {
+      if (input.hitAreas.length > (info.hitAreas?.length ?? 0)) throw new Error('点击区域设置无效。');
+      const seen = new Set<string>();
+      for (const annotation of input.hitAreas) {
+        const area = annotation && info.hitAreas?.find(area => area.id === annotation.id);
+        if (!area || seen.has(annotation.id) || annotation.motion && !info.actions.some(action => action.id === annotation.motion)) {
+          throw new Error('点击区域或指定动作不存在，或设置重复。');
+        }
+        seen.add(annotation.id);
+        if (annotation.motion) area.motion = annotation.motion;
+        else delete area.motion;
+      }
+    }
+    await this.storage.putRecord({ namespace: infoNamespace, id: info.id, value: info });
+    return info;
   }
   async import(input: PetImport) {
-    if (!input || !Array.isArray(input.files) || !input.files.length || input.files.length > 2000) throw new Error('请选择桌宠资源目录中的清单及引用文件。');
-    const entry = petAssetPath(input.entry); const uploaded = new Map<string, Buffer>(); let total = 0;
+    if (!input.files.length || input.files.length > 2000) {
+      throw new Error('请选择桌宠资源目录中的清单及引用文件。');
+    }
+    const entry = petAssetPath(input.entry);
+    const uploaded = new Map<string, Buffer>();
+    let total = 0;
     for (const file of input.files) {
       const name = petAssetPath(file.path);
       if (uploaded.has(name)) throw new Error(`文件路径重复：${name}`);
-      if (typeof file.data !== 'string' || file.data.length > 90 * 1024 * 1024 || !/^[A-Za-z0-9+/]*={0,2}$/.test(file.data)) throw new Error(`资源内容无效：${name}`);
-      const bytes = Buffer.from(file.data, 'base64'); total += bytes.length;
+      if (typeof file.data !== 'string' || file.data.length > 90 * 1024 * 1024 || !/^[A-Za-z0-9+/]*={0,2}$/.test(file.data)) {
+        throw new Error(`资源内容无效：${name}`);
+      }
+      const bytes = Buffer.from(file.data, 'base64');
+      total += bytes.length;
       if (total > 128 * 1024 * 1024) throw new Error('一次导入的资源总量不能超过 128 MiB。');
       uploaded.set(name, bytes);
     }
-    const take = (name: string) => { const bytes = uploaded.get(name); if (!bytes) throw new Error(`缺少引用文件：${name}`); return bytes; };
-    const raw = json(take(entry), entry); const selected = new Set([entry]);
+    const take = (name: string) => {
+      const bytes = uploaded.get(name);
+      if (!bytes) throw new Error(`缺少引用文件：${name}`);
+      return bytes;
+    };
+    const raw = json(take(entry), entry);
+    const selected = new Set([entry]);
     const now = Date.now();
-    const info: PetResource = { id: randomUUID(), kind: raw.spritesheetPath ? 'sprite' : 'live2d', name: String(input.name || raw.displayName || entry.split('/').at(-1)).trim().slice(0, 120),
-      description: String(raw.description ?? '').slice(0, 4000), entry, source: String(input.source ?? '').slice(0, 4000), license: String(input.license ?? '').slice(0, 8000), sha256: '', createdAt: now, files: [], actions: [], expressions: [] };
+    const info: PetResource = {
+      id: randomUUID(), kind: raw.spritesheetPath ? 'sprite' : 'live2d',
+      name: String(input.name || raw.displayName || entry.split('/').at(-1)).trim().slice(0, 120),
+      description: String(raw.description ?? '').slice(0, 4000), entry, source: String(input.source ?? '').slice(0, 4000),
+      license: String(input.license ?? '').slice(0, 8000), sha256: '', createdAt: now, files: [], actions: [], expressions: [],
+    };
     if (info.kind === 'sprite') {
       const version = raw.spriteVersionNumber ?? 1;
       if (version !== 1 && version !== 2) throw new Error('目前支持 Codex 桌宠清单版本 1 和 2。');
-      const atlas = petAssetPath(entry, raw.spritesheetPath); selected.add(atlas);
-      const bytes = take(atlas); const height = version === 2 ? 2288 : 1872;
-      const decoded = sharp(bytes, { limitInputPixels: 1536 * 2288, failOn: 'error' }); const metadata = await decoded.metadata();
-      if (!['png', 'webp'].includes(metadata.format ?? '') || metadata.width !== 1536 || metadata.height !== height || !metadata.hasAlpha || (metadata.pages ?? 1) !== 1) throw new Error(`版本 ${version} 图集需要透明 PNG/WebP，尺寸为 1536 × ${height}，且不能是动画图片。`);
+      const atlas = petAssetPath(entry, raw.spritesheetPath);
+      selected.add(atlas);
+      const bytes = take(atlas);
+      const height = version === 2 ? 2288 : 1872;
+      const decoded = sharp(bytes, { limitInputPixels: 1536 * 2288, failOn: 'error' });
+      const metadata = await decoded.metadata();
+      if (!['png', 'webp'].includes(metadata.format ?? '') || metadata.width !== 1536 || metadata.height !== height ||
+        !metadata.hasAlpha || (metadata.pages ?? 1) !== 1) {
+        throw new Error(`版本 ${version} 图集需要透明 PNG/WebP，尺寸为 1536 × ${height}，且不能是动画图片。`);
+      }
       const pixels = await decoded.toColourspace('srgb').ensureAlpha().raw().toBuffer();
       const occupied = (row: number, column: number) => {
-        for (let y = row * 208; y < (row + 1) * 208; y++) for (let x = column * 192; x < (column + 1) * 192; x++) if (pixels[(y * 1536 + x) * 4 + 3]! > 0) return true;
+        for (let y = row * PET_SPRITE_CELL_HEIGHT; y < (row + 1) * PET_SPRITE_CELL_HEIGHT; y++) {
+          for (let x = column * PET_SPRITE_CELL_WIDTH; x < (column + 1) * PET_SPRITE_CELL_WIDTH; x++) {
+            if (pixels[(y * 1536 + x) * 4 + 3]! > 0) return true;
+          }
+        }
         return false;
       };
-      for (let row = 0; row < height / 208; row++) for (let col = 0; col < 8; col++) {
-        const required = row >= 9 || col < petAnimations[row]!.frames || version === 2 && row === 0 && col === 6;
-        if (required && !occupied(row, col)) throw new Error(`图集第 ${row + 1} 行、第 ${col + 1} 格没有图像。`);
-        if (!required && !(row === 0 && col === 6) && occupied(row, col)) throw new Error(`图集未使用的第 ${row + 1} 行、第 ${col + 1} 格应当透明。`);
+      for (let row = 0; row < height / PET_SPRITE_CELL_HEIGHT; row++) {
+        for (let col = 0; col < 8; col++) {
+          const required = row >= 9 || col < petAnimations[row]!.frames || version === 2 && row === 0 && col === 6;
+          if (required && !occupied(row, col)) throw new Error(`图集第 ${row + 1} 行、第 ${col + 1} 格没有图像。`);
+          if (!required && !(row === 0 && col === 6) && occupied(row, col)) {
+            throw new Error(`图集未使用的第 ${row + 1} 行、第 ${col + 1} 格应当透明。`);
+          }
+        }
       }
       info.sprite = { version, atlas, width: 1536, height, neutral: occupied(0, 6) };
-      info.actions = petAnimations.map(action => ({ id: action.id, name: action.name, durationMs: action.frames * 125 }));
+      info.actions = petAnimations.map(action => ({
+        id: action.id, name: action.name, description: action.name, durationMs: action.frames * 125,
+      }));
     } else {
-      for (const reference of live2dReferences(raw)) { const name = petAssetPath(entry, reference); take(name); selected.add(name); }
+      for (const reference of live2dReferences(raw)) {
+        const name = petAssetPath(entry, reference);
+        take(name);
+        selected.add(name);
+      }
       const moc = take(petAssetPath(entry, raw.FileReferences.Moc));
       if (moc.subarray(0, 4).toString('ascii') !== 'MOC3') throw new Error('模型的 moc3 文件头无效。');
       for (const texture of raw.FileReferences.Textures) {
         const metadata = await sharp(take(petAssetPath(entry, texture)), { limitInputPixels: 64 * 1024 * 1024 }).metadata();
-        if (!['png', 'jpeg', 'webp'].includes(metadata.format ?? '') || (metadata.pages ?? 1) !== 1) throw new Error('Live2D 纹理格式不支持。');
+        if (!['png', 'jpeg', 'webp'].includes(metadata.format ?? '') || (metadata.pages ?? 1) !== 1) {
+          throw new Error('Live2D 纹理格式不支持。');
+        }
       }
       for (const [group, motions] of Object.entries(raw.FileReferences.Motions ?? {}) as [string, Record<string, any>[]][]) {
         motions.forEach((motion, index) => {
           const definition = json(take(petAssetPath(entry, motion.File)), motion.File);
           if (definition.Version !== 3 || !Array.isArray(definition.Curves)) throw new Error(`动作文件无效：${motion.File}`);
           const seconds = definition.Meta?.Duration;
-          info.actions.push({ id: `${group}/${index}`, name: `${group} · ${motion.File.split('/').at(-1)}`, group, index,
-            ...(typeof seconds === 'number' && Number.isFinite(seconds) && seconds > 0 ? { durationMs: Math.round(seconds * 1000) } : {}) });
+          info.actions.push({
+            id: `${group}/${index}`, name: `${group} · ${motion.File.split('/').at(-1)}`, group, index,
+            ...(typeof seconds === 'number' && Number.isFinite(seconds) && seconds > 0 ? { durationMs: Math.round(seconds * 1000) } : {}),
+          });
         });
       }
       for (const expression of raw.FileReferences.Expressions ?? []) {
-        if (typeof expression.Name !== 'string' || info.expressions.some(item => item.id === expression.Name)) throw new Error('模型表情名称无效或重复。');
+        if (typeof expression.Name !== 'string' || info.expressions.some(item => item.id === expression.Name)) {
+          throw new Error('模型表情名称无效或重复。');
+        }
         const definition = json(take(petAssetPath(entry, expression.File)), expression.File);
         if (!Array.isArray(definition.Parameters)) throw new Error(`表情文件无效：${expression.File}`);
         info.expressions.push({ id: expression.Name, name: expression.Name });
       }
+      const hitAreas = raw.HitAreas ?? [];
+      if (!Array.isArray(hitAreas) || hitAreas.some(area => !area || typeof area.Id !== 'string' || typeof area.Name !== 'string')) {
+        throw new Error('模型点击区域无效。');
+      }
+      info.hitAreas = hitAreas.map(area => ({ id: area.Id, name: area.Name }));
     }
-    info.files = [...selected].sort().map(name => { const bytes = take(name); return { path: name, bytes: bytes.length, sha256: hash(bytes), mimeType: mimeTypes[name.split('.').at(-1)!.toLowerCase()] ?? 'application/octet-stream' }; });
+    info.files = [...selected].sort().map(name => {
+      const bytes = take(name);
+      return {
+        path: name, bytes: bytes.length, sha256: hash(bytes),
+        mimeType: mimeTypes[name.split('.').at(-1)!.toLowerCase()] ?? 'application/octet-stream',
+      };
+    });
     info.sha256 = hash(Buffer.from(JSON.stringify(info.files)));
-    const records: RecordMutation[] = info.files.map(file => ({ namespace: fileNamespace, id: `${info.id}/${file.path}`, expectedRevision: null, value: { bytes: new Uint8Array(take(file.path)) } }));
+    const records: RecordMutation[] = info.files.map(file => ({
+      namespace: fileNamespace, id: `${info.id}/${file.path}`, expectedRevision: null, value: { bytes: new Uint8Array(take(file.path)) },
+    }));
     records.push({ namespace: infoNamespace, id: info.id, expectedRevision: null, value: info });
-    await this.storage.commitRecords(records); return info;
+    await this.storage.commitRecords(records);
+    return info;
   }
   async remove(id: string) {
     const info = await this.get(id);
-    await this.storage.commitRecords([{ namespace: infoNamespace, id, delete: true }, ...info.files.map(file => ({ namespace: fileNamespace, id: `${id}/${file.path}`, delete: true as const }))]);
+    await this.storage.commitRecords([
+      { namespace: infoNamespace, id, delete: true },
+      ...info.files.map(file => ({ namespace: fileNamespace, id: `${id}/${file.path}`, delete: true as const })),
+    ]);
   }
 }

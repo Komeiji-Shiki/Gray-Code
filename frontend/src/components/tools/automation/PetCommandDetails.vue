@@ -13,7 +13,14 @@ const hasAngle = computed(() => Object.prototype.hasOwnProperty.call(props.value
   <section v-if="Object.keys(value).length" class="automation-section pet-command">
     <div class="automation-section-title"><h4>{{ title }}</h4></div>
     <div class="automation-item-head"><span class="automation-badge">{{ actionLabel(value.action) }}</span><strong v-if="value.id">{{ text(value.id) }}</strong></div>
-    <dl v-if="duration !== undefined || hasAngle || value.actorId" class="automation-fields">
+    <dl v-if="duration !== undefined || hasAngle || value.actorId || value.motion || value.expression !== undefined" class="automation-fields">
+      <div v-if="value.motion">
+        <dt>{{ t('components.tools.automation.petActions') }}</dt><dd><code>{{ text(value.motion) }}</code></dd>
+      </div>
+      <div v-if="value.expression !== undefined">
+        <dt>{{ t('components.tools.automation.expressions') }}</dt>
+        <dd><code>{{ value.expression === null ? t('components.tools.structured.empty') : text(value.expression) }}</code></dd>
+      </div>
       <div v-if="duration !== undefined"><dt>{{ t('components.tools.automation.duration') }}</dt><dd>{{ duration }} ms</dd></div>
       <div v-if="hasAngle"><dt>{{ t('components.tools.automation.lookAngle') }}</dt><dd>{{ value.angle === null ? t('components.tools.automation.front') : `${text(value.angle)}°` }}</dd></div>
       <div v-if="value.actorId"><dt>{{ t('components.tools.automation.controller') }}</dt><dd>{{ text(value.actorId) }}<div v-if="value.runId" class="automation-code">{{ text(value.runId) }}</div></dd></div>

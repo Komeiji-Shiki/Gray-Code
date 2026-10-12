@@ -58,7 +58,7 @@ const ivory: Record<string, string> = {
   danger: '#b3413a', success: '#3d7a52', warning: '#8a6015', scrollbar: '#7a7d8a40', scrollbarHover: '#5f627080',
 };
 
-export const PALETTE_KEYS: readonly string[] = Object.keys(ivory);
+export const PALETTE_KEYS: readonly string[] = Object.keys(resolveAppearancePalette('light'));
 
 export function resolvePaletteName(theme: AppearanceSettings['theme'] = 'dark', systemLight = false, darkPalette?: unknown): DarkPaletteId | 'ivory' {
   return resolveAppearanceTheme(theme, systemLight) === 'light' ? 'ivory' : resolveDarkPalette(darkPalette);
@@ -66,7 +66,8 @@ export function resolvePaletteName(theme: AppearanceSettings['theme'] = 'dark', 
 
 export function resolveAppearancePalette(theme: AppearanceSettings['theme'] = 'dark', colors: Record<string, string> = {}, systemLight = false, darkPalette?: unknown): Record<string, string> {
   const name = resolvePaletteName(theme, systemLight, darkPalette);
-  return { ...(name === 'ivory' ? ivory : darkPalettes[name]), ...colors };
+  return { documentPaper: '#ffffff', mediaOverlay: '#00000099', mediaOverlayText: '#ffffff',
+    ...(name === 'ivory' ? ivory : darkPalettes[name]), ...colors };
 }
 
 export const SYNTAX_ROLES = ['keyword', 'string', 'number', 'function', 'type', 'comment', 'variable', 'property', 'tag', 'attribute', 'regexp', 'operator', 'constant'] as const;

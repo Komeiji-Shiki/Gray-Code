@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import type { ConversationState, PlatformConversation } from '@graycode/contracts';
 import { estimateModelInputTokens } from '../model/usage';
 import { withDependencyRuntime } from '../../../../backend/modules/dependencies/runtime';
-import type { CharacterTurn } from '../characters/pipeline';
+import { restoreCharacterTurn } from '../characters/snapshot';
 import type { PlatformApplication } from '../application';
 import type { ClientSession } from '../transport/router';
 import type { ProductSettingsDraft } from '../settings/product';
@@ -22,12 +22,13 @@ export async function previewPrompt(app: PlatformApplication, client: ClientSess
   const request = { ...chatRunInput(client, data, preferences, conversation, `prompt-preview:${randomUUID()}`), message: chatUserMessage(data) };
   const prepared = await app.runtime.preview(request, state ? { state, commit: {} } : undefined, { clientId: client.clientId });
   const projected = await withDependencyRuntime(app.dependencies, () => app.modelAdapter.preview(prepared.input));
-  const turn = prepared.input.turnContext?.characterTurn as CharacterTurn | undefined;
+  const turn = restoreCharacterTurn(prepared.input.turnContext?.characterTurn);
   const companion = prepared.input.turnContext?.companionTurn;
   const textTokens = estimateModelInputTokens(prepared.input);
   const notices = [...prepared.notices];
   if (!data.conversationId && !workspaceId) notices.push('当前还没有保存对话，发送时自动创建的会话目录会补充到工作区信息中。');
   if (turn) notices.push('角色和世界书按当前输入重新激活；含概率或时效条件的条目，在正式发送时可能变化。');
+  if (turn?.activation.vectorError) notices.push(turn.activation.vectorError);
   const memory=prepared.input.turnContext?.longMemory as {references?:unknown[];estimatedTokens?:number;method?:string;embeddingError?:string}|undefined;
   if(memory?.embeddingError)notices.push(memory.embeddingError);
   return { ...projected, createdAt: now, estimatedTokens: textTokens, notices,

@@ -66,7 +66,7 @@ export class PlatformPromptService {
       : contextRecovery ? ['context_history', 'context_notes'] : isSubagent ? [] : ['context_history'])];
     if (isSubagent) return {
       systemPrompt: input.agent.systemPrompt,
-      toolNames: [...new Set([...input.agent.toolNames, ...contextToolNames])],
+      toolNames: [...new Set([...input.agent.toolNames.filter(name => name !== 'pet_control'), ...contextToolNames])],
       turnContext: { contextManagementMethod, contextUserMessageRetention },
       ...(useContextNotes || failure ? { promptContext: { historyPlacement: 'entry' as const,
         beforeHistoryMessages: (useContextNotes ? [{ role: 'user', parts: [{ text: CONTEXT_NOTES_GUIDANCE }] }] : []) as PlatformMessage[],
@@ -113,7 +113,12 @@ export class PlatformPromptService {
       }
     }
     const source = 'message' in input.request ? input.request.message : undefined;
-    const characterTurn = await this.app.characterPipeline.capture(conversation, input.history, source, input.previousTurn, input.signal);
+    const characterTurn = await this.app.characterPipeline.capture(conversation, input.history, source, input.previousTurn, input.signal, {
+      actorId: input.actor.id,
+      channel: contextChannel ?? undefined,
+      modelOverride: input.request.modelOverride ?? input.agent.modelId,
+      preview: input.preview,
+    });
     const companionTurn = await this.app.companion.capture(input.actor.id, conversation, input.previousTurn);
     input.signal?.throwIfAborted();
     const characterSource = source && characterTurn ? await this.app.characterPipeline.transformParts(source.parts, characterTurn, 1, 'source', input.signal) : undefined;
@@ -151,11 +156,19 @@ export class PlatformPromptService {
     const resumed = typeof input.previousTurn?.turnDynamicContext === 'string' ? deserializePromptContextCache(input.previousTurn.turnDynamicContext) : undefined;
     // 旧回合的缓存可能把频道环境放在独立 user 消息中，续跑时改由当前发言承载。
     const beforeHistoryMessages = withoutStandaloneBotEnvironment((resumed ?? bundle).beforeHistoryMessages as PlatformMessage[], botEnvironment);
-    const toolNames = [...new Set([...filterPromptModeToolNames(mode, input.agent.toolNames, { planExecution: hasApprovedPlanExecution(input.history) })
+    const platformMode = conversationMode === 'code' ? 'code' : conversationMode === 'character' ? 'character' : 'chat';
+    const petTools = this.app.pets.hasHost && settings.isToolEnabled('pet_control')
+      && (input.agent.id === 'default' || input.agent.toolNames.includes('pet_control')) ? ['pet_control'] : [];
+    const toolNames = [...new Set([...filterPromptModeToolNames(mode, [...input.agent.toolNames, ...petTools], {
+      planExecution: hasApprovedPlanExecution(input.history), platformMode,
+    })
       .filter(name => !profileToolNames || profileToolNames.has(name)),
       ...contextToolNames, ...(botEnvironment?.version === 1 ? ['bot_read_attachment', ...(input.agent.toolNames.length ? ['bot_send_attachment'] : [])] : [])])];
+    const storedCharacterTurn = this.app.characterPipeline.snapshot(characterTurn);
+    const companionPetAllowed = toolNames.includes('pet_control')
+      && !['ask', 'deny'].includes(input.agent.toolApproval?.pet_control ?? 'auto');
     return {
-      systemPrompt: assembler.getSystemPrompt(mode, false, context) + this.app.companion.prompt(companionTurn),
+      systemPrompt: assembler.getSystemPrompt(mode, false, context) + this.app.companion.prompt(companionTurn, companionPetAllowed),
       // 计数预览使用空历史，bundle 已是完整文本，复用它避免再次生成目录树与诊断。
       ...(input.preview ? { previewDynamicText: bundle.text } : {}),
       toolNames,
@@ -169,9 +182,13 @@ export class PlatformPromptService {
           || !message.parts.some(part => typeof part.text === 'string' && isLegacyBotIdentityText(part.text))), ...failureMessage], historyPlacement: (resumed ?? bundle).historyPlacement,
         taskContextEmbedded: resumed ? input.previousTurn?.botTaskContextEmbedded === true : botEnvironment?.version === 1 },
       messageParts: characterSource?.parts,
-      turnContext: { ...(characterTurn ? { characterTurn } : {}), ...(companionTurn ? { companionTurn } : {}), contextManagementMethod, contextUserMessageRetention },
-      messageMetadata: { turnPlatformMode: input.previousTurn?.turnPlatformMode ?? conversationMode ?? 'chat', ...(companionTurn ? { companionTurn } : {}), ...(botEnvironment?.version === 1 ? { botTaskContextEmbedded: true } : {}), ...(editor ? { turnEditorContext: editor } : {}), ...(characterTurn ? { characterTurn, characterOriginalParts: source?.parts, characterDisplayParts: characterDisplay?.parts,
-        characterStages: characterSource?.stages, characterDisplayStages: characterDisplay?.stages } : {}), promptModeId: mode.id, turnDynamicContextStrategy: 'preserve',
+      turnContext: {
+        ...(storedCharacterTurn ? { characterTurn: storedCharacterTurn } : {}),
+        ...(companionTurn ? { companionTurn, companionPetAllowed } : {}), contextManagementMethod, contextUserMessageRetention,
+      },
+      messageMetadata: { turnPlatformMode: input.previousTurn?.turnPlatformMode ?? conversationMode ?? 'chat', ...(companionTurn ? { companionTurn } : {}), ...(botEnvironment?.version === 1 ? { botTaskContextEmbedded: true } : {}), ...(editor ? { turnEditorContext: editor } : {}), ...(characterTurn ? { characterOriginalParts: source?.parts, characterDisplayParts: characterDisplay?.parts,
+        characterStages: characterSource?.stages, characterDisplayStages: characterDisplay?.stages } : {}),
+        ...(storedCharacterTurn ? { characterTurn: storedCharacterTurn } : {}), promptModeId: mode.id, turnDynamicContextStrategy: 'preserve',
         turnDynamicContext: serializePromptContextCache({ ...bundle,
           // 失败提示也是本轮已经发送的上下文；以后回插时保留原位置，不改写旧回合。
           afterHistoryMessages: [...bundle.afterHistoryMessages, ...failureSnapshot],

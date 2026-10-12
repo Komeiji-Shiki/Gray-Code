@@ -6,11 +6,18 @@ import type { VectorMatch, VectorRankingRequest } from './vectors';
 export class VectorRanker {
   private readonly worker = new Worker(path.join(__dirname, 'long-memory-vector.worker.cjs'));
   private failure?: Error;
+  private pending: Promise<unknown> = Promise.resolve();
   constructor() {
     this.worker.on('error', error => { this.failure = error; });
     this.worker.on('exit', code => { this.failure ??= new Error(`向量计算线程已退出：${code}`); });
   }
   rank(input: VectorRankingRequest): Promise<VectorMatch[]> {
+    // 存储与世界书都会复用此计算器，按请求串行分发，防止回复被另一轮监听器取得。
+    const operation = this.pending.then(() => this.evaluate(input));
+    this.pending = operation.catch(() => undefined);
+    return operation;
+  }
+  private evaluate(input: VectorRankingRequest): Promise<VectorMatch[]> {
     if (this.failure) return Promise.reject(this.failure);
     return new Promise((resolve, reject) => {
       const cleanup = () => { this.worker.off('message', message); this.worker.off('error', error); this.worker.off('exit', exited); };

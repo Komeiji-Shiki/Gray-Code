@@ -55,7 +55,7 @@ test('初始化未完成就卸载，不再建立宿主上下文或读取待打�
 test('损坏的分栏设置恢复默认值，重复点击模式只发起一次切换', async () => {
   localStorage.setItem('graycode.chatWidth', 'Infinity');
   wrapper = shallowMount(App); await flushPromises();
-  expect(wrapper.get('.desktop-workspace').attributes('style')).toContain('--chat-width: 48%');
+  expect(wrapper.get('.desktop-workspace').attributes('style')).toContain('--gc-chat-width: 48%');
   let finish!: (result: unknown) => void;
   mocks.call.mockImplementation(async method => method === 'ui.request' ? new Promise(resolve => { finish = resolve; }) : {});
   await wrapper.get('.mode-trigger').trigger('click');
