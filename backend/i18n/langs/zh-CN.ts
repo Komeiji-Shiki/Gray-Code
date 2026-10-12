@@ -289,7 +289,20 @@ const zhCN = {
         "unknownDate": "时间未知",
         "updateReadyDescription": "更新包已下载并校验。保存编辑后，可重启安装；安装前会备份当前数据。",
         "applying": "正在准备重启安装…",
-        "retryUpdate": "重试更新"
+        "retryUpdate": "重试更新",
+        modeSettings: {
+            title: "对话模式与预设",
+            description: "分别设置对话、开发和角色模式。新建对话使用对应预设；已有对话保留自己的预设选择。实际工具仍受工具总开关、宿主能力和账号授权约束。",
+            loading: "正在读取模式配置…",
+            createCharacterPreset: "创建并绑定基础角色预设",
+            defaultPreset: "默认预设",
+            inheritPreset: "沿用当前默认预设",
+            toolScope: "工具范围",
+            defaultChatTools: "默认对话工具（{count}）",
+            inheritAgentTools: "沿用 Agent 工具配置",
+            selectedTools: "自选工具",
+            noTools: "未选择常规工具，上下文和附件工具仍按会话环境提供。",
+        },
     },
     modules: {
         diff: {

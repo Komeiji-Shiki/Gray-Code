@@ -4,7 +4,59 @@
  */
 
 import type { PromptMode } from './types/promptTypes';
+import { isMcpToolName } from '../../../shared/mcpToolNameCodec';
 import { upgradeToolNames } from '../../../shared/toolNameUpgrades';
+
+/** 对话模式只缩小内置工具范围；环境工具仍由宿主按本轮上下文追加。 */
+export const DEFAULT_CHAT_MODE_TOOL_NAMES = [
+    'read_file',
+    'write_file',
+    'list_files',
+    'apply_diff',
+    'office_read',
+    'office_create',
+    'office_edit',
+    'browser_tabs',
+    'browser_read',
+    'browser_action',
+    'generate_image',
+    'memory_search',
+    'memory_read',
+    'memory_remember',
+    'memory_revise',
+    'memory_remove',
+    'memory_topics',
+    'history_search',
+    'ask_user',
+    'read_skill',
+    'get_activity_stats',
+    'show_windows_notification',
+    'pet_control',
+] as const;
+
+type PlatformMode = 'chat' | 'code' | 'character';
+type PlatformModeToolProfile = { toolNames?: readonly string[] };
+const DEFAULT_CHAT_MODE_TOOLS: ReadonlySet<string> = new Set(DEFAULT_CHAT_MODE_TOOL_NAMES);
+
+/** 显式空数组保留禁用语义；只有未自选的对话模式使用内置默认清单。 */
+export function resolvePlatformModeToolNames(
+    platformMode: PlatformMode | undefined,
+    profile: PlatformModeToolProfile | undefined,
+): ReadonlySet<string> | undefined {
+    if (profile?.toolNames !== undefined) return new Set(upgradeToolNames(profile.toolNames));
+    return platformMode === 'chat' ? DEFAULT_CHAT_MODE_TOOLS : undefined;
+}
+
+/** 默认对话清单不筛掉 MCP；自选清单仍完整约束所选工具。 */
+export function filterPlatformModeToolNames(
+    platformMode: PlatformMode | undefined,
+    profile: PlatformModeToolProfile | undefined,
+    names: string[],
+): string[] {
+    const allowed = resolvePlatformModeToolNames(platformMode, profile);
+    const preserveMcp = platformMode === 'chat' && profile?.toolNames === undefined;
+    return names.filter(name => !allowed || allowed.has(name) || preserveMcp && isMcpToolName(name));
+}
 
 /** 文档工具保留注册，由模式决定是否随请求发送声明。 */
 const DOCUMENT_TOOL_NAMES: ReadonlySet<string> = new Set([

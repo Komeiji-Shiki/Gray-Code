@@ -286,7 +286,20 @@ const ja: BackendLanguageMessages = {
         "unknownDate": "日時不明",
         "updateReadyDescription": "更新のダウンロードと検証が完了しました。変更を保存してから再起動してください。インストール前に現在のデータをバックアップします。",
         "applying": "再起動とインストールを準備中…",
-        "retryUpdate": "更新を再試行"
+        "retryUpdate": "更新を再試行",
+        modeSettings: {
+            title: "モードとプリセット",
+            description: "対話・開発・キャラクターの各モードを設定します。新しい会話には対応するプリセットが使われ、既存の会話は選択済みのプリセットを保持します。利用できるツールは、全体設定、ホストの機能、アカウントの権限にも従います。",
+            loading: "モード設定を読み込み中…",
+            createCharacterPreset: "基本キャラクタープリセットを作成して割り当てる",
+            defaultPreset: "既定のプリセット",
+            inheritPreset: "現在の既定プリセットを使用",
+            toolScope: "ツールの選択",
+            defaultChatTools: "既定の対話ツール（{count}）",
+            inheritAgentTools: "エージェントのツール設定を使用",
+            selectedTools: "個別に選択",
+            noTools: "通常のツールは選択されていません。コンテキストと添付ファイルのツールは、会話の環境に応じて提供されます。",
+        },
     },
     modules: {
         diff: {

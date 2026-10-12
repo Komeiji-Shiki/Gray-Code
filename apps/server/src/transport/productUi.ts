@@ -12,6 +12,7 @@ import { workspaceUiHandlers } from '../workspace/ui';
 import { BranchRetention } from '../conversations/retention';
 import { withDependencyRuntime } from '../../../../backend/modules/dependencies/runtime';
 import { validateDevelopmentSettings } from '../development/settings';
+import { DEFAULT_CHAT_MODE_TOOL_NAMES } from '../../../../backend/modules/settings/modeToolsPolicy';
 import { validateExternalAgentProfiles } from '../externalAgents/settings';
 import { randomUUID } from 'node:crypto';
 import { createCharacterStarterPreset } from '../../../../shared/characterPromptModules';
@@ -480,7 +481,8 @@ export class ProductUi {
         notify({ type: 'command', command: 'platform.settingsDraftChanged', data: { dirty: true } }); return { success: true };
       }
       case 'platform.modes.get': return { profiles: ui.preferences.app.modeProfiles ?? {},
-        presets: ui.preferences.settings.getAllPromptModes(), tools: this.app.tools.names().map(name => ({ name })) };
+        presets: ui.preferences.settings.getAllPromptModes(), tools: this.app.tools.names().map(name => ({ name })),
+        defaultChatToolNames: DEFAULT_CHAT_MODE_TOOL_NAMES };
       case 'platform.modes.update': {
         if (!['chat', 'code', 'character'].includes(data.mode)) throw new Error('未知对话模式。');
         ui.preferences.app.modeProfiles ??= {};

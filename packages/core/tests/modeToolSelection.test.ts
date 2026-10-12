@@ -1,6 +1,8 @@
 import type { PlatformMessage } from '@graycode/contracts';
 import { PlatformApplication } from '../../../apps/server/src/application';
 import { ApplicationRouter } from '../../../apps/server/src/transport/router';
+import { DEFAULT_CHAT_MODE_TOOL_NAMES } from '../../../backend/modules/settings/modeToolsPolicy';
+import { encodeMcpToolName } from '../../../shared/mcpToolNameCodec';
 import { fixture } from './fixtures';
 
 const SYNC_TOOLS = ['update_plan', 'create_progress', 'update_progress', 'record_progress_milestone'];
@@ -19,16 +21,19 @@ function planTurn(confirmed: boolean): PlatformMessage[] {
   ];
 }
 
-describe('Code 模式按会话阶段选择文档工具', () => {
+describe('平台模式按配置与会话阶段选择工具', () => {
   let f: Awaited<ReturnType<typeof fixture>>;
   let app: PlatformApplication;
   let router: ApplicationRouter;
   let tools: string[] = [];
   const owner = { actorId: 'owner', clientId: 'mode-tools' };
+  const mcpTool = encodeMcpToolName('mode-tools', 'read_external');
   beforeEach(async () => {
     f = await fixture(); await f.store.close();
     app = await PlatformApplication.open({ dataDirectory: f.data,
       models: { generate: async input => { tools = input.tools.map(tool => tool.name); return { role: 'model', parts: [{ text: 'ok' }] }; } } });
+    app.tools.register({ declaration: { name: mcpTool, description: '模式工具范围验证', parameters: { type: 'object', properties: {} } },
+      effects: () => [], execute: async () => ({ success: true }) });
     const draft = app.settings.snapshot();
     draft.settings.workspaces.push({ id: 'project', name: 'Fixture', directory: f.source, deviceId: 'local' });
     await app.settings.save({ settings: draft.settings, expectedRevision: draft.revision });
@@ -36,15 +41,15 @@ describe('Code 模式按会话阶段选择文档工具', () => {
   });
   afterEach(async () => { await app.close(); await f.cleanup(); });
 
-  async function send(history: PlatformMessage[], promptModeId = 'code') {
-    const conversation = await router.call(owner, 'conversations.create', { title: 'Mode tools', workspaceId: 'project' }) as { id: string };
+  async function send(history: PlatformMessage[], promptModeId = 'code', custom: { platformMode?: 'chat' | 'code' | 'character' } = { platformMode: 'code' }) {
+    const conversation = await app.createConversation(owner.actorId, 'Mode tools', 'project', custom);
     if (history.length) await app.storage.appendHistory(conversation.id, history);
     const run = await router.call(owner, 'runs.start', { conversationId: conversation.id, requestKey: 'mode-tools', agentId: 'default', promptModeId, text: '继续' }) as { id: string };
     expect((await app.runtime.wait(run.id))?.status).toBe('completed');
     return tools;
   }
 
-  test('普通对话不发送文档工作流工具', async () => {
+  test('开发模式未执行计划时不发送文档工作流工具', async () => {
     const sent = await send([]);
     expect(sent).toContain('read_file');
     for (const name of [...SYNC_TOOLS, ...MODE_ONLY_TOOLS]) expect(sent).not.toContain(name);
@@ -65,5 +70,58 @@ describe('Code 模式按会话阶段选择文档工具', () => {
     const sent = await send(planTurn(true));
     for (const name of SYNC_TOOLS) expect(sent).toContain(name);
     for (const name of MODE_ONLY_TOOLS) expect(sent).not.toContain(name);
+  });
+
+  test('默认对话使用完整的 23 项内置清单，保留 MCP 并追加上下文工具', async () => {
+    const sent = await send([], 'code', { platformMode: 'chat' });
+    expect(DEFAULT_CHAT_MODE_TOOL_NAMES).toHaveLength(23);
+    for (const name of ['read_file', 'write_file', 'ask_user', 'memory_search', mcpTool, 'context_status', 'context_history']) {
+      expect(sent).toContain(name);
+    }
+    for (const name of ['execute_command', 'search_in_files', 'subagents', ...SYNC_TOOLS, ...MODE_ONLY_TOOLS]) {
+      expect(sent).not.toContain(name);
+    }
+    expect(sent.every(name => name === mcpTool || name.startsWith('context_')
+      || (DEFAULT_CHAT_MODE_TOOL_NAMES as readonly string[]).includes(name))).toBe(true);
+  });
+
+  test('对话模式的显式空数组不回退默认工具，环境工具继续追加', async () => {
+    const draft = app.settings.snapshot();
+    draft.settings.modeProfiles = { chat: { toolNames: [] } };
+    await app.settings.save({ settings: draft.settings, expectedRevision: draft.revision });
+    const sent = await send([], 'code', { platformMode: 'chat' });
+    expect(sent).toContain('context_status');
+    expect(sent).toContain('context_history');
+    expect(sent.filter(name => !name.startsWith('context_'))).toEqual([]);
+  });
+
+  test.each(['code', 'character'] as const)('%s 模式未自选工具时保持原 Agent 工具范围', async platformMode => {
+    const sent = await send([], 'code', { platformMode });
+    for (const name of ['read_file', 'write_file', 'execute_command', 'search_in_files', 'subagents', mcpTool]) {
+      expect(sent).toContain(name);
+    }
+  });
+
+  test('未标记平台模式的旧会话不套用默认对话清单', async () => {
+    const draft = app.settings.snapshot();
+    draft.settings.modeProfiles = { chat: { toolNames: [] } };
+    await app.settings.save({ settings: draft.settings, expectedRevision: draft.revision });
+    const sent = await send([], 'code', {});
+    for (const name of ['read_file', 'write_file', 'execute_command', 'search_in_files', 'subagents', mcpTool]) {
+      expect(sent).toContain(name);
+    }
+  });
+
+  test('项目自动任务新建开发对话并使用开发模式预设', async () => {
+    const draft = await app.product.draft();
+    const providerId = await draft.configs.createConfig({ name: '模式验证', type: 'openai', url: 'http://127.0.0.1:1/v1',
+      model: 'fixture-model', apiKey: '', enabled: true, timeout: 1000 });
+    draft.app.modeProfiles = { chat: { promptModeId: 'ask' }, code: { promptModeId: 'code' } };
+    await app.product.save(draft);
+    const task = await app.automations.create(owner.actorId, { kind: 'goal', name: '项目自动任务', objective: '处理项目任务',
+      workspaceId: 'project', agentId: 'default', providerId });
+    const conversation = await app.storage.getConversation(task.conversationId);
+    expect(conversation).toMatchObject({ workspaceId: 'project', custom: { platformMode: 'code' } });
+    expect(task.configuration.promptModeId).toBe('code');
   });
 });

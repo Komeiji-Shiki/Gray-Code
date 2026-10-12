@@ -20,8 +20,7 @@ import { isLegacyBotIdentityText } from '../../../../shared/botConversation';
 import { botFailureContext } from '../bots/errorSummary';
 import { CONTEXT_NOTES_GUIDANCE, CONTEXT_TOOL_NAMES } from '../../../../shared/contextManagement';
 import { LONG_MEMORY_GUIDANCE, LONG_MEMORY_TOOL_NAMES } from '../memory/longTerm/content';
-import { filterPromptModeToolNames, searchReplaceRestriction } from '../../../../backend/modules/settings/modeToolsPolicy';
-import { upgradeToolNames } from '../../../../shared/toolNameUpgrades';
+import { filterPlatformModeToolNames, filterPromptModeToolNames, searchReplaceRestriction } from '../../../../backend/modules/settings/modeToolsPolicy';
 import { engineeringLogActionRestrictions } from '../memory/engineeringLogPolicy';
 import { isApprovedPlanExecutionResponse } from '../../../../backend/modules/api/chat/services/approvalGateRules';
 
@@ -74,8 +73,9 @@ export class PlatformPromptService {
     };
     const settings = input.settingsOverride ?? this.app.product.runtimeSettings();
     const conversationMode = (input.conversation.custom as Record<string, unknown> | undefined)?.platformMode;
-    const profile = typeof conversationMode === 'string' ? this.app.settings.read('modeProfiles').modeProfiles?.[conversationMode as 'chat' | 'code' | 'character'] : undefined;
-    const profileToolNames = profile?.toolNames ? new Set(upgradeToolNames(profile.toolNames)) : undefined;
+    const platformMode = conversationMode === 'chat' || conversationMode === 'code' || conversationMode === 'character'
+      ? conversationMode : undefined;
+    const profile = platformMode ? this.app.settings.read('modeProfiles').modeProfiles?.[platformMode] : undefined;
     const mode = settings.resolvePromptMode(input.request.promptModeId ?? profile?.promptModeId ?? input.agent.promptModeId);
     const channelWorkspace = botEnvironment?.version === 1 && typeof conversation.workspaceId === 'string'
       ? this.app.settings.find('workspaces', conversation.workspaceId) : undefined;
@@ -156,13 +156,12 @@ export class PlatformPromptService {
     const resumed = typeof input.previousTurn?.turnDynamicContext === 'string' ? deserializePromptContextCache(input.previousTurn.turnDynamicContext) : undefined;
     // 旧回合的缓存可能把频道环境放在独立 user 消息中，续跑时改由当前发言承载。
     const beforeHistoryMessages = withoutStandaloneBotEnvironment((resumed ?? bundle).beforeHistoryMessages as PlatformMessage[], botEnvironment);
-    const platformMode = conversationMode === 'code' ? 'code' : conversationMode === 'character' ? 'character' : 'chat';
     const petTools = this.app.pets.hasHost && settings.isToolEnabled('pet_control')
       && (input.agent.id === 'default' || input.agent.toolNames.includes('pet_control')) ? ['pet_control'] : [];
-    const toolNames = [...new Set([...filterPromptModeToolNames(mode, [...input.agent.toolNames, ...petTools], {
-      planExecution: hasApprovedPlanExecution(input.history), platformMode,
-    })
-      .filter(name => !profileToolNames || profileToolNames.has(name)),
+    const promptToolNames = filterPromptModeToolNames(mode, [...input.agent.toolNames, ...petTools], {
+      planExecution: hasApprovedPlanExecution(input.history), platformMode: platformMode ?? 'chat',
+    });
+    const toolNames = [...new Set([...filterPlatformModeToolNames(platformMode, profile, promptToolNames),
       ...contextToolNames, ...(botEnvironment?.version === 1 ? ['bot_read_attachment', ...(input.agent.toolNames.length ? ['bot_send_attachment'] : [])] : [])])];
     const storedCharacterTurn = this.app.characterPipeline.snapshot(characterTurn);
     const companionPetAllowed = toolNames.includes('pet_control')

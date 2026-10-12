@@ -200,7 +200,10 @@ export class ApplicationAutomations {
     if (!event && first === undefined) throw new Error('请选择未来的执行时间。');
     const name = input.name?.trim() || input.objective.trim().split('\n')[0].slice(0, 80);
     const conversation = input.conversationId ? await this.app.conversation(actorId, input.conversationId)
-      : await this.app.createConversation(actorId, name, input.workspaceId, { platformMode: 'chat', ...(input.promptModeId ? { promptModeConfig: { modeId: input.promptModeId } } : {}) }, undefined, { automaticWorkspace: true });
+      : await this.app.createConversation(actorId, name, input.workspaceId, {
+        platformMode: input.workspaceId ? 'code' : 'chat',
+        ...(input.promptModeId ? { promptModeConfig: { modeId: input.promptModeId } } : {}),
+      }, undefined, { automaticWorkspace: true });
     if ([...this.records.values()].some(record => record.conversationId === conversation.id && record.status !== 'completed')) throw new Error('这个对话已有一个未完成的自动任务，请先完成或移除。');
     const workspace = conversation.workspaceId ? this.app.workspace(actorId, String(conversation.workspaceId), []) : undefined;
     const custom = conversation.custom as { promptModeConfig?: { modeId: string }; platformMode?: 'chat' | 'code' | 'character' } | undefined;

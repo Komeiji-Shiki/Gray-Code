@@ -286,7 +286,20 @@ const en: BackendLanguageMessages = {
         "unknownDate": "Unknown date",
         "updateReadyDescription": "The update is downloaded and verified. Save your changes before restarting. Current data will be backed up before installation.",
         "applying": "Preparing to restart and install…",
-        "retryUpdate": "Retry update"
+        "retryUpdate": "Retry update",
+        modeSettings: {
+            title: "Modes and presets",
+            description: "Configure Chat, Develop, and Character modes separately. New conversations use the corresponding preset; existing conversations keep their selected preset. Tools remain subject to global switches, host capabilities, and account permissions.",
+            loading: "Loading mode settings…",
+            createCharacterPreset: "Create and assign a starter character preset",
+            defaultPreset: "Default preset",
+            inheritPreset: "Use the current default preset",
+            toolScope: "Tool selection",
+            defaultChatTools: "Default chat tools ({count})",
+            inheritAgentTools: "Use the agent's tool configuration",
+            selectedTools: "Custom selection",
+            noTools: "No regular tools are selected. Context and attachment tools remain available as required by the conversation environment.",
+        },
     },
     modules: {
         diff: {
