@@ -5,6 +5,7 @@ import { formatHistoryForAPI } from '../../modules/conversation/manager/historyF
 import { MessageBuilderService } from '../../modules/api/chat/services/MessageBuilderService';
 import type { Content } from '../../modules/conversation/types';
 import { createOpenAIResponsesConfig } from '../__fixtures__/channelFixtures';
+import { getModelCompletionStatus } from '../../../shared/modelCompletion';
 
 const message = (id: string, phase: 'commentary' | 'final_answer', texts: string[]) => ({
     type: 'message', role: 'assistant', id, phase, status: 'completed',
@@ -98,11 +99,17 @@ describe('Responses output item metadata roundtrip', () => {
         h.add({ type: 'response.incomplete', response: { output: [partial], status: 'incomplete', incomplete_details: { reason: 'max_output_tokens' }, usage: { input_tokens: 4, output_tokens: 2, total_tokens: 6 } } });
         expect(h.accumulator.isComplete()).toBe(true);
         expect(h.accumulator.getFinishReason()).toBe('max_output_tokens');
+        expect(h.accumulator.getFinalContent()).toMatchObject({ finishReason: 'max_output_tokens', completionStatus: 'truncated' });
+        const nonstream = h.formatter.parseResponse({ output: [partial], status: 'incomplete',
+            incomplete_details: { reason: 'max_output_tokens' } });
+        expect(nonstream.finishReason).toBe('max_output_tokens');
+        expect(getModelCompletionStatus(nonstream)).toBe('truncated');
         expect(h.replay(h.accumulator.getFinalContent())[1]).toEqual(partial);
         expect(h.accumulator.getFinalContent().usageMetadata?.totalTokenCount).toBe(6);
         expect(h.visible).toEqual([{ text: 'Partial' }]);
-        h.add({ type: 'response.completed', response: { status: 'completed', output: [] } });
+        h.add({ type: 'response.completed', response: { output: [] } });
         expect(h.accumulator.getFinalContent().parts[0].text).toBe('Partial');
+        expect(h.accumulator.getFinalContent().completionStatus).toBe('complete');
     });
 
     test.each(['agent_message', 'background_task'] as const)('appending %s keeps every previous reasoning/message/tool input byte stable', source => {

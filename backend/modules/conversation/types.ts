@@ -138,6 +138,9 @@ export interface Content {
     modelVersion?: string;
     /** 已保留但尚未完成的模型正文。 */
     incompleteReason?: 'cancelled' | 'interrupted';
+    /** 供应方的结束原因与跨协议完成状态，旧记录可缺省。 */
+    finishReason?: string;
+    completionStatus?: 'complete' | 'truncated' | 'incomplete';
     
     /**
      * Token 使用统计（仅 model 消息有值）

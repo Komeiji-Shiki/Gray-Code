@@ -366,15 +366,14 @@ export class PlatformDatabase {
         if (value.snapshot.conversationId !== value.conversationId) invalid('Snapshot belongs to another conversation.');
         this.execute('saveSnapshot', { metadata: value.snapshot });
       }
-      if ([value.messages, value.messageUpdates, value.appendMessages].filter(item => item !== undefined).length > 1)
-        invalid('历史替换、局部更新和后缀追加不能同时提交。');
+      if (value.messages !== undefined && (value.messageUpdates !== undefined || value.appendMessages !== undefined))
+        invalid('历史整体替换不能与局部更新或后缀追加同时提交。');
       if (value.messages) this.writeHistory(value.conversationId, value.messages, true, value.expectedRevision);
-      if (value.appendMessages) this.writeHistory(value.conversationId, value.appendMessages, false, value.expectedRevision);
       if (value.messageUpdates) {
-        this.histories.patch(row.history_id, value.messageUpdates);
+        this.histories.patch(row.history_id, value.messageUpdates, value.appendMessages);
         if (!value.metadata && this.histories.info(row.history_id).revision !== value.expectedRevision)
           this.saveMetadata({ ...this.objects.getValue<PlatformConversation>(row.metadata_hash), updatedAt: Date.now() });
-      }
+      } else if (value.appendMessages) this.writeHistory(value.conversationId, value.appendMessages, false, value.expectedRevision);
       if (value.startRun?.message) this.writeHistory(value.conversationId, [value.startRun.message], false);
       if (value.metadata) {
         if (value.metadata.id !== value.conversationId) invalid('Metadata belongs to another conversation.');

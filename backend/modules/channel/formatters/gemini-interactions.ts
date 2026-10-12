@@ -347,7 +347,7 @@ export class GeminiInteractionsFormatter extends GeminiFormatter {
                         break;
                     case 'cancelled':
                         done = true;
-                        finishReason = 'STOP';
+                        finishReason = 'cancelled';
                         break;
                     case 'failed':
                         throw new ChannelError(
@@ -508,7 +508,7 @@ export class GeminiInteractionsFormatter extends GeminiFormatter {
             case 'interaction.completed': {
                 // 交互完成：携带 usage 与最终状态。
                 // 终态细分：budget_exceeded / incomplete → incomplete 终止；failed 抛错；
-                // 其余（completed / requires_action / cancelled 等）→ STOP
+                // 取消与未知终态必须保留，不能让不完整总结替换原文。
                 done = true;
                 const interaction = chunk.interaction || {};
                 if (interaction.usage) {
@@ -522,6 +522,9 @@ export class GeminiInteractionsFormatter extends GeminiFormatter {
                     case 'incomplete':
                         finishReason = 'incomplete';
                         break;
+                    case 'cancelled':
+                        finishReason = 'cancelled';
+                        break;
                     case 'failed':
                         throw new ChannelError(
                             ErrorType.API_ERROR,
@@ -529,7 +532,7 @@ export class GeminiInteractionsFormatter extends GeminiFormatter {
                             chunk
                         );
                     default:
-                        finishReason = 'STOP';
+                        finishReason = this.mapStatus(interaction.status ?? 'completed');
                         break;
                 }
                 break;
@@ -914,7 +917,6 @@ export class GeminiInteractionsFormatter extends GeminiFormatter {
         switch (status) {
             case 'completed':
             case 'requires_action':
-            case 'cancelled':
                 return 'STOP';
             case 'incomplete':
             case 'budget_exceeded':

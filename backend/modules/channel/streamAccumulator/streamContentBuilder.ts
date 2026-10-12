@@ -7,6 +7,7 @@
 
 import type { Content, ContentPart, UsageMetadata, ThoughtSignatures } from '../../conversation';
 import { parseToolArguments } from '../formatters/toolArguments';
+import { getModelCompletionStatus } from '../../../../shared/modelCompletion';
 
 export interface BuildContentOptions {
     parsePartialArgs: boolean;
@@ -20,6 +21,7 @@ export interface StreamContentBuildState {
     parts: ContentPart[];
     thoughtSignatures: ThoughtSignatures;
     modelVersion?: string;
+    finishReason?: string;
     usageMetadata?: UsageMetadata;
     thinkingStartTime?: number;
     thinkingDuration?: number;
@@ -132,7 +134,9 @@ export function buildContentFromState(state: StreamContentBuildState, options: B
 
     const content: Content = {
         role: 'model',
-        parts
+        parts,
+        finishReason: state.finishReason,
+        completionStatus: getModelCompletionStatus(state)
     };
 
     // 添加模型版本

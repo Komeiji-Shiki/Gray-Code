@@ -733,7 +733,7 @@ export class OpenAIResponsesFormatter extends BaseFormatter {
 
         return {
             content,
-            finishReason: response.status,
+            finishReason: response.status === 'incomplete' ? response.incomplete_details?.reason || 'incomplete' : response.status,
             model: response.model,
             raw: response
         };
@@ -938,9 +938,9 @@ export class OpenAIResponsesFormatter extends BaseFormatter {
                     usage = parseOpenAIResponsesUsage(chunk.response.usage);
                 }
                 
-                finishReason = chunk.type === 'response.incomplete'
+                finishReason = chunk.type === 'response.incomplete' || chunk.response?.status === 'incomplete'
                     ? chunk.response?.incomplete_details?.reason || 'incomplete'
-                    : chunk.response?.status;
+                    : chunk.response?.status ?? 'completed';
                 break;
             
             case 'response.failed':

@@ -20,6 +20,7 @@ import type { GenerateRequest } from "../../../../backend/modules/channel/types"
 import type { ToolDeclaration } from "../../../../backend/tools/types";
 import type { ChannelConfig } from "../../../../backend/modules/config/types";
 import { modelRequestMetrics } from './requestMetrics';
+import { getModelCompletionStatus } from '../../../../shared/modelCompletion';
 import { ResponsesWebSocket } from './responsesWebSocket';
 import { CHATGPT_API_BASE_URL, chatgptHeaders, normalizeChatGPTBody } from '../../../../backend/modules/channel/chatgpt';
 import {
@@ -317,10 +318,11 @@ export class ProviderModelAdapter implements ModelProvider {
         throw error;
       }
       // 非流式上游只能确认完整请求耗时，无法把整次耗时当作首字延迟或思考耗时。
-      const content = formatter.parseResponse(response.body).content as PlatformMessage;
+      const parsed = formatter.parseResponse(response.body);
+      const content = parsed.content as PlatformMessage;
       if (!content.parts.some(part => visiblePart(part)))
         throw new ChannelError(ErrorType.EMPTY_RESPONSE_ERROR, t('modules.channel.errors.emptyResponse'));
-      return { ...content, responseDuration };
+      return { ...content, responseDuration, finishReason: parsed.finishReason, completionStatus: getModelCompletionStatus(parsed) };
     }
     const accumulator = new StreamAccumulator(config.toolMode ?? "function_call");
     accumulator.setProviderType(profile.protocol);

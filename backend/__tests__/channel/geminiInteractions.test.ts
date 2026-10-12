@@ -738,6 +738,7 @@ describe('GeminiInteractionsFormatter.parseStreamChunk（SSE 事件状态机）'
 
         const cancelled = formatter.parseStreamChunk({ type: 'interaction.status_update', status: 'cancelled' });
         expect(cancelled.done).toBe(true);
+        expect(cancelled.finishReason).toBe('cancelled');
 
         const incomplete = formatter.parseStreamChunk({ type: 'interaction.status_update', status: 'incomplete' });
         expect(incomplete.done).toBe(true);

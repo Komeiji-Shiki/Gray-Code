@@ -33,6 +33,10 @@ export interface PlatformMessage {
   parts: Record<string, unknown>[];
   /** 生成提前结束时保留的正文，不包含尚未完成的工具调用或思考块。 */
   incompleteReason?: 'cancelled' | 'interrupted';
+  /** 供应方的结束原因；旧记录可缺省。 */
+  finishReason?: string;
+  /** 生成完成状态，与取消后保留正文的 incompleteReason 分开记录。 */
+  completionStatus?: 'complete' | 'truncated' | 'incomplete';
   [key: string]: unknown;
 }
 

@@ -938,6 +938,7 @@ export class StreamAccumulator {
             parts: this.parts,
             thoughtSignatures: this.thoughtSignatures,
             modelVersion: this.modelVersion,
+            finishReason: this.finishReason,
             usageMetadata: this.usageMetadata,
             thinkingStartTime: this.thinkingStartTime,
             thinkingDuration: this.thinkingDuration,

@@ -15,9 +15,9 @@ export interface ConversationCommit {
   expectedRevision: number;
   expectedMetadataToken?: string;
   messages?: PlatformMessage[];
-  /** 保持消息位置的局部更新，与 messages 整体替换互斥。 */
+  /** 保持现有消息位置的局部更新，可与 appendMessages 一起提交，与 messages 整体替换互斥。 */
   messageUpdates?: { index: number; message: PlatformMessage }[];
-  /** 在同一事务中追加后缀，与整体替换及局部更新互斥。 */
+  /** 在局部更新之后追加后缀，共用一次版本递增；与 messages 整体替换互斥。 */
   appendMessages?: PlatformMessage[];
   metadata?: PlatformConversation;
   records?: RecordMutation[];

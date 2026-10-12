@@ -6,31 +6,41 @@ import { RuntimeToolRegistry } from '../src/runtime/tools';
 import { SubagentFeedback } from '../../../apps/server/src/subagents/feedback';
 import { BackgroundContinuation } from '../../../apps/server/src/subagents/continuation';
 import { fixture, metadata } from './fixtures';
+import { PlatformDatabase } from '../src/storage/database';
 
-test('后缀追加与交付记录原子提交，冲突回滚并保留历史原文', async () => {
+test('局部更新与后缀追加原子提交，冲突回滚并保留历史快照', async () => {
   const f = await fixture();
+  // 直接覆盖存储事务源码，不依赖上一次打包的 worker。
+  await f.store.close();
+  const database = new PlatformDatabase(f.data);
   try {
-    await f.store.createConversation(metadata('append-atomic'));
+    database.execute('createConversation', metadata('append-atomic'));
     const original = { id: 'old', role: 'user', parts: [{ text: '原始正文' }], unknownFuture: { kept: true } };
-    await f.store.appendHistory('append-atomic', [original]);
-    await f.store.putRecord({ namespace: 'pending', id: 'new', value: { text: '待交付' } });
-    const before = (await f.store.getConversationInfo('append-atomic'))!;
+    database.execute('appendHistory', { id: 'append-atomic', messages: [original] });
+    database.execute('putRecord', { namespace: 'pending', id: 'new', value: { text: '待交付' } });
+    const before = database.execute('getConversationInfo', { id: 'append-atomic' })!;
     const mutation = { conversationId: 'append-atomic', expectedRevision: before.historyRevision, expectedMetadataToken: before.metadataToken,
+      messageUpdates: [{ index: 0, message: { ...original, compacted: true } }],
       appendMessages: [{ id: 'new', role: 'user', parentId: 'old', parts: [{ text: '新增正文' }] }],
+      snapshot: { id: 'before-append', conversationId: 'append-atomic', timestamp: Date.now() },
       records: [{ namespace: 'pending', id: 'new', expectedRevision: 99, delete: true as const }] };
-    await expect(f.store.commitConversation(mutation)).rejects.toMatchObject({ code: 'REVISION_CONFLICT' });
-    expect(await f.store.getConversationInfo('append-atomic')).toEqual(before);
-    expect((await f.store.readFullHistory('append-atomic')).messages).toEqual([original]);
-    expect(await f.store.getRecord('pending', 'new')).toEqual({ text: '待交付' });
-    await expect(f.store.commitConversation({ ...mutation, messages: [] })).rejects.toMatchObject({ code: 'INVALID_INPUT' });
-    await expect(f.store.commitConversation({ ...mutation, messageUpdates: [] })).rejects.toMatchObject({ code: 'INVALID_INPUT' });
+    expect(() => database.execute('commitConversation', mutation)).toThrow(expect.objectContaining({ code: 'REVISION_CONFLICT' }));
+    expect(database.execute('getConversationInfo', { id: 'append-atomic' })).toEqual(before);
+    expect(database.execute('readFullHistory', { id: 'append-atomic' }).messages).toEqual([original]);
+    expect(database.execute('getRecord', { namespace: 'pending', id: 'new' })).toEqual({ text: '待交付' });
+    expect(database.execute('listSnapshots', { conversationId: 'append-atomic' })).toEqual([]);
+    expect(() => database.execute('commitConversation', { ...mutation, messages: [] }))
+      .toThrow(expect.objectContaining({ code: 'INVALID_INPUT' }));
     mutation.records[0].expectedRevision = 1;
-    const result = await f.store.commitConversation(mutation);
+    const result = database.execute('commitConversation', mutation);
     expect(result.total).toBe(2);
-    expect((await f.store.readFullHistory('append-atomic')).messages).toEqual([original, mutation.appendMessages[0]]);
-    expect(await f.store.getRecord('pending', 'new')).toBeNull();
-    await expect(f.store.commitConversation(mutation)).rejects.toMatchObject({ code: 'REVISION_CONFLICT' });
-  } finally { await f.cleanup(); }
+    expect(result.revision).toBe(before.historyRevision + 1);
+    expect(database.execute('readFullHistory', { id: 'append-atomic' }).messages)
+      .toEqual([mutation.messageUpdates[0].message, mutation.appendMessages[0]]);
+    expect(database.execute('getSnapshot', { id: 'before-append' })?.history).toEqual([original]);
+    expect(database.execute('getRecord', { namespace: 'pending', id: 'new' })).toBeNull();
+    expect(() => database.execute('commitConversation', mutation)).toThrow(expect.objectContaining({ code: 'REVISION_CONFLICT' }));
+  } finally { database.execute('close', undefined); await f.cleanup(); }
 });
 
 test('交付积压分批提交，后续冲突重试保留先前进度和父节点顺序', async () => {

@@ -174,6 +174,7 @@ describe('real HTTP model adapter with existing provider codecs', () => {
 
   test('centralizes token limits, strict schemas, reasoning and stable compatibility identities', async () => {
     const response = await adapter.generate(input());
+    expect(response).toMatchObject({ finishReason: 'tool_calls', completionStatus: 'complete' });
     expect(response.responseDuration).toEqual(expect.any(Number));
     expect(response.ttft).toBeUndefined();
     expect(response.parts[0]).toMatchObject({ functionCall: { id: 'call_http', name: 'inspect', args: { path: 'readme.md', optional: null } } });
@@ -194,6 +195,7 @@ describe('real HTTP model adapter with existing provider codecs', () => {
     profile.stream = true;
     const deltas: unknown[] = [];
     const response = await adapter.generate({ ...input(), onDelta: parts => deltas.push(...parts) });
+    expect(response).toMatchObject({ finishReason: 'stop', completionStatus: 'complete' });
     expect(response.parts).toContainEqual({ text: 'stream answer' });
     expect(response.usageMetadata).toMatchObject({ totalTokenCount: 7 });
     expect(response.ttft).toEqual(expect.any(Number));

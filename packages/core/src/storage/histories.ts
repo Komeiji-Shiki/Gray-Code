@@ -396,8 +396,8 @@ export class HistoryStore {
       .run(info.revision + 1, info.search_revision === info.revision ? info.revision + 1 : -1, id);
   }
 
-  patch(id: string, updates: { index: number; message: PlatformMessage }[]): void {
-    if (!updates.length) return;
+  patch(id: string, updates: { index: number; message: PlatformMessage }[], appendMessages: PlatformMessage[] = []): void {
+    if (!updates.length) { this.append(id, appendMessages); return; }
     const info = this.info(id);
     const changes = new Map<number, PlatformMessage>();
     for (const { index, message } of updates) {
@@ -443,7 +443,9 @@ export class HistoryStore {
       }
     }
     if (next !== ordered.length) throw new PlatformStorageError('CORRUPT_DATA', 'History sequence contains missing entries.');
-    if (!changed) return;
+    this.append(id, appendMessages);
+    if (!changed && !appendMessages.length) return;
+    // 局部更新和新增后缀作为一次提交发布，快照与游标只观察到同一个新版本。
     this.db.prepare('UPDATE histories SET revision=?,search_revision=? WHERE id=?')
       .run(info.revision + 1, info.search_revision === info.revision ? info.revision + 1 : -1, id);
   }
