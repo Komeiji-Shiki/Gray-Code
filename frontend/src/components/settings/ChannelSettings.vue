@@ -616,7 +616,7 @@ function onChangeType(newType: string) {
 
   showConfirm(
     t('components.settings.channelSettings.dialog.changeType.title'),
-    formatMessage(t('components.settings.channelSettings.dialog.changeType.message'), getTypeName(newType)),
+    formatMessage(t('components.settings.channelSettings.dialog.changeType.message'), getTypeName(newType as ChannelType)),
     async () => {
       try {
         // 先完成旧类型界面中尚未落盘的 URL/Key 保存，再切换类型；保证写入顺序，

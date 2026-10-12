@@ -62,8 +62,10 @@ function confirmation() { return document.querySelector<HTMLElement>('.modal[rol
 test('设置页每次进入都有焦点，Tab 和 Shift+Tab 循环时跳过隐藏与禁用控件', async () => {
   const wrapper = await openSettings()
   expect(document.activeElement).toBe(wrapper.element)
+  expect(wrapper.get<HTMLButtonElement>('.platform-settings-footer button.primary').element.disabled).toBe(true)
+  expect(wrapper.get<HTMLButtonElement>('.platform-settings-footer button:not(.primary)').element.disabled).toBe(true)
   key('Tab'); expect(document.activeElement?.id).toBe('first-field')
-  key('Tab', true); expect(document.activeElement).toBe(wrapper.get('.platform-settings-footer button.primary').element)
+  key('Tab', true); expect(document.activeElement?.id).toBe('close-settings')
   key('Tab'); expect(document.activeElement?.id).toBe('first-field')
   visible.value = false; await flushPromises(); expect(document.activeElement).toBe(opener)
   visible.value = true; await flushPromises(); expect(document.activeElement).toBe(wrapper.element)

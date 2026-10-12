@@ -484,8 +484,8 @@ export function createChatState(): ChatStoreState {
    */
   const visionSplitChecked = ref(true)
   
-  /** 工作区筛选模式（默认当前工作区） */
-  const workspaceFilter = ref<WorkspaceFilter>('current')
+  /** 工作区筛选模式（默认显示全部历史） */
+  const workspaceFilter = ref<WorkspaceFilter>('all')
 
   /** 当前 Build 会话（Plan 执行） */
   const activeBuild = ref<BuildSession | null>(null)

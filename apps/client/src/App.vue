@@ -127,7 +127,8 @@ const viewportHeight = ref(window.visualViewport?.height ?? window.innerHeight);
 const viewportWidth = ref(window.innerWidth);
 const savedSidebarWidth = Number(localStorage.getItem('graycode.sidebarWidth'));
 const sidebarWidth = ref(Number.isFinite(savedSidebarWidth) && savedSidebarWidth > 0 ? savedSidebarWidth : 250);
-const sidebarMaximum = computed(() => Math.max(200, Math.min(560, viewportWidth.value - 360)));
+// 侧栏拖到最宽时仍为聊天列和分隔条保留位置。
+const sidebarMaximum = computed(() => Math.max(200, Math.min(560, viewportWidth.value - 480 - 5)));
 const visibleSidebarWidth = computed(() => Math.max(200, Math.min(sidebarMaximum.value, sidebarWidth.value)));
 const sidebarResizing = ref(false);
 const navigation = ref<HTMLElement>();
@@ -654,7 +655,7 @@ onUnmounted(() => {
     </div>
     <footer class="statusbar">
       <span>
-        {{ state.snapshot?.settings.workspaces.find((workspace) => workspace.id === state.workspaceId)?.directory ?? t('uiAppStartConversationHelp') }}
+        {{ state.snapshot?.settings.workspaces.find((workspace) => workspace.id === state.workspaceId)?.directory ?? '' }}
       </span>
       <span class="statusbar-right">
         {{ isWeb ? (webUi.connection === 'connected' ? t('uiAppWebConnected') : t('uiAppWebReconnecting')) : t('uiAppDesktopTitle') }}

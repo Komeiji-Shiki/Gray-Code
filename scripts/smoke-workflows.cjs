@@ -56,6 +56,60 @@ async function runProjectSwitchWorkflow({ rpc, ui, evaluate, chat, until, getReq
     emptyProjectCreatesConversation: true, selectedProjectReadFile: true, ordinaryConversationPreserved: true };
 }
 
+async function verifyShellShortcuts({ window, rpc, evaluate, chat, until, projectConversationId }) {
+  await evaluate(`window.__shellShortcutSmoke = { newChats: 0, sidebarChanges: 0, views: [], focus: null };
+    const sidebar = document.querySelector('.conversation-sidebar');
+    window.__shellShortcutObserver = new MutationObserver(records => {
+      window.__shellShortcutSmoke.sidebarChanges += records.filter(record => record.attributeName === 'class').length;
+    });
+    window.__shellShortcutObserver.observe(sidebar, { attributes: true, attributeFilter: ['class'] });
+    window.__shellShortcutUnsubscribe = window.graycode.subscribe(event => {
+      if (event.type === 'ui.message' && event.message?.command === 'newChat') window.__shellShortcutSmoke.newChats++;
+      if (event.type === 'ui.conversation.views') window.__shellShortcutSmoke.views = event.views;
+      if (event.type === 'ui.conversation.focused') window.__shellShortcutSmoke.focus = event;
+    }); undefined`);
+  const sidebarExpanded = await evaluate('document.querySelector(".sidebar-toggle").getAttribute("aria-expanded")');
+  const keyboard = window.webContents.debugger;
+  keyboard.attach('1.3');
+  async function press(key, keyCode, shift = false) {
+    await chat('document.querySelector(".input-editor").focus()');
+    assert(await chat('document.activeElement === document.querySelector(".input-editor")'), 'The chat iframe must own keyboard focus.');
+    const event = { key, code: `Key${key.toUpperCase()}`, windowsVirtualKeyCode: keyCode,
+      nativeVirtualKeyCode: keyCode, modifiers: shift ? 10 : 2 };
+    await keyboard.sendCommand('Input.dispatchKeyEvent', { type: 'keyDown', ...event });
+    await keyboard.sendCommand('Input.dispatchKeyEvent', { type: 'keyUp', ...event });
+    await evaluate('new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))');
+  }
+  try {
+    await press('b', 66);
+    await until(() => evaluate(`document.querySelector('.sidebar-toggle').getAttribute('aria-expanded') !== ${JSON.stringify(sidebarExpanded)}`),
+      'Ctrl+B toggles the sidebar from the chat iframe');
+    assert.equal(await evaluate('window.__shellShortcutSmoke.sidebarChanges'), 1, 'Ctrl+B must toggle exactly once.');
+    await press('b', 66);
+    await until(() => evaluate(`document.querySelector('.sidebar-toggle').getAttribute('aria-expanded') === ${JSON.stringify(sidebarExpanded)}`),
+      'Ctrl+B restores the sidebar');
+    assert.equal(await evaluate('window.__shellShortcutSmoke.sidebarChanges'), 2);
+
+    await press('n', 78);
+    await until(() => evaluate('window.__shellShortcutSmoke.views.some(view => view.active && !view.conversationId)'),
+      'Ctrl+N opens a new conversation from the chat iframe');
+    assert.equal(await evaluate('window.__shellShortcutSmoke.newChats'), 1, 'Ctrl+N must dispatch one new conversation command.');
+
+    await rpc('ui.command', { command: 'platform.openModeConversation', data: { conversationId: projectConversationId } });
+    await until(() => evaluate(`window.__shellShortcutSmoke.focus?.conversationId === ${JSON.stringify(projectConversationId)}`),
+      'restore the project conversation for search');
+    await evaluate(`if (!document.querySelector('.desktop-workspace').classList.contains('chat-focused'))
+      document.querySelector('.titlebar .panel-toggle').click();`);
+    await press('f', 70, true);
+    await until(() => evaluate('document.querySelector(".search-panel")?.getBoundingClientRect().width > 0'),
+      'Ctrl+Shift+F opens project search from the chat iframe');
+    return { iframeOwnsFocus: true, sidebarSingleToggleAndRestore: true, newConversationCommandCount: 1, projectSearchVisible: true };
+  } finally {
+    keyboard.detach();
+    await evaluate('window.__shellShortcutObserver.disconnect(); window.__shellShortcutUnsubscribe(); undefined');
+  }
+}
+
 async function runCompanionWorkflow({ window, rpc, evaluate, chat, until, output, configId, getRequests }) {
   const resource = (await rpc('pets.list'))[0];
   assert(resource?.actions.length, 'The existing pet smoke must provide an annotated resource.');
@@ -290,4 +344,4 @@ async function verifyInputToolbar({ window, chat, until, output }) {
   return { actions, icons, screenshots: pictures, keyboardNavigation: true, keyboardCloseAndFocusRestore: true, tabClosesMenu: true };
 }
 
-module.exports = { runProjectSwitchWorkflow, runCompanionWorkflow, verifyInputToolbar, screenshot };
+module.exports = { runProjectSwitchWorkflow, verifyShellShortcuts, runCompanionWorkflow, verifyInputToolbar, screenshot };

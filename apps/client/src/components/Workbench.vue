@@ -22,7 +22,7 @@ import ComputerPane from './ComputerPane.vue';
 import NodePane from './NodePane.vue';
 import { computerState } from '../computer';
 import DebugControls from './DebugControls.vue';
-import { connectDebugging, debugState, toggleBreakpoint } from '../debugging';
+import { connectDebugging, toggleBreakpoint } from '../debugging';
 import MobileCodeEditor from './MobileCodeEditor.vue';
 import WorkbenchTabs from './WorkbenchTabs.vue';
 import NavigationIcon from './navigation/NavigationIcon.vue';

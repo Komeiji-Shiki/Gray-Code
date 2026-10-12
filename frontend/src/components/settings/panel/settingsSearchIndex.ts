@@ -89,7 +89,10 @@ export function settingsSearchIndex(isDesktopHost: boolean, supportsFileAssociat
   {
     key: 'channel-advanced-options', tab: 'channel',
     labelKey: 'components.settings.channelSettings.form.advancedOptions.title',
-    keywords: ['高级选项', 'advanced options', '高度な設定', 'gemini', 'openai', 'anthropic', '扩展'],
+    keywords: [
+      '高级选项', 'advanced options', '高度な設定', 'gemini', 'openai', 'anthropic', '扩展',
+      'OpenCode', 'OpenCode Go', 'opencode', 'x-opencode-session', '会话', 'session', 'セッション'
+    ],
     anchor: '[data-search-anchor="advanced-options"]'
   },
   {
@@ -103,12 +106,6 @@ export function settingsSearchIndex(isDesktopHost: boolean, supportsFileAssociat
     labelKey: 'components.settings.channelSettings.form.customHeaders.title',
     keywords: ['自定义标头', 'custom headers', 'header', 'ヘッダー', '请求头'],
     anchor: '[data-search-anchor="custom-headers"]'
-  },
-  {
-    key: 'channel-opencode-session', tab: 'channel',
-    labelKey: 'components.settings.channelSettings.form.openCodeSession.title',
-    keywords: ['OpenCode', 'OpenCode Go', 'opencode', 'x-opencode-session', '会话', 'session', 'セッション'],
-    anchor: '[data-search-anchor="advanced-options"]'
   },
   {
     key: 'channel-auto-retry', tab: 'channel',

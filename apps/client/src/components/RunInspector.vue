@@ -5,13 +5,21 @@ import type { RunEvent, RunRecord, RuntimeDiagnostics } from '@graycode/contract
 import { rpc as call, subscribe } from '../api';
 import { state } from '../state';
 import JsonDetails from './JsonDetails.vue';
+import NavigationIcon from './navigation/NavigationIcon.vue';
 import { webUi } from '../webBridge';
 import { eventLabels, eventLane, eventLaneLabel, type EventLane, mergeRunEvents, requestGroups, runActivity, type RequestSnapshot } from '../runInspector';
 
 const open = ref(false);
 watch(open, (value) => {
   state.inspectorOpen = value;
-  if (value) void loadDiagnostics();
+  if (value) {
+    followLatestRequest = true;
+    void loadDiagnostics();
+  } else {
+    previewEpoch++;
+    request.value = null;
+    requestLoading.value = false;
+  }
 });
 onUnmounted(() => {
   state.inspectorOpen = false;
@@ -21,6 +29,7 @@ const selectedId = ref('');
 const events = ref<RunEvent[]>([]);
 const error = ref('');
 const request = ref<RequestSnapshot | null>(null);
+const requestLoading = ref(false);
 const diagnostics = ref<RuntimeDiagnostics | null>(null);
 const view = ref<'groups' | 'plain'>('groups');
 const lane = ref<EventLane | 'all'>('all');
@@ -29,6 +38,7 @@ const more = ref(false);
 let conversationEpoch = 0;
 let runEpoch = 0;
 let previewEpoch = 0;
+let followLatestRequest = true;
 let historyCursor = 0;
 let refreshTimer: ReturnType<typeof setTimeout> | undefined;
 let runsRequest: Promise<void> | undefined;
@@ -47,7 +57,12 @@ const json = (value: unknown) => (typeof value === 'string' ? value : JSON.strin
 // 请求预览内容只随请求变化格式化，避免运行事件更新时反复序列化长上下文正文。
 const groups = computed(() => requestGroups(request.value?.body).map((group) => ({ title: group.title, text: json(group.value) })));
 const plainRequestBody = computed(() => JSON.stringify(request.value?.body, null, 2));
-const requests = computed(() => events.value.filter((event) => event.type === 'model.request'));
+const latestRequest = computed(() => {
+  for (let index = events.value.length - 1; index >= 0; index--) {
+    if (events.value[index].type === 'model.request') return events.value[index];
+  }
+  return undefined;
+});
 const streaming = computed(() => {
   for (let index = events.value.length - 1; index >= 0; index--) {
     if (events.value[index].type === 'message.saved') return events.value[index].payload.streaming as { inputEvents: number; outputEvents: number } | undefined;
@@ -114,17 +129,30 @@ async function loadEvents() {
     if (epoch === runEpoch) loading.value = false;
   }
 }
-async function showRequest(iteration: number) {
+async function showRequest(iteration: number, automatic = false) {
+  if (!automatic) followLatestRequest = false;
   const epoch = ++previewEpoch;
+  const id = selectedId.value;
   request.value = null;
+  requestLoading.value = true;
   try {
-    const result = await call('runs.request', { id: selectedId.value, iteration });
+    let result = await call('runs.request', { id, iteration });
+    if (epoch !== previewEpoch) return;
+    // 运行轮次在准备上下文时就会前进，此时最近已经发出的请求仍是上一轮。
+    if (!result && automatic && iteration > 1) result = await call('runs.request', { id, iteration: iteration - 1 });
     if (epoch !== previewEpoch) return;
     request.value = result;
-    if (!result) error.value = t('uiRunInspectorRequestBodyNotSaved');
+    if (!result && !automatic) error.value = t('uiRunInspectorRequestBodyNotSaved');
   } catch (cause) {
     if (epoch === previewEpoch) error.value = (cause as Error).message;
+  } finally {
+    if (epoch === previewEpoch) requestLoading.value = false;
   }
+}
+function previewLatestRequest() {
+  if (!open.value || !followLatestRequest) return;
+  const iteration = Math.max(selected.value?.iteration ?? 0, Number(latestRequest.value?.payload.iteration ?? 0));
+  if (iteration > 0) void showRequest(iteration, true);
 }
 function refreshSoon() {
   if (refreshTimer) return;
@@ -150,10 +178,13 @@ watch(selectedId, () => {
   historyCursor = 0;
   events.value = [];
   request.value = null;
+  requestLoading.value = false;
+  followLatestRequest = true;
   loading.value = false;
   more.value = false;
   void loadEvents();
 });
+watch([open, selectedId, () => selected.value?.iteration, () => latestRequest.value?.sequence], previewLatestRequest);
 const unsubscribe = subscribe((notification) => {
   if (notification.type === 'transport.connected') {
     void loadRuns();
@@ -209,21 +240,27 @@ onUnmounted(() => {
       {{ error }}
       <button @click="error = ''">{{ t('uiComputerPaneCollapse') }}</button>
     </p>
-    <div v-if="diagnostics" class="inspector-metrics" :aria-label="t('uiRunInspectorResourceDiagnosticsSnapshot')">
-      <span>{{ t('uiRunInspectorActiveTasks') }} {{ diagnostics.activeRuns }}</span>
-      <span>{{ t('uiRunInspectorWorkspaceCommandProcesses') }} {{ diagnostics.managedProcesses }}</span>
-      <span>{{ t('uiNodeTasksTool') }} {{ diagnostics.registeredTools }}</span>
-      <span>{{ t('uiRunInspectorParameterValidationCache') }} {{ diagnostics.compiledToolSchemas }}</span>
-      <span v-if="diagnostics.eventStream">
-        {{ t('uiRunInspectorWebPush') }} {{ diagnostics.eventStream.connections }} {{ t('uiRunInspectorPushConnectionsBacklog') }}
-        {{ (diagnostics.eventStream.queuedBytes / 1024).toFixed(1) }} {{ t('uiRunInspectorPushBacklogResyncs') }} {{ diagnostics.eventStream.backlogResets }}
-        {{ t('uiMemoryLibraryCalls') }}
-      </span>
-      <span v-if="streaming?.inputEvents">
-        {{ t('uiRunInspectorLatestReplyPrefix') }}{{ streaming.inputEvents }} {{ t('uiRunInspectorMergedDeltasSuffix') }} {{ streaming.outputEvents }}
-        {{ t('uiRunInspectorPushCountSuffix') }}
-      </span>
-    </div>
+    <details v-if="diagnostics" class="inspector-diagnostics">
+      <summary class="inspector-disclosure">
+        <NavigationIcon name="chevron" class="disclosure-chevron" />
+        {{ t('uiRunInspectorDiagnostics') }}
+      </summary>
+      <div class="inspector-metrics" :aria-label="t('uiRunInspectorResourceDiagnosticsSnapshot')">
+        <span>{{ t('uiRunInspectorActiveTasks') }} {{ diagnostics.activeRuns }}</span>
+        <span>{{ t('uiRunInspectorWorkspaceCommandProcesses') }} {{ diagnostics.managedProcesses }}</span>
+        <span>{{ t('uiNodeTasksTool') }} {{ diagnostics.registeredTools }}</span>
+        <span>{{ t('uiRunInspectorParameterValidationCache') }} {{ diagnostics.compiledToolSchemas }}</span>
+        <span v-if="diagnostics.eventStream">
+          {{ t('uiRunInspectorWebPush') }} {{ diagnostics.eventStream.connections }} {{ t('uiRunInspectorPushConnectionsBacklog') }}
+          {{ (diagnostics.eventStream.queuedBytes / 1024).toFixed(1) }} {{ t('uiRunInspectorPushBacklogResyncs') }} {{ diagnostics.eventStream.backlogResets }}
+          {{ t('uiMemoryLibraryCalls') }}
+        </span>
+        <span v-if="streaming?.inputEvents">
+          {{ t('uiRunInspectorLatestReplyPrefix') }}{{ streaming.inputEvents }} {{ t('uiRunInspectorMergedDeltasSuffix') }} {{ streaming.outputEvents }}
+          {{ t('uiRunInspectorPushCountSuffix') }}
+        </span>
+      </div>
+    </details>
     <div class="inspector-columns">
       <div class="run-timeline">
         <nav>
@@ -257,7 +294,8 @@ onUnmounted(() => {
           <button :aria-pressed="view === 'plain'" @click="view = 'plain'">{{ t('uiRunInspectorRawJSON') }}</button>
         </header>
         <p class="preview-note">{{ t('uiRunInspectorRequestBodyHelp') }}</p>
-        <p v-if="!request" class="inspector-empty">{{ requests.length ? t('uiRunInspectorSelectRequestHelp') : t('uiRunInspectorNoRequestRecords') }}</p>
+        <p v-if="requestLoading" class="inspector-empty">{{ t('uiRunInspectorLoadingRequest') }}</p>
+        <p v-else-if="!request" class="inspector-empty">{{ t('uiRunInspectorNoRequestRecords') }}</p>
         <template v-else>
           <p>{{ request.model }} · {{ request.protocol }} · {{ time(request.capturedAt) }}</p>
           <p v-if="request.metrics" class="preview-note">
@@ -273,7 +311,10 @@ onUnmounted(() => {
           <pre v-if="view === 'plain'">{{ plainRequestBody }}</pre>
           <template v-else>
             <details v-for="(group, index) in groups" :key="index" class="request-group" open>
-              <summary>{{ group.title }}</summary>
+              <summary class="inspector-disclosure">
+                <NavigationIcon name="chevron" class="disclosure-chevron" />
+                {{ group.title }}
+              </summary>
               <pre>{{ group.text }}</pre>
             </details>
           </template>
@@ -283,12 +324,36 @@ onUnmounted(() => {
   </section>
 </template>
 <style scoped>
+.inspector-diagnostics {
+  padding: 8px 16px;
+  border-bottom: 1px solid var(--gc-border-subtle);
+  color: var(--gc-text-muted);
+}
+.inspector-disclosure {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  line-height: 1.65;
+  list-style: none;
+  cursor: pointer;
+}
+.inspector-disclosure::-webkit-details-marker {
+  display: none;
+}
+.disclosure-chevron {
+  width: 14px;
+  height: 14px;
+  flex-shrink: 0;
+}
+details[open] > .inspector-disclosure .disclosure-chevron {
+  transform: rotate(90deg);
+}
 .inspector-metrics {
   display: flex;
   gap: 8px 20px;
   flex-wrap: wrap;
-  padding: 8px 16px;
-  border-bottom: 1px solid var(--gc-border-subtle);
+  padding-top: 8px;
   color: var(--gc-text-muted);
   font-size: 12px;
 }
@@ -418,10 +483,6 @@ onUnmounted(() => {
   margin: 14px 0;
   border: 1px solid var(--gc-border-subtle);
   padding: 12px;
-}
-.request-group summary,
-.timeline-event summary {
-  cursor: pointer;
 }
 .inspector-error {
   color: var(--gc-danger);

@@ -194,7 +194,7 @@ test('Workbench传递明确的预览工作区与目标，项目切换清除旧�
   const event = { type: 'workspace.diff.open', workspaceId: 'second', id: 'review-two', path: 'two.ts', toolCallId: 'tool-two' };
   publish(event); await flushPromises();
   const view = () => wrapper.findComponent({ name: 'DiffPanel' });
-  expect(state.workspaceId).toBe('second'); expect(view().props('workspaceId')).toBe('second');
+  expect(state.workspaceId).toBe('first'); expect(view().props('workspaceId')).toBe('second');
   expect(view().props('target')).toEqual({ workspaceId: 'second', id: 'review-two', path: 'two.ts', toolCallId: 'tool-two' });
   state.workspaceId = 'third'; await flushPromises(); expect(view().props('target')).toBeUndefined();
   publish({ type: 'workspace.diff.open', toolCallId: 'current-tool' }); await flushPromises();

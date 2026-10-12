@@ -257,6 +257,22 @@ onBeforeUnmount(() => { disposed = true; });
                 @resources-changed="refreshPets" @dirty="childDirty.pet = $event" />
             </div>
           </details>
+          <div class="companion-profile-actions">
+            <label class="companion-check">
+              <input v-model="saveAsDefault" type="checkbox">
+              {{ t('companionSaveDefault') }}
+            </label>
+            <small>{{ t('companionDefaultHint') }}</small>
+            <button v-if="hasDefaults" class="companion-clear" type="button" :disabled="busy" @click="clearDefaults">
+              {{ t('companionClearDefault') }}
+            </button>
+            <div class="companion-profile-save">
+              <span v-if="configurationDirty">{{ t('companionUnsaved') }}</span>
+              <button class="primary" type="button" :disabled="busy" @click="save">
+                {{ busy ? t('companionSaving') : conversationId ? t('companionFlowSaveProfile') : t('companionCreate') }}
+              </button>
+            </div>
+          </div>
         </section>
         <section class="companion-step" data-step="screen">
           <details :open="initialStep === 'screen'">
@@ -290,22 +306,11 @@ onBeforeUnmount(() => { disposed = true; });
             </div>
           </details>
         </section>
-        <label class="companion-check">
-          <input v-model="saveAsDefault" type="checkbox">
-          {{ t('companionSaveDefault') }}
-        </label>
-        <small>{{ t('companionDefaultHint') }}</small>
-        <button v-if="hasDefaults" class="companion-clear" type="button" :disabled="busy" @click="clearDefaults">
-          {{ t('companionClearDefault') }}
-        </button>
       </template>
       <p v-else-if="busy">{{ t('companionLoading') }}</p>
     </div>
     <footer v-if="ready">
-      <span v-if="configurationDirty">{{ t('companionUnsaved') }}</span>
-      <button class="primary" type="button" :disabled="busy" @click="save">
-        {{ busy ? t('companionSaving') : conversationId ? t('companionFlowSaveProfile') : t('companionCreate') }}
-      </button>
+      <button type="button" :disabled="busy" @click="requestClose()">{{ t('close') }}</button>
     </footer>
     <section v-if="confirmLeave" class="companion-leave" role="alert">
       <p>{{ t('companionLeaveWarning') }}</p>
@@ -375,7 +380,9 @@ textarea { resize: vertical; }
 .companion-links { display: flex; gap: 10px; flex-wrap: wrap; }
 .companion-clear { display: block; margin-top: 12px; }
 footer { display: flex; gap: 12px; justify-content: flex-end; align-items: center; padding: 14px 20px; flex-shrink: 0; }
-footer span { color: var(--gc-text-muted); font-size: 12px; }
+.companion-profile-actions { padding: 16px; background: var(--gc-surface-base); }
+.companion-profile-save { display: flex; flex-wrap: wrap; gap: 12px; justify-content: flex-end; align-items: center; margin-top: 16px; }
+.companion-profile-save span { color: var(--gc-text-muted); font-size: 12px; }
 .primary { background: var(--gc-button-primary); color: var(--gc-text-on-primary); }
 .companion-error { color: var(--gc-danger); }
 .companion-leave {

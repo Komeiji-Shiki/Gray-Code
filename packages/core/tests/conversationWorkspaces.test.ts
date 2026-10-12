@@ -18,7 +18,7 @@ describe('自动对话工作区释放', () => {
 
   const createAutomatic = async (id: string) => {
     const conversation = await app.createConversation('owner', id, undefined, undefined, undefined, { id, automaticWorkspace: true });
-    return app.workspace('owner', conversation.workspaceId!, []);
+    return app.workspace('owner', String(conversation.workspaceId), []);
   };
   const createBot = async (id: string) => {
     const workspaceId = await app.botWorkspaces.get({ platform: 'discord', botId: 'bot', channelId: 'channel', direct: false }, id);

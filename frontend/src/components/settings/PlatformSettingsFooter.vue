@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { nextTick, ref } from 'vue';
+import { nextTick, onBeforeUnmount, ref, watch } from 'vue';
 import { desktopSettingsDraft as draft, flushDesktopSettings, saveDesktopSettings, discardDesktopSettings } from '../../platform/settingsDraft';
 import { sendToExtension } from '../../utils/vscode';
 import { t } from '@/i18n';
@@ -7,7 +7,26 @@ import Modal from '../common/Modal.vue';
 const emit = defineEmits<{ close: [] }>();
 const closeDialog = ref(false);
 let closeRequested = false;
-async function save() { try { await saveDesktopSettings(); } catch { /* Error remains alongside the draft. */ } }
+const savedRecently = ref(false);
+let savedFeedbackTimer: ReturnType<typeof setTimeout> | undefined;
+function clearSavedFeedback() {
+  savedRecently.value = false;
+  clearTimeout(savedFeedbackTimer);
+  savedFeedbackTimer = undefined;
+}
+async function save() {
+  if (draft.busy || !draft.dirty) return;
+  clearSavedFeedback();
+  try {
+    await saveDesktopSettings();
+    savedRecently.value = true;
+    savedFeedbackTimer = setTimeout(clearSavedFeedback, 2500);
+  } catch { /* 保存错误继续显示在草稿旁。 */ }
+}
+watch(() => draft.dirty, dirty => {
+  if (dirty) clearSavedFeedback();
+});
+onBeforeUnmount(clearSavedFeedback);
 async function requestClose() {
   if (draft.busy || closeRequested || closeDialog.value) return;
   closeRequested = true;
@@ -31,9 +50,15 @@ defineExpose({ requestClose });
 </script>
 <template>
   <footer class="platform-settings-footer">
-    <div><span>{{ t(draft.dirty ? 'desktop.settingsDraft.dirtyHint' : 'desktop.settingsDraft.cleanHint') }}</span><p v-if="draft.error" role="alert">{{ draft.error }}</p></div>
-    <button :disabled="draft.busy" @click="discardDesktopSettings">{{ t('desktop.settingsDraft.discardAll') }}</button>
-    <button class="primary" :disabled="draft.busy" @click="save">{{ t(draft.busy ? 'desktop.settingsDraft.processing' : 'desktop.settingsDraft.saveAll') }}</button>
+    <div>
+      <span role="status">{{ t(savedRecently ? 'desktop.settingsDraft.saved' : draft.dirty
+        ? 'desktop.settingsDraft.dirtyHint' : 'desktop.settingsDraft.cleanHint') }}</span>
+      <p v-if="draft.error" role="alert">{{ draft.error }}</p>
+    </div>
+    <button :disabled="draft.busy || !draft.dirty" @click="discardDesktopSettings">{{ t('desktop.settingsDraft.discardAll') }}</button>
+    <button class="primary" :disabled="draft.busy || !draft.dirty" @click="save">
+      {{ t(draft.busy ? 'desktop.settingsDraft.processing' : 'desktop.settingsDraft.saveAll') }}
+    </button>
   </footer>
   <Modal v-model="closeDialog" :title="t('desktop.settingsDraft.unsavedTitle')" :closable="false" :mask-closable="false" :close-on-escape="!draft.busy" initial-focus-selector="[data-continue-editing]" width="520px">
     <p>{{ t('desktop.settingsDraft.unsavedDescription') }}</p>
@@ -47,6 +72,7 @@ defineExpose({ requestClose });
 .platform-settings-footer p { margin: 8px 0 0; color: var(--gc-danger); }
 button { color: var(--gc-text-primary); border: 1px solid var(--gc-border-control); background: var(--gc-surface-raised); padding: 8px 16px; font: inherit; cursor: pointer; border-radius: var(--gc-radius-sm); }
 button.primary { background: var(--gc-button-primary); color: var(--gc-text-on-primary); }
+button:disabled { cursor: default; opacity: 0.5; }
 .platform-close-actions { display: flex; flex-wrap: wrap; gap: 12px; justify-content: flex-end; margin-top: 20px; }
 .save-error { color: var(--gc-danger); white-space: pre-wrap; overflow-wrap: anywhere; padding: 10px 0; }
 </style>

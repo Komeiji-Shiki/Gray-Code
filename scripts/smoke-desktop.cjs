@@ -289,6 +289,8 @@ async function main() {
     getRequests: () => workflowRequests });
   const projectSwitchWorkflow = await workflowSmoke.runProjectSwitchWorkflow({ rpc, ui, evaluate, chat, until,
     getRequests: () => projectSwitchRequests });
+  const shellShortcuts = await workflowSmoke.verifyShellShortcuts({ window, rpc, evaluate, chat, until,
+    projectConversationId: projectSwitchWorkflow.projectConversationId });
   await until(() => evaluate('Array.from(document.querySelectorAll(".navigation-project-select")).some(node => node.textContent.includes("桌面验证项目"))'), 'project navigation');
   // 工作区切换已覆盖自动创建；后续工具循环使用另一条空白项目对话。
   await evaluate('window.__smokeProjectFocused = false; window.graycode.subscribe(event => { if (event.type === "ui.conversation.focused" && event.workspaceId === "smoke" && event.conversationId) window.__smokeProjectFocused = true; }); undefined');
@@ -435,7 +437,7 @@ async function main() {
   await ui('platform.settings.update', { settings: closingSettings });
   const shutdownRetryVerified = await verifyShutdownRetry(rpc, window);
   const report = { ok: true, electron: process.versions.electron, node: process.versions.node, requests, regexSearchVerified: true, editorFlowVerified: true,
-    chatLayout, rendererPerformance, pets: petSmoke, workflows: { companion: companionWorkflow, projectSwitch: projectSwitchWorkflow, inputToolbar,
+    chatLayout, rendererPerformance, pets: petSmoke, workflows: { companion: companionWorkflow, projectSwitch: projectSwitchWorkflow, shellShortcuts, inputToolbar,
       settings: { screenshots: ['settings-context.png', 'settings-context-prompts.png', 'settings-context-count.png', 'settings-companion.png'],
         unifiedContextAndCompanion: true } },
     verified: ['SQLite worker', 'encrypted settings', 'Monaco', 'native PTY', 'HTTP model/tool loop', 'partial read yellow warning', 'on-demand context status', 'user retention immediate save', 'async question', 'approval denial', 'HTML preview', 'original tabs and input', 'full-width user messages', 'tool header layout at 760/320/240px', 'straight selection markers', 'centered channel checkbox ticks', '20 settings sections', 'system fonts', 'shared settings draft', 'MCP JSON draft and encrypted configuration', 'original UI reroll and branch switching', 'background import preview, discard and atomic save', ...(shutdownRetryVerified ? ['shutdown failure and retry with owned process'] : [])], fontCount: fonts.length, errors, output };
