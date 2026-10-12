@@ -107,6 +107,12 @@ async function verifyShutdownRetry(rpc, window) {
     await until(() => failed || prematureExit, 'shutdown failure reported');
     assert(exitDuringStop); assert(!prematureExit); assert(!quitRequested); assert(!window.isDestroyed());
     assert.equal(questions, 1); assert(failed.includes('受管进程关闭失败'));
+    const closingFailure = await window.webContents.executeJavaScript(`(async () => {
+      ${bridgeSource}
+      try { await GraycodeSmokeBridge.callDesktopBridge(window.graycode, 'settings.get'); return null; }
+      catch (error) { return { code: error.code, message: error.message }; }
+    })()`, true);
+    assert.equal(closingFailure?.code, 'APP_CLOSING', 'The desktop bridge must preserve the closing error code.');
     assert.doesNotThrow(() => process.kill(pid, 0));
     if (systemRoot === undefined) delete process.env.SystemRoot; else process.env.SystemRoot = systemRoot;
     originalQuit();
