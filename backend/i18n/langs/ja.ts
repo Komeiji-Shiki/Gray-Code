@@ -196,7 +196,10 @@ const ja: BackendLanguageMessages = {
                 "startupDetail": "元のデータは保持されます。再試行するか、別のデータフォルダーで起動し、設定から復元できます。",
                 "retry": "再試行",
                 "openLogs": "ログフォルダーを開く",
-                "chooseData": "別のデータフォルダーで起動"
+                "chooseData": "別のデータフォルダーで起動",
+                uirunInspectorTaskFailed: "タスクに失敗",
+                uirunInspectorDiffReviewRequested: "ファイル変更のレビュー待ち",
+                uirunInspectorDiffReviewResolved: "ファイル変更のレビュー完了",
             },
         installerArtwork: {
             tagline: "ローカル優先の AI ワークスペース",

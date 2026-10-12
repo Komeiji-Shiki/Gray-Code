@@ -8,6 +8,7 @@ interface SessionState { event: ClawdEvent; active: boolean; dirty: boolean; las
 const priority: Record<ClawdEvent['state'], number> = { idle: 0, attention: 1, thinking: 2, working: 3, error: 4, notification: 5 };
 const observedEvents = new Set<RunEvent['type']>(['run.created', 'run.started', 'model.preparing', 'model.started',
   'tool.started', 'tool.completed', 'approval.requested', 'approval.resolved', 'question.asked', 'question.answered',
+  'diff.review.requested', 'diff.review.resolved',
   'question.expired', 'run.waiting_input', 'run.completed', 'run.failed', 'run.cancelled', 'run.interrupted']);
 
 /** 联动只订阅运行状态，网络发送与模型、工具和审批流程分别推进。 */
@@ -116,12 +117,13 @@ export class ClawdService {
       case 'run.started': name = 'UserPromptSubmit'; break;
       case 'tool.started': state = 'working'; name = 'PreToolUse'; break;
       case 'tool.completed': state = event.payload.success === false ? 'error' : 'working'; name = event.payload.success === false ? 'PostToolUseFailure' : 'PostToolUse'; break;
-      case 'approval.requested': case 'question.asked': case 'run.waiting_input': state = 'notification'; name = 'Notification'; break;
+      case 'approval.requested': case 'diff.review.requested': case 'question.asked': case 'run.waiting_input':
+        state = 'notification'; name = 'Notification'; break;
       case 'run.completed': state = 'attention'; name = 'Stop'; this.runs.delete(event.runId); break;
       case 'run.failed': state = 'error'; name = 'PostToolUseFailure'; this.runs.delete(event.runId); break;
       case 'run.cancelled': case 'run.interrupted': state = 'idle'; name = 'SessionEnd'; this.runs.delete(event.runId); break;
     }
-    if (this.runs.has(event.runId) && (this.app.runtime.pendingApprovals().some(item => item.runId === event.runId)
+    if (this.runs.has(event.runId) && (this.app.runtime.hasPendingApproval(event.runId)
       || this.app.runtime.pendingQuestions().some(item => item.runId === event.runId))) { state = 'notification'; name = 'Notification'; }
     tracked.event = { ...this.base(tracked.run, state, name, tracked.event.session_title),
       ...(typeof event.payload.toolName === 'string' ? { tool_name: event.payload.toolName.slice(0, 256) } : {}),

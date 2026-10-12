@@ -13,7 +13,7 @@ export const eventLabels: Record<string, string> = {
     return t('uirunInspectorTaskCompleted');
   },
   get ['run.failed']() {
-    return t('petAnimationFailed');
+    return t('uirunInspectorTaskFailed');
   },
   get ['run.cancelled']() {
     return t('uirunInspectorTaskCanceled');
@@ -47,6 +47,12 @@ export const eventLabels: Record<string, string> = {
   },
   get ['approval.resolved']() {
     return t('uirunInspectorActionConfirmationHandled');
+  },
+  get ['diff.review.requested']() {
+    return t('uirunInspectorDiffReviewRequested');
+  },
+  get ['diff.review.resolved']() {
+    return t('uirunInspectorDiffReviewResolved');
   },
   get ['question.asked']() {
     return t('uirunInspectorQuestionAsked');
@@ -121,7 +127,7 @@ export function mergeRunEvents(current: RunEvent[], incoming: RunEvent[]): RunEv
 export type EventLane = 'task' | 'model' | 'tool' | 'interaction' | 'context';
 export function eventLane(type: string): EventLane {
   if (type.startsWith('tool.')) return 'tool';
-  if (/^(approval|question)\./.test(type) || type === 'run.waiting_input') return 'interaction';
+  if (/^(approval|question|diff\.review)\./.test(type) || type === 'run.waiting_input') return 'interaction';
   if (type.startsWith('context.')) return 'context';
   if (type.startsWith('model.') || type === 'message.saved') return 'model';
   return 'task';

@@ -196,7 +196,10 @@ const en: BackendLanguageMessages = {
                 "startupDetail": "Your original data directory is preserved. Retry, or start with another data directory and use recovery in Settings.",
                 "retry": "Retry",
                 "openLogs": "Open logs folder",
-                "chooseData": "Start with another data folder"
+                "chooseData": "Start with another data folder",
+                uirunInspectorTaskFailed: "Task failed",
+                uirunInspectorDiffReviewRequested: "Awaiting file change review",
+                uirunInspectorDiffReviewResolved: "File change review resolved",
             },
         installerArtwork: {
             tagline: "LOCAL-FIRST AI WORKSPACE",

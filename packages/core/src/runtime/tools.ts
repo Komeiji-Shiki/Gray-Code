@@ -22,6 +22,8 @@ export interface ToolContext {
   requestApproval?: (reason: string) => Promise<boolean>;
   /** 外部代理的每个权限请求分别确认，保留上游选项身份，不复用整次工具的确认结果。 */
   requestPermission?: (reason: string, choices: ApprovalChoice[], signal?: AbortSignal) => Promise<ApprovalDecision>;
+  /** 宿主只在实际等待文件审查时报告生命周期；运行状态和事件仍由运行器管理。 */
+  onDiffReview?: (review: { diffId: string; path: string; status: 'pending' | 'accepted' | 'rejected' | 'cancelled' }) => Promise<void>;
   workspace?: WorkspaceDefinition;
   signal: AbortSignal;
   /** 仅由运行器设置，后台宿主据此把终态返回原始调用。 */

@@ -68,6 +68,7 @@ export type RuntimeNotification = { type: 'event'; event: RunEvent }
 interface ActiveRun {
   conversationId: string; actorId: string; controller: AbortController; done: Promise<void>;
   pendingTools: Map<string, Pick<ModelToolCall, 'id' | 'name'>>;
+  pendingDiffReviews: Set<string>;
 }
 interface PendingApproval { request: ApprovalRequest; resolve: (decision: ApprovalDecision) => void }
 interface FunctionCall extends ModelToolCall {}
@@ -315,7 +316,8 @@ export class PlatformRuntime {
     const execute = () => this.execute(run, structuredClone(configuredAgent), workspace ? structuredClone(workspace) : undefined, catalog, controller.signal, selection);
     const done = Promise.resolve().then(() => this.services.runInScope ? this.services.runInScope(run, execute) : execute())
       .finally(() => { scope?.signal?.removeEventListener('abort', abort); this.active.delete(run.id); this.questions.clear(run.id); });
-    this.active.set(run.id, { conversationId: run.conversationId, actorId: run.actorId, controller, done, pendingTools: new Map() });
+    this.active.set(run.id, { conversationId: run.conversationId, actorId: run.actorId, controller, done,
+      pendingTools: new Map(), pendingDiffReviews: new Set() });
     // 对话事务和取消句柄都已建立，界面才开始订阅这一轮任务。
     this.notify({ type: 'run.created', runId: run.id, run: structuredClone(run), ...(message ? { message: structuredClone(message) } : {}) });
     void done.catch(() => undefined);
@@ -357,6 +359,11 @@ export class PlatformRuntime {
     this.approvals.delete(approvalId); pending.resolve({ accepted, ...(choiceId !== undefined ? { choiceId } : {}) });
   }
   pendingApprovals(): ApprovalRequest[] { return [...this.approvals.values()].map(value => structuredClone(value.request)); }
+  /** 文件审查和异步工具权限可能同时等待，单项结束不能清除另一项的等待状态。 */
+  hasPendingApproval(runId: string): boolean {
+    return !!this.active.get(runId)?.pendingDiffReviews.size
+      || [...this.approvals.values()].some(value => value.request.runId === runId);
+  }
   pendingQuestions() { return this.questions.list(); }
   async answerQuestion(questionId: string, actorId: string, answers: string[]): Promise<void> {
     const actor = await this.services.actor(actorId);
@@ -730,6 +737,15 @@ export class PlatformRuntime {
           context.actor = latest ?? undefined;
           return decision;
         },
+        onDiffReview: async review => {
+          const pending = this.active.get(run.id)!.pendingDiffReviews;
+          const requested = review.status === 'pending';
+          if (requested) pending.add(review.diffId);
+          else pending.delete(review.diffId);
+          await this.event(run.id, requested ? 'diff.review.requested' : 'diff.review.resolved',
+            { ...review, toolCallId: call.id, toolName: call.name },
+            { status: this.hasPendingApproval(run.id) ? 'awaiting_approval' : 'running' });
+        },
         agent: { ...structuredClone(agent), toolNames: catalog.declarations.map(tool => tool.name) },
         modelSelection: { providerId: selection.providerId, modelOverride: selection.modelOverride, reasoningEffort: selection.reasoningEffort },
         askUser: async questions => {
@@ -768,7 +784,8 @@ export class PlatformRuntime {
     try {
       await this.event(run.id, 'approval.requested', { ...request, ...(reason ? { reason } : {}) }, { status: 'awaiting_approval' });
       const result = await accepted;
-      await this.event(run.id, 'approval.resolved', { approvalId: request.id, toolCallId: call.id, toolName: call.name, ...result }, { status: 'running' });
+      await this.event(run.id, 'approval.resolved', { approvalId: request.id, toolCallId: call.id, toolName: call.name, ...result },
+        { status: this.hasPendingApproval(run.id) ? 'awaiting_approval' : 'running' });
       signal.throwIfAborted();
       return result;
     } finally { signal.removeEventListener('abort', abort); this.approvals.delete(request.id); }

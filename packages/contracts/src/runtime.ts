@@ -89,6 +89,7 @@ export interface RunEvent {
   timestamp: number;
   type: 'run.created' | 'run.started' | 'run.completed' | 'run.failed' | 'run.cancelled' | 'run.interrupted'
     | 'message.saved' | 'tool.started' | 'tool.completed' | 'approval.requested' | 'approval.resolved'
+    | 'diff.review.requested' | 'diff.review.resolved'
     | 'question.asked' | 'question.answered' | 'question.expired' | 'run.waiting_input'
     | 'model.preparing' | 'model.started' | 'model.request' | 'model.streaming'
     | 'context.summary.started' | 'context.summary.completed' | 'context.summary.failed' | 'context.fallback';

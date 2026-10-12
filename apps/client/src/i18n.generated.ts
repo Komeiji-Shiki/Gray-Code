@@ -1783,7 +1783,10 @@ export default {
     "startupDetail": "原数据目录会保留。可以重试启动，或选择其他数据目录启动后使用设置中的恢复入口。",
     "retry": "重试",
     "openLogs": "打开日志目录",
-    "chooseData": "从其他数据目录启动"
+    "chooseData": "从其他数据目录启动",
+    "uirunInspectorTaskFailed": "任务失败",
+    "uirunInspectorDiffReviewRequested": "等待文件修改审查",
+    "uirunInspectorDiffReviewResolved": "文件修改审查已处理"
   },
   "en": {
     "screenAutoStart": "Start automatically when this companion conversation opens",
@@ -3562,7 +3565,10 @@ export default {
     "startupDetail": "Your original data directory is preserved. Retry, or start with another data directory and use recovery in Settings.",
     "retry": "Retry",
     "openLogs": "Open logs folder",
-    "chooseData": "Start with another data folder"
+    "chooseData": "Start with another data folder",
+    "uirunInspectorTaskFailed": "Task failed",
+    "uirunInspectorDiffReviewRequested": "Awaiting file change review",
+    "uirunInspectorDiffReviewResolved": "File change review resolved"
   },
   "ja": {
     "screenAutoStart": "このコンパニオン会話を開くと自動的に開始する",
@@ -5341,6 +5347,9 @@ export default {
     "startupDetail": "元のデータは保持されます。再試行するか、別のデータフォルダーで起動し、設定から復元できます。",
     "retry": "再試行",
     "openLogs": "ログフォルダーを開く",
-    "chooseData": "別のデータフォルダーで起動"
+    "chooseData": "別のデータフォルダーで起動",
+    "uirunInspectorTaskFailed": "タスクに失敗",
+    "uirunInspectorDiffReviewRequested": "ファイル変更のレビュー待ち",
+    "uirunInspectorDiffReviewResolved": "ファイル変更のレビュー完了"
   }
 };

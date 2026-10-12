@@ -199,7 +199,10 @@ const zhCN = {
                 "startupDetail": "原数据目录会保留。可以重试启动，或选择其他数据目录启动后使用设置中的恢复入口。",
                 "retry": "重试",
                 "openLogs": "打开日志目录",
-                "chooseData": "从其他数据目录启动"
+                "chooseData": "从其他数据目录启动",
+                uirunInspectorTaskFailed: "任务失败",
+                uirunInspectorDiffReviewRequested: "等待文件修改审查",
+                uirunInspectorDiffReviewResolved: "文件修改审查已处理",
             },
         installerArtwork: {
             tagline: "本地优先 AI 工作台",

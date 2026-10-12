@@ -115,15 +115,20 @@ export class WorkspaceDiffs {
     };
     context.signal.addEventListener('abort', abort, { once: true });
     try {
+      const applyImmediately = context.approvedByToolConfirmation || (config.autoSave && config.autoApplyWithoutDiffView);
+      const waitingForReview = !context.approvedByToolConfirmation && !config.autoSave && !context.signal.aborted;
+      if (waitingForReview) await context.onDiffReview?.({ diffId: value.id, path: file, status: 'pending' });
       this.notify(value);
       const apply = async () => {
         try { await this.resolve(context.actorId, value.id, true); }
         catch (error) { value.error = String(error); await this.finish(pending, 'rejected'); }
       };
-      if (context.approvedByToolConfirmation || (config.autoSave && config.autoApplyWithoutDiffView)) await apply();
+      if (applyImmediately) await apply();
       else if (config.autoSave) session.scheduleAutoSave(config.autoSaveDelay, apply);
       if (context.signal.aborted) abort();
-      return await completed;
+      const result = await completed;
+      if (waitingForReview) await context.onDiffReview?.({ diffId: value.id, path: file, status: result.status });
+      return result;
     } finally {
       context.signal.removeEventListener('abort', abort);
       session.clearAutoSave(); this.pending.delete(value.id); this.notify(value);
