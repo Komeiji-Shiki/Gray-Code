@@ -150,10 +150,10 @@ export async function applyContextBoundary(frame: CapturedContext, text: string,
     frame.state.history.messages.push(summary as PlatformMessage);
     frame.appendMessages.push(summary as PlatformMessage);
   } else {
-    const messages = frame.state.history.messages.map(message => ({ ...message })) as Content[];
-    messages.splice(insertIndex, 0, summary);
-    repairParentChainAfterInsert(messages, insertIndex, summary.parentId ?? null, summary.id!);
-    frame.state.history.messages = messages.map((message, index) => ({ ...message, index })) as PlatformMessage[];
+    const messages = frame.state.history.messages.map(message => ({ ...message }));
+    messages.splice(insertIndex, 0, summary as PlatformMessage);
+    repairParentChainAfterInsert(messages as Content[], insertIndex, summary.parentId ?? null, summary.id!);
+    frame.state.history.messages = messages.map((message, index) => ({ ...message, index }));
     frame.historyReplaced = true;
   }
   frame.dirty = true;
