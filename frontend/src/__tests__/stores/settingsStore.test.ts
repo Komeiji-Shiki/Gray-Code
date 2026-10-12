@@ -36,4 +36,13 @@ describe('settingsStore appearance', () => {
     expect(store.tpsBarEnabled).toBe(false)
     expect(store.splashEnabled).toBe(false)
   })
+
+  test('旧总结与计数页签 ID 统一打开上下文设置', () => {
+    const store = useSettingsStore()
+    store.showSettings('summarize')
+    expect(store.currentView).toBe('settings')
+    expect(store.activeTab).toBe('context')
+    store.setActiveTab('tokenCount')
+    expect(store.activeTab).toBe('context')
+  })
 })

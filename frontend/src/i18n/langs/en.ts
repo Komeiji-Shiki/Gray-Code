@@ -1039,6 +1039,7 @@ const en: LanguageMessages = {
             darkPalette: { title: 'Dark palette', description: 'Palette used by the dark theme. The light theme always uses Ivory.', shell: 'Indigo shell', graphite: 'Graphite paper', indigo: 'Indigo' },
             clawdSettings: sharedEn.components.settings.clawdSettings,
             companionSettings: sharedEn.components.settings.companionSettings,
+            contextPage: sharedEn.components.settings.contextPage,
             backgroundGalleryPolicy: sharedEn.components.settings.backgroundGalleryPolicy,
             title: 'Settings',
             tabs: {
@@ -2329,8 +2330,8 @@ const en: LanguageMessages = {
                         description: 'Configure AI image generation tools'
                     },
                     context: {
-                        title: 'Context Awareness',
-                        description: 'Configure workspace context information sent to AI'
+                        title: sharedEn.components.settings.settingsPanel.sections.context.title,
+                        description: sharedEn.components.settings.settingsPanel.sections.context.description
                     },
                     prompt: {
                         title: 'System Prompt',
@@ -2864,8 +2865,8 @@ const en: LanguageMessages = {
                 },
             },
             tokenCountSettings: {
-                description: 'Configure API for accurate token counting. When enabled, the corresponding channel\'s token counting API will be called before sending requests to get accurate token counts for more precise context management.',
-                hint: 'If not configured or API call fails, will fallback to estimation method.',
+                description: sharedEn.components.settings.tokenCountSettings.description,
+                hint: sharedEn.components.settings.tokenCountSettings.hint,
                 enableChannel: 'Enable token counting for this channel',
                 baseUrl: 'API URL',
                 apiKey: 'API Key',

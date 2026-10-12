@@ -39,6 +39,7 @@ const emit = defineEmits<{
   (e: 'update:threshold', value: string): void
   (e: 'update:mode', value: string): void
   (e: 'update:auto-method', value: ContextManagementMethod): void
+  (e: 'open-global'): void
 }>()
 
 const standaloneContext = !!window.__GRAYCODE_HOST
@@ -143,7 +144,7 @@ const thresholdHelp = computed(() => {
   <div class="form-group" data-search-anchor="context-management">
     <button class="advanced-toggle" @click="emit('update:show', !show)">
       <i :class="['codicon', show ? 'codicon-chevron-down' : 'codicon-chevron-right']"></i>
-      <span>{{ t('components.settings.channelSettings.form.contextManagement.title') }}</span>
+      <span>{{ t('components.settings.contextPage.channelOverridesTitle') }}</span>
       <label class="toggle-switch header-toggle" :title="t('components.settings.channelSettings.form.contextManagement.enableTitle')" @click.stop>
         <input
           type="checkbox"
@@ -155,6 +156,10 @@ const thresholdHelp = computed(() => {
     </button>
 
     <div v-if="show" class="custom-panel-wrapper">
+      <div class="global-context-link">
+        <span>{{ t('components.settings.contextPage.channelOverridesDescription') }}</span>
+        <button type="button" @click="emit('open-global')">{{ t('components.settings.contextPage.openGlobal') }}</button>
+      </div>
       <div class="context-threshold-options">
         <!-- 模式选择 -->
         <div class="option-item option-with-toggle">
@@ -218,6 +223,18 @@ const thresholdHelp = computed(() => {
 </template>
 
 <style scoped>
+.global-context-link { display: grid; gap: 10px; margin-bottom: 14px; color: var(--gc-text-muted); font-size: 12px; line-height: 1.6; }
+.global-context-link button {
+  justify-self: start;
+  padding: 6px 10px;
+  border: 1px solid var(--gc-border-control);
+  border-radius: var(--gc-radius-sm);
+  background: var(--gc-surface-raised);
+  color: var(--gc-text-primary);
+  font: inherit;
+  cursor: pointer;
+}
+
 .threshold-option-header {
   align-items: center;
 }

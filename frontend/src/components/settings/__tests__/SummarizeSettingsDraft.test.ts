@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, expect, test, vi } from 'vitest';
 import { defineComponent, h } from 'vue';
 import { flushPromises, mount, type VueWrapper } from '@vue/test-utils';
-import SummarizeSettings from '../SummarizeSettings.vue';
+import UnifiedContextSettings from '../UnifiedContextSettings.vue';
 import { desktopSettingsDraft, discardDesktopSettings, markDesktopSettingsDirty, saveDesktopSettings, trackPreferenceRequest } from '../../../platform/settingsDraft';
 import { setLanguage } from '../../../i18n';
 import type { HostTransport } from '../../../utils/hostTransport';
@@ -34,8 +34,8 @@ afterEach(async () => {
 async function render() {
   // 重建行为与 SettingsPanel 的统一撤销一致。
   wrapper = mount(defineComponent({ setup: () => () => h('div', { onInputCapture: markDesktopSettingsDirty }, [
-    h(SummarizeSettings, { key: desktopSettingsDraft.generation }),
-  ]) }), { global: { stubs: { CustomSelect: true, CustomCheckbox: true } } });
+    h(UnifiedContextSettings, { key: desktopSettingsDraft.generation }),
+  ]) }), { global: { stubs: { CustomSelect: true, CustomCheckbox: true, ContextSettings: true, TokenCountSettings: true } } });
   await flushPromises();
   return wrapper;
 }
@@ -49,6 +49,15 @@ test('输入后立即保存全部，先提交最新提示词，再保存统一�
   await vi.advanceTimersByTimeAsync(500);
   expect(send.mock.calls.filter(([type]) => type === 'updateSummarizeConfig')).toHaveLength(1);
   expect(send.mock.calls.some(([type]) => type === 'config.listConfigs')).toBe(false);
+});
+
+test('统一上下文页先展示处理策略、阈值与提示词，再提供可选计数和工作区信息', async () => {
+  const view = await render();
+  expect(view.findAll('[data-search-anchor]').map(section => section.attributes('data-search-anchor'))).toEqual([
+    'context-method', 'context-user-retention', 'summarize-options', 'summarize-prompts', 'context-token-count', 'context-awareness',
+  ]);
+  expect(view.get<HTMLDetailsElement>('[data-search-anchor="context-token-count"]').element.open).toBe(false);
+  expect(view.get<HTMLDetailsElement>('[data-search-anchor="context-awareness"]').element.open).toBe(false);
 });
 test('撤销全部取消延迟保存，重建页面后旧输入不会重新写入草稿', async () => {
   const view = await render();

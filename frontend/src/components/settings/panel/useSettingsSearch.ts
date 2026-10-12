@@ -87,6 +87,10 @@ export function useSettingsSearch(options: SearchOptions) {
     const find = () => entry.anchor ? container.querySelector<HTMLElement>(entry.anchor) : fallback()
     const reveal = (target: HTMLElement) => {
       cancelWait?.(); cancelWait = undefined
+      // 搜索结果可能位于可选配置中，先展开祖先区块再计算滚动位置。
+      for (let element: HTMLElement | null = target; element && element !== container; element = element.parentElement) {
+        if (element instanceof HTMLDetailsElement) element.open = true
+      }
       frame = requestAnimationFrame(() => {
         frame = undefined
         if (disposed || request !== navigation) return

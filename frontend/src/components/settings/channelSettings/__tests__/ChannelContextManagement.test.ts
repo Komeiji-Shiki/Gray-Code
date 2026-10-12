@@ -38,6 +38,8 @@ describe('ChannelContextManagement threshold hover help', () => {
       selector.vm.$emit('update:modelValue', 'summary')
       expect(wrapper.emitted('update:auto-method')).toEqual([['summary']])
       expect(wrapper.emitted('update:mode')).toBeUndefined()
+      await wrapper.get('.global-context-link button').trigger('click')
+      expect(wrapper.emitted('open-global')).toEqual([[]])
       await wrapper.setProps({ contextManagementEnabled: false })
       expect(selector.props('disabled')).toBe(true)
     } finally { wrapper.unmount(); vi.unstubAllGlobals() }

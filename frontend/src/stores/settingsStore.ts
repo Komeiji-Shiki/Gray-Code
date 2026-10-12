@@ -70,7 +70,7 @@ export const useSettingsStore = defineStore('settings', () => {
   function showSettings(tab?: SettingsTab) {
     currentView.value = 'settings'
     if (tab) {
-      activeTab.value = tab
+      setActiveTab(tab)
     }
   }
 
@@ -81,7 +81,8 @@ export const useSettingsStore = defineStore('settings', () => {
 
   // 设置当前标签
   function setActiveTab(tab: SettingsTab) {
-    activeTab.value = tab
+    // 保留旧页签 ID 的调用兼容性，统一落到现在的上下文页面。
+    activeTab.value = tab === 'summarize' || tab === 'tokenCount' ? 'context' : tab
   }
   
   // 设置语言（接受 'auto'：跟随系统）

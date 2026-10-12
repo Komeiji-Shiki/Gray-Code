@@ -22,6 +22,8 @@ import ChannelCustomHeaders from './channelSettings/ChannelCustomHeaders.vue'
 import ChannelOpenCodeSession from './channelSettings/ChannelOpenCodeSession.vue'
 import ChannelAutoRetry from './channelSettings/ChannelAutoRetry.vue'
 
+const emit = defineEmits<{ 'open-context': [] }>()
+
 // Chat Store - 用于同步配置状态
 const chatStore = useChatStore()
 
@@ -944,6 +946,7 @@ onUnmounted(() => {
         @update:threshold="updateContextThreshold"
         @update:mode="updateContextManagementMode"
         @update:auto-method="updateAutoSummarizeMethod"
+        @open-global="emit('open-context')"
       />
 
       <ChannelToolOptions

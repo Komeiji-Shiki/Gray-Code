@@ -226,6 +226,20 @@ const sharedEn = {
                 unsavedTitle: "Unsaved companion settings",
                 visionDefaults: "Default vision channel and model",
             },
+            contextPage: {
+                awarenessDescription: "Choose the file tree, open files, active editor, and diagnostics sent to the model.",
+                awarenessTitle: "Workspace context information",
+                channelOverridesDescription: "Set this channel’s trigger threshold and management method here. Configure retention, absolute limits, summary prompts, and exact counting on the global context page.",
+                channelOverridesTitle: "Context overrides for this channel",
+                exactCountDescription: "Optional counting APIs provide exact token usage on demand only for context_status. They do not determine compression budgets.",
+                exactCountTitle: "Exact token counting (optional)",
+                openGlobal: "Open global context settings",
+                policyTitle: "Management method and retention",
+                promptsDescription: "Regular summaries use these prompts. Starting a new context from notes does not call a summary model.",
+                promptsTitle: "Summary prompts",
+                thresholdsDescription: "Automatic processing uses the channel threshold, or 80% of the available input budget when unset. The absolute limit below applies to all channels. Processing starts at the lowest of the channel threshold, absolute limit, and available input budget.",
+                thresholdsTitle: "Thresholds and absolute limit",
+            },
             contextSettings: {
                 diagnostics: {
                     severity: {
@@ -296,6 +310,12 @@ const sharedEn = {
                     execution: "Execution and permissions",
                     models: "Models and prompts",
                 },
+                sections: {
+                    context: {
+                        description: "Configure context management, retention, trigger thresholds, summary prompts, and optional exact token counting in one place.",
+                        title: "Context",
+                    },
+                },
             },
             subagents: {
                 description: "Description",
@@ -327,6 +347,10 @@ const sharedEn = {
                     summaryHint: "Reuse the current model, system prompt and tools to summarize within the available input budget. Keep the selected original user messages and the new summary before continuing.",
                     title: "User messages retained in ordinary conversations",
                 },
+            },
+            tokenCountSettings: {
+                description: "Configure an exact token-counting source for context_status. Configured and enabled counting APIs are called only when exact context usage is requested.",
+                hint: "Compression thresholds, available input budgets, and summary ranges always use the local tokenizer. Counting API settings and results do not affect them.",
             },
             toolSettings: {
                 common: {

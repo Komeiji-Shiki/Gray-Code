@@ -31,6 +31,7 @@ import desktopMaintenance from './zh-CN/desktopMaintenance';
 
 const zhCN = {
     desktop: {
+        inputUi,
         bot: {
             policyTitle: "群聊消息策略",
             policyHint: "0 表示关闭。合并只作用于同一人的连续消息；冷却期间继续排队；超过排队上限的消息保留为背景，不单独回复。私聊保持即时处理。",
@@ -288,8 +289,7 @@ const zhCN = {
         "unknownDate": "时间未知",
         "updateReadyDescription": "更新包已下载并校验。保存编辑后，可重启安装；安装前会备份当前数据。",
         "applying": "正在准备重启安装…",
-        "retryUpdate": "重试更新",
-        inputUi,
+        "retryUpdate": "重试更新"
     },
     modules: {
         diff: {
@@ -452,6 +452,36 @@ const zhCN = {
         },
 
         settings: {
+            companionSettings: {
+                title: '陪伴',
+                description: '配置全局 Cubism Core、桌宠显示与缩放，以及默认识图渠道和模型。当前聊天的陪伴内容在聊天页中设置。',
+                runtime: 'Cubism Core 与桌宠显示',
+                visionDefaults: '默认识图渠道与模型',
+                saveHint: 'Core 导入立即生效，显示设置与识图默认值分别使用各自的保存按钮。',
+                unsavedTitle: '陪伴设置尚未保存',
+                unsavedDescription: '此页还有未保存的显示设置或识图默认值。继续编辑并保存，或放弃本次更改后离开。',
+                discardAndLeave: '放弃更改并离开',
+            },
+            contextPage: {
+                title: '上下文',
+                description: '统一配置上下文处理方式、保留策略、触发阈值、总结提示词和可选的精确计数。',
+                policyTitle: '处理方式与保留策略',
+                thresholdsTitle: '阈值与绝对上限',
+                thresholdsDescription: '自动处理按渠道阈值触发，未单独设置时使用可用输入预算的 80%。下方绝对上限对所有渠道生效，实际触发取渠道阈值、绝对上限和可用输入预算中的较小值。',
+                promptsTitle: '总结提示词',
+                promptsDescription: '普通总结使用以下提示词。笔记换窗口不调用总结模型。',
+                exactCountTitle: '精确计数（可选）',
+                exactCountDescription: '可选计数 API 仅为 context_status 按需提供精确 Token 用量，不参与压缩预算判定。',
+                awarenessTitle: '工作区上下文信息',
+                awarenessDescription: '选择发送给模型的文件树、打开的文件、当前编辑器和诊断信息。',
+                channelOverridesTitle: '此渠道的上下文覆盖',
+                channelOverridesDescription: '此处只设置本渠道的触发阈值和处理方式。保留策略、绝对上限、总结提示词与精确计数在全局上下文页中设置。',
+                openGlobal: '打开全局上下文设置',
+            },
+            tokenCountSettings: {
+                description: '为 context_status 配置精确 Token 计数来源。只有需要查询精确上下文用量时，才调用已配置并启用的计数 API。',
+                hint: '压缩阈值、可用输入预算和总结范围始终使用本地 tokenizer 计算，不受计数 API 设置或调用结果影响。',
+            },
             contextMethod: {
                 defaultTitle: '默认上下文处理方式',
                 description: '自动和手动操作都优先使用当前渠道的上下文处理方式，渠道未单独设置时沿用这里的默认值。原始消息和附件始终保留，可恢复、搜索和查看。',
@@ -548,17 +578,7 @@ const zhCN = {
                 skillRestoreError: 'Skill "{name}" 启用状态恢复：{error}',
                 skillRestoreFailuresSummary: '{count} 个 Skill 启用状态恢复失败（文件已导入）：{detail}',
                 partialSkillsImportFailed: '部分 Skill 导入失败：{detail}'
-            },
-            companionSettings: {
-                title: '陪伴',
-                description: '配置全局 Cubism Core、桌宠显示与缩放，以及默认识图渠道和模型。当前聊天的陪伴内容在聊天页中设置。',
-                runtime: 'Cubism Core 与桌宠显示',
-                visionDefaults: '默认识图渠道与模型',
-                saveHint: 'Core 导入立即生效，显示设置与识图默认值分别使用各自的保存按钮。',
-                unsavedTitle: '陪伴设置尚未保存',
-                unsavedDescription: '此页还有未保存的显示设置或识图默认值。继续编辑并保存，或放弃本次更改后离开。',
-                discardAndLeave: '放弃更改并离开',
-            },
+            }
         },
 
         update: {

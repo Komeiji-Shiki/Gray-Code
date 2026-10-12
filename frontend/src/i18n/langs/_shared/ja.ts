@@ -226,6 +226,20 @@ const sharedJa = {
                 unsavedTitle: "未保存のコンパニオン設定",
                 visionDefaults: "既定の画像認識チャネルとモデル",
             },
+            contextPage: {
+                awarenessDescription: "モデルへ送信するファイルツリー、開いているファイル、編集中のファイル、診断情報を選択します。",
+                awarenessTitle: "ワークスペースのコンテキスト情報",
+                channelOverridesDescription: "ここではチャネルの開始しきい値と管理方式を設定します。保持方針、絶対上限、要約プロンプト、正確な計数は全体のコンテキストページで設定します。",
+                channelOverridesTitle: "このチャネルのコンテキスト上書き",
+                exactCountDescription: "任意の計数 API は、context_status に必要な正確なトークン使用量を提供します。圧縮予算の判定には使用しません。",
+                exactCountTitle: "正確なトークン計数（任意）",
+                openGlobal: "全体のコンテキスト設定を開く",
+                policyTitle: "管理方式と保持方針",
+                promptsDescription: "通常の要約には以下のプロンプトを使用します。ノートから新しいコンテキストへ切り替える方式では要約モデルを呼び出しません。",
+                promptsTitle: "要約プロンプト",
+                thresholdsDescription: "自動処理はチャネルのしきい値で開始し、未設定の場合は利用可能な入力予算の 80% を使用します。下の絶対上限は全チャネルに適用され、チャネルのしきい値、絶対上限、入力予算の最小値で開始します。",
+                thresholdsTitle: "しきい値と絶対上限",
+            },
             contextSettings: {
                 diagnostics: {
                     severity: {
@@ -296,6 +310,12 @@ const sharedJa = {
                     execution: "実行と権限",
                     models: "モデルとプロンプト",
                 },
+                sections: {
+                    context: {
+                        description: "コンテキストの管理方式、保持方針、開始しきい値、要約プロンプト、任意の正確なトークン計数をまとめて設定します。",
+                        title: "コンテキスト",
+                    },
+                },
             },
             subagents: {
                 description: "説明",
@@ -327,6 +347,10 @@ const sharedJa = {
                     summaryHint: "現在のモデル、システムプロンプト、ツールを再利用し、利用可能な入力予算内で要約します。選択したユーザーの原文と新しい要約を保持して続行します。",
                     title: "通常の会話で保持するユーザーメッセージ",
                 },
+            },
+            tokenCountSettings: {
+                description: "context_status の正確なトークン計数元を設定します。正確なコンテキスト使用量を確認する必要がある場合にのみ、設定済みで有効な計数 API を呼び出します。",
+                hint: "圧縮しきい値、利用可能な入力予算、要約範囲は常にローカルの tokenizer で計算します。計数 API の設定や結果には影響されません。",
             },
             toolSettings: {
                 common: {

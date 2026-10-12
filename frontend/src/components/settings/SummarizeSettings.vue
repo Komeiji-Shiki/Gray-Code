@@ -357,19 +357,19 @@ onUnmounted(() => {
     </div>
     
     <div v-if="standaloneContext" class="section" data-search-anchor="context-method">
-      <h5 class="section-title">{{ t('components.settings.summarizeSettings.methodControls.defaultTitle') }}</h5>
+      <h5 class="section-title">{{ t('components.settings.contextPage.policyTitle') }}</h5>
+      <label class="field-label">{{ t('components.settings.summarizeSettings.methodControls.defaultTitle') }}</label>
       <CustomSelect :model-value="summarizeConfig.method ?? 'summary'" :options="[{ value: 'summary', label: t('components.tools.contextStatus.summaryOption') }, { value: 'notes', label: t('components.tools.contextStatus.notesOption') }]" @update:model-value="value => updateConfigField('method', value as 'summary' | 'notes')" />
       <p v-if="summarizeConfig.method !== 'notes'" class="field-hint">{{ t('components.settings.summarizeSettings.retention.summaryHint') }}</p>
       <p v-else class="field-hint">{{ t('components.settings.summarizeSettings.retention.notesHint') }}</p>
       <p class="field-hint">{{ t('components.settings.summarizeSettings.methodControls.defaultHint') }}</p>
-    </div>
-
-    <div v-if="standaloneContext" class="section" data-search-anchor="context-user-retention">
-      <h5 class="section-title">{{ t('components.settings.summarizeSettings.retention.title') }}</h5>
-      <CustomSelect :model-value="summarizeConfig.userMessageRetention ?? 'first'"
-        :options="[{ value: 'first', label: t('components.settings.summarizeSettings.retention.first') }, { value: 'all', label: t('components.settings.summarizeSettings.retention.all') }]"
-        @update:model-value="value => updateConfigField('userMessageRetention', value as 'first' | 'all')" />
-      <p class="field-hint">{{ t('components.settings.summarizeSettings.retention.hint') }}</p>
+      <div class="form-group retention-group" data-search-anchor="context-user-retention">
+        <label>{{ t('components.settings.summarizeSettings.retention.title') }}</label>
+        <CustomSelect :model-value="summarizeConfig.userMessageRetention ?? 'first'"
+          :options="[{ value: 'first', label: t('components.settings.summarizeSettings.retention.first') }, { value: 'all', label: t('components.settings.summarizeSettings.retention.all') }]"
+          @update:model-value="value => updateConfigField('userMessageRetention', value as 'first' | 'all')" />
+        <p class="field-hint">{{ t('components.settings.summarizeSettings.retention.hint') }}</p>
+      </div>
     </div>
 
     <!-- 手动总结说明 -->
@@ -387,8 +387,9 @@ onUnmounted(() => {
     <div class="section" data-search-anchor="summarize-options">
       <h5 class="section-title">
         <i class="codicon codicon-settings"></i>
-        {{ t('components.settings.summarizeSettings.optionsSection.title') }}
+        {{ t('components.settings.contextPage.thresholdsTitle') }}
       </h5>
+      <p v-if="standaloneContext" class="section-description">{{ t('components.settings.contextPage.thresholdsDescription') }}</p>
       
       <div v-if="!standaloneContext" class="form-group">
         <label>{{ t('components.settings.summarizeSettings.optionsSection.keepRounds') }}</label>
@@ -460,6 +461,11 @@ onUnmounted(() => {
         <p class="field-hint">{{ t('components.settings.summarizeSettings.executionControls.maxInputRatioHint') }}</p>
       </div>
 
+    </div>
+
+    <div class="section" data-search-anchor="summarize-prompts">
+      <h5 class="section-title">{{ t('components.settings.contextPage.promptsTitle') }}</h5>
+      <p v-if="standaloneContext" class="section-description">{{ t('components.settings.contextPage.promptsDescription') }}</p>
       <div v-if="!standaloneContext || summarizeConfig.method !== 'notes'" class="form-group">
         <div class="prompt-label-row">
           <label>{{ t('components.settings.summarizeSettings.optionsSection.manualPrompt') }}</label>
@@ -567,6 +573,9 @@ onUnmounted(() => {
   flex-direction: column;
   gap: 16px;
 }
+
+.field-label { display: block; margin-bottom: 8px; color: var(--gc-text-primary); font-size: 13px; }
+.retention-group { margin-top: 20px; }
 
 /* 功能说明 */
 .feature-description {

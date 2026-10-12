@@ -28,6 +28,7 @@ import desktopMaintenance from './ja/desktopMaintenance';
 
 const ja: BackendLanguageMessages = {
     desktop: {
+        inputUi,
         bot: {
             policyTitle: "グループメッセージ設定",
             policyHint: "0 は無効です。同じ人の連続メッセージを統合し、クールダウン中は待機します。上限を超えた内容は背景として保存します。DM は即時処理します。",
@@ -285,8 +286,7 @@ const ja: BackendLanguageMessages = {
         "unknownDate": "日時不明",
         "updateReadyDescription": "更新のダウンロードと検証が完了しました。変更を保存してから再起動してください。インストール前に現在のデータをバックアップします。",
         "applying": "再起動とインストールを準備中…",
-        "retryUpdate": "更新を再試行",
-        inputUi,
+        "retryUpdate": "更新を再試行"
     },
     modules: {
         diff: {
@@ -449,6 +449,36 @@ const ja: BackendLanguageMessages = {
         },
 
         settings: {
+            companionSettings: {
+                title: 'コンパニオン',
+                description: '全体の Cubism Core、ペットの表示と倍率、既定の画像認識チャネルとモデルを設定します。現在の会話のコンパニオンはチャット画面で設定します。',
+                runtime: 'Cubism Core とペット表示',
+                visionDefaults: '既定の画像認識チャネルとモデル',
+                saveHint: 'Core の読み込みはすぐに反映されます。表示設定と画像認識の既定値は、それぞれの保存ボタンで保存します。',
+                unsavedTitle: '未保存のコンパニオン設定',
+                unsavedDescription: '未保存の表示設定または画像認識の既定値があります。編集を続けて保存するか、今回の変更を破棄して移動してください。',
+                discardAndLeave: '変更を破棄して移動',
+            },
+            contextPage: {
+                title: 'コンテキスト',
+                description: 'コンテキストの管理方式、保持方針、開始しきい値、要約プロンプト、任意の正確なトークン計数をまとめて設定します。',
+                policyTitle: '管理方式と保持方針',
+                thresholdsTitle: 'しきい値と絶対上限',
+                thresholdsDescription: '自動処理はチャネルのしきい値で開始し、未設定の場合は利用可能な入力予算の 80% を使用します。下の絶対上限は全チャネルに適用され、チャネルのしきい値、絶対上限、入力予算の最小値で開始します。',
+                promptsTitle: '要約プロンプト',
+                promptsDescription: '通常の要約には以下のプロンプトを使用します。ノートから新しいコンテキストへ切り替える方式では要約モデルを呼び出しません。',
+                exactCountTitle: '正確なトークン計数（任意）',
+                exactCountDescription: '任意の計数 API は、context_status に必要な正確なトークン使用量を提供します。圧縮予算の判定には使用しません。',
+                awarenessTitle: 'ワークスペースのコンテキスト情報',
+                awarenessDescription: 'モデルへ送信するファイルツリー、開いているファイル、編集中のファイル、診断情報を選択します。',
+                channelOverridesTitle: 'このチャネルのコンテキスト上書き',
+                channelOverridesDescription: 'ここではチャネルの開始しきい値と管理方式を設定します。保持方針、絶対上限、要約プロンプト、正確な計数は全体のコンテキストページで設定します。',
+                openGlobal: '全体のコンテキスト設定を開く',
+            },
+            tokenCountSettings: {
+                description: 'context_status の正確なトークン計数元を設定します。正確なコンテキスト使用量を確認する必要がある場合にのみ、設定済みで有効な計数 API を呼び出します。',
+                hint: '圧縮しきい値、利用可能な入力予算、要約範囲は常にローカルの tokenizer で計算します。計数 API の設定や結果には影響されません。',
+            },
             contextMethod: {
                 defaultTitle: '既定のコンテキスト管理方式',
                 description: '自動・手動操作では現在のチャネルの方式を優先します。個別設定のないチャネルでは、この既定値を使用します。元のメッセージと添付ファイルは復元・検索・閲覧できます。',
@@ -545,17 +575,7 @@ const ja: BackendLanguageMessages = {
                 skillRestoreError: 'スキル "{name}" の有効状態の復元：{error}',
                 skillRestoreFailuresSummary: '{count} 件のスキルの有効状態の復元に失敗しました（ファイルはインポート済み）：{detail}',
                 partialSkillsImportFailed: '一部のスキルのインポートに失敗しました：{detail}'
-            },
-            companionSettings: {
-                title: 'コンパニオン',
-                description: '全体の Cubism Core、ペットの表示と倍率、既定の画像認識チャネルとモデルを設定します。現在の会話のコンパニオンはチャット画面で設定します。',
-                runtime: 'Cubism Core とペット表示',
-                visionDefaults: '既定の画像認識チャネルとモデル',
-                saveHint: 'Core の読み込みはすぐに反映されます。表示設定と画像認識の既定値は、それぞれの保存ボタンで保存します。',
-                unsavedTitle: '未保存のコンパニオン設定',
-                unsavedDescription: '未保存の表示設定または画像認識の既定値があります。編集を続けて保存するか、今回の変更を破棄して移動してください。',
-                discardAndLeave: '変更を破棄して移動',
-            },
+            }
         },
 
         update: {

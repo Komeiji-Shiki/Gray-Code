@@ -47,12 +47,10 @@ const ToolsSettings = defineAsyncComponent(() => import('./ToolsSettings.vue'))
 const AutoExecSettings = defineAsyncComponent(() => import('./AutoExecSettings.vue'))
 const McpSettings = defineAsyncComponent(() => import('./McpSettings.vue'))
 const CheckpointSettings = defineAsyncComponent(() => import('./CheckpointSettings.vue'))
-const SummarizeSettings = defineAsyncComponent(() => import('./SummarizeSettings.vue'))
 const GenerateImageSettings = defineAsyncComponent(() => import('./GenerateImageSettings.vue'))
 const DependencySettings = defineAsyncComponent(() => import('./DependencySettings.vue'))
-const ContextSettings = defineAsyncComponent(() => import('./ContextSettings.vue'))
+const UnifiedContextSettings = defineAsyncComponent(() => import('./UnifiedContextSettings.vue'))
 const PromptSettings = defineAsyncComponent(() => import('./PromptSettings.vue'))
-const TokenCountSettings = defineAsyncComponent(() => import('./TokenCountSettings.vue'))
 const SubAgentsSettings = defineAsyncComponent(() => import('./SubAgentsSettings.vue'))
 const MemorySettings = defineAsyncComponent(() => import('./MemorySettings.vue'))
 const PlatformDevelopmentSettings = defineAsyncComponent(() => import('./PlatformDevelopmentSettings.vue'))
@@ -109,8 +107,6 @@ const tabGroups = computed<TabGroup[]>(() => [
   ] },
   { id: 'context', label: t('components.settings.settingsPanel.groups.context'), tabs: [
     { id: 'context', label: t('components.settings.tabs.context'), icon: 'codicon-symbol-namespace' },
-    { id: 'summarize', label: t('components.settings.tabs.summarize'), icon: 'codicon-fold' },
-    { id: 'tokenCount', label: t('components.settings.tabs.tokenCount'), icon: 'codicon-symbol-numeric' },
     { id: 'memory', label: t('components.settings.tabs.memory'), icon: 'codicon-database' },
     { id: 'checkpoint', label: t('components.settings.tabs.checkpoint'), icon: 'codicon-history' },
   ] },
@@ -401,7 +397,7 @@ useDesktopSettingsDraft(saveProxySettings, () => settingsStore.activeTab === 'ge
             <h4>{{ t('components.settings.settingsPanel.sections.channel.title') }}</h4>
             <p class="settings-description">{{ t('components.settings.settingsPanel.sections.channel.description') }}</p>
             
-            <ChannelSettings />
+            <ChannelSettings @open-context="selectSettingsTab('context')" />
           </div>
           
           <!-- 工具设置 -->
@@ -443,14 +439,6 @@ useDesktopSettingsDraft(saveProxySettings, () => settingsStore.activeTab === 'ge
             <CheckpointSettings />
           </div>
           
-          <!-- 总结设置 -->
-          <div v-if="settingsStore.activeTab === 'summarize'" class="settings-section">
-            <h4>{{ t('components.settings.settingsPanel.sections.summarize.title') }}</h4>
-            <p class="settings-description">{{ t('components.settings.settingsPanel.sections.summarize.description') }}</p>
-            
-            <SummarizeSettings />
-          </div>
-          
           <!-- 图像生成设置 -->
           <div v-if="settingsStore.activeTab === 'imageGen'" class="settings-section">
             <h4>{{ t('components.settings.settingsPanel.sections.imageGen.title') }}</h4>
@@ -464,12 +452,12 @@ useDesktopSettingsDraft(saveProxySettings, () => settingsStore.activeTab === 'ge
             <DependencySettings />
           </div>
           
-          <!-- 上下文感知设置 -->
+          <!-- 上下文处理、计数与工作区信息共用一个入口。 -->
           <div v-if="settingsStore.activeTab === 'context'" class="settings-section">
             <h4>{{ t('components.settings.settingsPanel.sections.context.title') }}</h4>
             <p class="settings-description">{{ t('components.settings.settingsPanel.sections.context.description') }}</p>
             
-            <ContextSettings />
+            <UnifiedContextSettings />
           </div>
           
           <!-- 提示词设置 -->
@@ -479,14 +467,6 @@ useDesktopSettingsDraft(saveProxySettings, () => settingsStore.activeTab === 'ge
             
             <PlatformModeSettings v-if="isDesktopHost" />
             <PromptSettings />
-          </div>
-          
-          <!-- Token 计数设置 -->
-          <div v-if="settingsStore.activeTab === 'tokenCount'" class="settings-section">
-            <h4>{{ t('components.settings.settingsPanel.sections.tokenCount.title') }}</h4>
-            <p class="settings-description">{{ t('components.settings.settingsPanel.sections.tokenCount.description') }}</p>
-            
-            <TokenCountSettings />
           </div>
           
           <!-- 子代理设置 -->

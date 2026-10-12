@@ -28,6 +28,7 @@ import desktopMaintenance from './en/desktopMaintenance';
 
 const en: BackendLanguageMessages = {
     desktop: {
+        inputUi,
         bot: {
             policyTitle: "Group message policy",
             policyHint: "0 disables a limit. Merge consecutive messages from the same sender; wait during cooldown; retain excess requests as background. Direct messages are processed immediately.",
@@ -285,8 +286,7 @@ const en: BackendLanguageMessages = {
         "unknownDate": "Unknown date",
         "updateReadyDescription": "The update is downloaded and verified. Save your changes before restarting. Current data will be backed up before installation.",
         "applying": "Preparing to restart and install…",
-        "retryUpdate": "Retry update",
-        inputUi,
+        "retryUpdate": "Retry update"
     },
     modules: {
         diff: {
@@ -449,6 +449,36 @@ const en: BackendLanguageMessages = {
         },
 
         settings: {
+            companionSettings: {
+                title: 'Companion',
+                description: 'Configure the global Cubism Core, pet visibility and scale, and the default vision channel and model. Configure companionship for the current conversation from the chat page.',
+                runtime: 'Cubism Core and pet display',
+                visionDefaults: 'Default vision channel and model',
+                saveHint: 'Core imports apply immediately. Save display settings and vision defaults with their respective save buttons.',
+                unsavedTitle: 'Unsaved companion settings',
+                unsavedDescription: 'This page has unsaved display settings or vision defaults. Continue editing to save them, or discard these changes and leave.',
+                discardAndLeave: 'Discard changes and leave',
+            },
+            contextPage: {
+                title: 'Context',
+                description: 'Configure context management, retention, trigger thresholds, summary prompts, and optional exact token counting in one place.',
+                policyTitle: 'Management method and retention',
+                thresholdsTitle: 'Thresholds and absolute limit',
+                thresholdsDescription: 'Automatic processing uses the channel threshold, or 80% of the available input budget when unset. The absolute limit below applies to all channels. Processing starts at the lowest of the channel threshold, absolute limit, and available input budget.',
+                promptsTitle: 'Summary prompts',
+                promptsDescription: 'Regular summaries use these prompts. Starting a new context from notes does not call a summary model.',
+                exactCountTitle: 'Exact token counting (optional)',
+                exactCountDescription: 'Optional counting APIs provide exact token usage on demand only for context_status. They do not determine compression budgets.',
+                awarenessTitle: 'Workspace context information',
+                awarenessDescription: 'Choose the file tree, open files, active editor, and diagnostics sent to the model.',
+                channelOverridesTitle: 'Context overrides for this channel',
+                channelOverridesDescription: 'Set this channel’s trigger threshold and management method here. Configure retention, absolute limits, summary prompts, and exact counting on the global context page.',
+                openGlobal: 'Open global context settings',
+            },
+            tokenCountSettings: {
+                description: 'Configure an exact token-counting source for context_status. Configured and enabled counting APIs are called only when exact context usage is requested.',
+                hint: 'Compression thresholds, available input budgets, and summary ranges always use the local tokenizer. Counting API settings and results do not affect them.',
+            },
             contextMethod: {
                 defaultTitle: 'Default context management method',
                 description: 'Automatic and manual actions use the current channel’s context method. Channels without an explicit method use this default. Original messages and attachments remain available for restoration, search and viewing.',
@@ -545,17 +575,7 @@ const en: BackendLanguageMessages = {
                 skillRestoreError: 'Skill "{name}" enabled state restore: {error}',
                 skillRestoreFailuresSummary: 'Failed to restore enabled state for {count} skill(s) (files already imported): {detail}',
                 partialSkillsImportFailed: 'Some skills failed to import: {detail}'
-            },
-            companionSettings: {
-                title: 'Companion',
-                description: 'Configure the global Cubism Core, pet visibility and scale, and the default vision channel and model. Configure companionship for the current conversation from the chat page.',
-                runtime: 'Cubism Core and pet display',
-                visionDefaults: 'Default vision channel and model',
-                saveHint: 'Core imports apply immediately. Save display settings and vision defaults with their respective save buttons.',
-                unsavedTitle: 'Unsaved companion settings',
-                unsavedDescription: 'This page has unsaved display settings or vision defaults. Continue editing to save them, or discard these changes and leave.',
-                discardAndLeave: 'Discard changes and leave',
-            },
+            }
         },
 
         update: {

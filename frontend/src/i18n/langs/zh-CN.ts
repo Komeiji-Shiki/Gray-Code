@@ -1041,6 +1041,7 @@ const zhCN = {
             darkPalette: { title: '深色配色', description: '深色主题下使用的配色方案，浅色主题固定为象牙纸。', shell: '藏青外壳', graphite: '石墨纸', indigo: '藏青' },
             clawdSettings: sharedZhCN.components.settings.clawdSettings,
             companionSettings: sharedZhCN.components.settings.companionSettings,
+            contextPage: sharedZhCN.components.settings.contextPage,
             backgroundGalleryPolicy: sharedZhCN.components.settings.backgroundGalleryPolicy,
             title: '设置',
             tabs: {
@@ -2331,8 +2332,8 @@ const zhCN = {
                         description: '配置 AI 图像生成工具'
                     },
                     context: {
-                        title: '上下文感知',
-                        description: '配置发送给 AI 的工作区上下文信息'
+                        title: sharedZhCN.components.settings.settingsPanel.sections.context.title,
+                        description: sharedZhCN.components.settings.settingsPanel.sections.context.description
                     },
                     prompt: {
                         title: '系统提示词',
@@ -2866,8 +2867,8 @@ const zhCN = {
                 },
             },
             tokenCountSettings: {
-                description: '配置用于精确计算 Token 数量的 API。启用后，将在发送请求前调用对应渠道的 Token 计数 API 来获取准确的 Token 数量，用于更精准的上下文管理。',
-                hint: '如果未配置或 API 调用失败，将回退到估算方法。',
+                description: sharedZhCN.components.settings.tokenCountSettings.description,
+                hint: sharedZhCN.components.settings.tokenCountSettings.hint,
                 enableChannel: '启用此渠道的 Token 计数',
                 baseUrl: 'API URL',
                 apiKey: 'API Key',

@@ -226,6 +226,20 @@ const sharedZhCN = {
                 unsavedTitle: "陪伴设置尚未保存",
                 visionDefaults: "默认识图渠道与模型",
             },
+            contextPage: {
+                awarenessDescription: "选择发送给模型的文件树、打开的文件、当前编辑器和诊断信息。",
+                awarenessTitle: "工作区上下文信息",
+                channelOverridesDescription: "此处只设置本渠道的触发阈值和处理方式。保留策略、绝对上限、总结提示词与精确计数在全局上下文页中设置。",
+                channelOverridesTitle: "此渠道的上下文覆盖",
+                exactCountDescription: "可选计数 API 仅为 context_status 按需提供精确 Token 用量，不参与压缩预算判定。",
+                exactCountTitle: "精确计数（可选）",
+                openGlobal: "打开全局上下文设置",
+                policyTitle: "处理方式与保留策略",
+                promptsDescription: "普通总结使用以下提示词。笔记换窗口不调用总结模型。",
+                promptsTitle: "总结提示词",
+                thresholdsDescription: "自动处理按渠道阈值触发，未单独设置时使用可用输入预算的 80%。下方绝对上限对所有渠道生效，实际触发取渠道阈值、绝对上限和可用输入预算中的较小值。",
+                thresholdsTitle: "阈值与绝对上限",
+            },
             contextSettings: {
                 diagnostics: {
                     severity: {
@@ -296,6 +310,12 @@ const sharedZhCN = {
                     execution: "执行与权限",
                     models: "模型与提示",
                 },
+                sections: {
+                    context: {
+                        description: "统一配置上下文处理方式、保留策略、触发阈值、总结提示词和可选的精确计数。",
+                        title: "上下文",
+                    },
+                },
             },
             subagents: {
                 description: "说明",
@@ -327,6 +347,10 @@ const sharedZhCN = {
                     summaryHint: "沿用当前模型、系统提示词和工具定义，在可用输入预算内生成摘要。成功后保留所选用户原文与新摘要，后续消息继续追加。",
                     title: "普通会话的用户消息保留",
                 },
+            },
+            tokenCountSettings: {
+                description: "为 context_status 配置精确 Token 计数来源。只有需要查询精确上下文用量时，才调用已配置并启用的计数 API。",
+                hint: "压缩阈值、可用输入预算和总结范围始终使用本地 tokenizer 计算，不受计数 API 设置或调用结果影响。",
             },
             toolSettings: {
                 common: {

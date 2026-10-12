@@ -310,33 +310,39 @@ export function settingsSearchIndex(isDesktopHost: boolean, supportsFileAssociat
     anchor: '[data-search-anchor="branch-cleanup"]'
   },
   {
-    key: 'summarize', tab: 'summarize',
+    key: 'summarize', tab: 'context',
     labelKey: 'components.settings.settingsPanel.sections.summarize.title',
-    keywords: ['总结', 'summarize', '要約', '自动总结', '上下文压缩', '压缩', '对话历史', 'token']
+    keywords: ['总结', 'summarize', '要約', '自动总结', '上下文压缩', '压缩', '对话历史', 'token'],
+    anchor: isDesktopHost ? '[data-search-anchor="context-method"]' : undefined
   },
-  {
-    key: 'summarize-manual', tab: 'summarize',
+  ...(!isDesktopHost ? [{
+    key: 'summarize-manual', tab: 'context' as const,
     labelKey: 'components.settings.summarizeSettings.manualSection.title',
     keywords: ['手动总结', 'manual', 'マニュアル', '总结'],
     anchor: '[data-search-anchor="summarize-manual"]'
-  },
+  }, {
+    key: 'summarize-model', tab: 'context' as const,
+    labelKey: 'components.settings.summarizeSettings.modelSection.title',
+    keywords: ['专用模型', 'separate model', 'モデル', '渠道', 'channel', '选择模型'],
+    anchor: '[data-search-anchor="summarize-model"]'
+  }] : []),
   {
-    key: 'context-user-retention', tab: 'summarize',
+    key: 'context-user-retention', tab: 'context',
     labelKey: 'components.settings.summarizeSettings.retention.title',
     keywords: ['用户消息', '保留全部', '首条', '最近输入', 'user retention', 'latest input', '用户原文'],
     anchor: '[data-search-anchor="context-user-retention"]'
   },
   {
-    key: 'summarize-options', tab: 'summarize',
-    labelKey: 'components.settings.summarizeSettings.optionsSection.title',
-    keywords: ['保留轮数', 'keep rounds', '保留', 'token', '提示词', 'prompt', '最大尝试', '输入占比', '预算'],
+    key: 'summarize-options', tab: 'context',
+    labelKey: 'components.settings.contextPage.thresholdsTitle',
+    keywords: ['阈值', 'threshold', '绝对上限', 'token', '最大尝试', '输入占比', '预算', '上限', 'しきい値'],
     anchor: '[data-search-anchor="summarize-options"]'
   },
   {
-    key: 'summarize-model', tab: 'summarize',
-    labelKey: 'components.settings.summarizeSettings.modelSection.title',
-    keywords: ['专用模型', 'separate model', 'モデル', '渠道', 'channel', '选择模型'],
-    anchor: '[data-search-anchor="summarize-model"]'
+    key: 'summarize-prompts', tab: 'context',
+    labelKey: 'components.settings.contextPage.promptsTitle',
+    keywords: ['总结提示词', 'summary prompt', '自动总结', '手动总结', '要約プロンプト'],
+    anchor: '[data-search-anchor="summarize-prompts"]'
   },
   {
     key: 'imageGen', tab: 'imageGen',
@@ -468,30 +474,31 @@ export function settingsSearchIndex(isDesktopHost: boolean, supportsFileAssociat
     anchor: '[data-search-anchor="prompt-modules"]'
   },
   {
-    key: 'tokenCount', tab: 'tokenCount',
-    labelKey: 'components.settings.settingsPanel.sections.tokenCount.title',
-    keywords: ['token', '计数', 'count', 'カウント', '计算', 'tiktoken', '字符']
+    key: 'tokenCount', tab: 'context',
+    labelKey: 'components.settings.contextPage.exactCountTitle',
+    keywords: ['token', '精确计数', 'count', 'カウント', '计算', 'tiktoken', '字符'],
+    anchor: '[data-search-anchor="context-token-count"]'
   },
   {
-    key: 'tokenCount-gemini', tab: 'tokenCount',
+    key: 'tokenCount-gemini', tab: 'context',
     labelKey: 'components.settings.tokenCountSettings.enableChannel',
     keywords: ['gemini', '计数 api', 'count tokens', 'google'],
     anchor: '[data-search-anchor="token-count-gemini"]'
   },
   {
-    key: 'tokenCount-openai', tab: 'tokenCount',
+    key: 'tokenCount-openai', tab: 'context',
     labelKey: 'components.settings.tokenCountSettings.customApi',
     keywords: ['openai', '自定义 api', 'custom api', '兼容', '接口规范'],
     anchor: '[data-search-anchor="token-count-openai"]'
   },
   {
-    key: 'tokenCount-anthropic', tab: 'tokenCount',
+    key: 'tokenCount-anthropic', tab: 'context',
     labelKey: 'components.settings.tokenCountSettings.enableChannel',
     keywords: ['anthropic', 'claude', 'count tokens', '计数 api'],
     anchor: '[data-search-anchor="token-count-anthropic"]'
   },
   {
-    key: 'tokenCount-openai-responses', tab: 'tokenCount',
+    key: 'tokenCount-openai-responses', tab: 'context',
     labelKey: 'components.settings.tokenCountSettings.enableChannel',
     keywords: ['openai responses', 'responses', 'input tokens'],
     anchor: '[data-search-anchor="token-count-openai-responses"]'

@@ -69,4 +69,13 @@ describe('设置搜索 SEARCH_INDEX 锚点一致性', () => {
     expect(settingsSearchIndex(false).some(entry => entry.tab === 'development')).toBe(false)
     expect(settingsSearchIndex(true, false).filter(entry => entry.tab === 'development').map(entry => entry.key)).toEqual(['development-language-services'])
   })
+
+  test('总结和精确计数的搜索统一进入上下文页，并保留原索引键', () => {
+    const entries = settingsSearchIndex(true)
+    for (const key of ['summarize', 'context-user-retention', 'summarize-options', 'summarize-prompts', 'tokenCount', 'tokenCount-openai']) {
+      expect(entries.find(entry => entry.key === key)?.tab).toBe('context')
+    }
+    expect(entries.some(entry => entry.tab === 'summarize' || entry.tab === 'tokenCount')).toBe(false)
+    expect(entries.find(entry => entry.key === 'tokenCount')?.anchor).toBe('[data-search-anchor="context-token-count"]')
+  })
 })

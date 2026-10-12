@@ -1039,6 +1039,7 @@ const ja: LanguageMessages = {
             darkPalette: { title: 'ダーク配色', description: 'ダークテーマで使う配色です。ライトテーマは常にアイボリーです。', shell: '藍色シェル', graphite: 'グラファイト', indigo: '藍色' },
             clawdSettings: sharedJa.components.settings.clawdSettings,
             companionSettings: sharedJa.components.settings.companionSettings,
+            contextPage: sharedJa.components.settings.contextPage,
             backgroundGalleryPolicy: sharedJa.components.settings.backgroundGalleryPolicy,
             title: '設定',
             tabs: {
@@ -2329,8 +2330,8 @@ const ja: LanguageMessages = {
                         description: 'AI 画像生成ツールを設定'
                     },
                     context: {
-                        title: 'コンテキスト認識',
-                        description: 'AI に送信されるワークスペースコンテキスト情報を設定'
+                        title: sharedJa.components.settings.settingsPanel.sections.context.title,
+                        description: sharedJa.components.settings.settingsPanel.sections.context.description
                     },
                     prompt: {
                         title: 'システムプロンプト',
@@ -2864,8 +2865,8 @@ const ja: LanguageMessages = {
                 },
             },
             tokenCountSettings: {
-                description: '正確なトークン数を計算するための API を設定します。有効にすると、リクエストを送信する前に対応するチャンネルのトークンカウント API を呼び出して、より正確なコンテキスト管理のために正確なトークン数を取得します。',
-                hint: '設定されていないか、API 呼び出しが失敗した場合は、推定方法にフォールバックします。',
+                description: sharedJa.components.settings.tokenCountSettings.description,
+                hint: sharedJa.components.settings.tokenCountSettings.hint,
                 enableChannel: 'このチャンネルのトークンカウントを有効化',
                 baseUrl: 'API URL',
                 apiKey: 'API Key',

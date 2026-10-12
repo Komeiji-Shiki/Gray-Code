@@ -58,6 +58,15 @@ test('等待异步出现的具体工具条目，不提前跳到页首', async ()
   expect(container.scrollTo).toHaveBeenCalledOnce()
 })
 
+test('上下文搜索先展开可选计数区块，再定位其中的具体渠道', async () => {
+  container.innerHTML = '<details data-search-anchor="context-token-count"><summary>精确计数</summary><div data-search-anchor="token-count-openai">OpenAI</div></details>'
+  const result = settingsSearchIndex(true).find(item => item.key === 'tokenCount-openai')!
+  await search.openSearchResult(result)
+  expect(activeTab.value).toBe('context')
+  expect(container.querySelector('details')?.open).toBe(true)
+  await vi.waitFor(() => expect(container.querySelector('[data-search-anchor="token-count-openai"]')?.classList.contains('search-flash')).toBe(true))
+})
+
 test('账号与 Bot 搜索进入对应分类，旧提示词关键词指向当前条目编辑器', () => {
   search.searchQuery.value = '主人'
   expect(search.searchResults.value.some(entry => entry.tab === 'accounts')).toBe(true)
