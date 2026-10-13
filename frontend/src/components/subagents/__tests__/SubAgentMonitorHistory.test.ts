@@ -1,6 +1,7 @@
 import { flushPromises, mount, type VueWrapper } from '@vue/test-utils'
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import { nextTick } from 'vue'
+import { createPinia } from 'pinia'
 import { MESSAGE_NAMES } from '@shared/protocol'
 import type { Content } from '@/types'
 import type { SubAgentRunContentWindowState } from '../monitorWindowState'
@@ -78,7 +79,7 @@ async function mountMonitor(options: { height?: number; hasMore?: boolean; initi
     }
     return Promise.resolve({})
   })
-  const wrapper = mount(SubAgentMonitor, { attachTo: document.body })
+  const wrapper = mount(SubAgentMonitor, { attachTo: document.body, global: { plugins: [createPinia()] } })
   wrappers.push(wrapper)
   const container = wrapper.get('.scroll-container').element as HTMLElement
   const height = options.height ?? 300

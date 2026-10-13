@@ -1,8 +1,9 @@
-import { describe, expect, test } from 'vitest'
+import { describe, expect, test, vi } from 'vitest'
 import type { Content } from '@/types'
-import { effectScope, ref, toRaw } from 'vue'
+import { effectScope, nextTick, ref, shallowRef } from 'vue'
 import { applyStreamChunkToContents, applyStreamUpdatesToContents } from '@/stores/agentRun/contentDelta'
 import { useMonitorMessageProjection } from '../useMonitorMessageProjection'
+import { MonitorContentIndex } from '../monitorContentIndex'
 import { appendMonitorFloorIndices, computeMonitorMessageFloorMap, renderMonitorMessages, type MonitorRenderCacheEntry } from '../monitorMessages'
 import { prependRunContentWindow, replaceRunContentWindow, replaceRunContentWindowPreservingPrefix, type SubAgentRunContentWindowState } from '../monitorWindowState'
 
@@ -18,36 +19,40 @@ function window(startIndex = 4, endIndex = 8): SubAgentRunContentWindowState {
 const floors = (value: SubAgentRunContentWindowState) => [...computeMonitorMessageFloorMap(value)]
 
 describe('Monitor 全局楼层和流式投影', () => {
-  test('200条挂载工作集在连续delta中复用历史消息及楼层，权威工具结果变更仍能更新卡片', () => {
+  test('200条挂载工作集在连续delta中复用历史消息及楼层，权威工具结果变更仍能更新卡片', async () => {
     const scope = effectScope()
+    const synchronize = vi.spyOn(MonitorContentIndex.prototype, 'synchronize')
     try {
-      scope.run(() => {
+      await scope.run(async () => {
         const contents = Array.from({ length: 260 }, (_, index) => content(index))
         contents[240] = { ...content(240), parts: [{ functionCall: { id: 'tool', name: 'read_file', args: {} } }] }
         contents[241] = response(241)
-        const value = ref<SubAgentRunContentWindowState>({
+        const value = shallowRef<SubAgentRunContentWindowState>({
           runId: 'a', contents, startIndex: 0, endIndex: 260, totalCount: 260,
           contentRevision: 1, hasMoreBefore: false, hasMoreAfter: false,
         })
-        const run = ref({ runId: 'a', status: 'running' as const, createdAt: 1, updatedAt: 1,
+        const run = shallowRef({ runId: 'a', status: 'running' as const, createdAt: 1, updatedAt: 1,
           contents, events: [], streamingContentIndex: 259 })
         const projection = useMonitorMessageProjection(run, value, ref(undefined), ref(true))
         const rows = projection.rows.value
         const floors = projection.floorByMessageId.value
         const before = projection.render(rows.slice(-200))
-        const next = applyStreamUpdatesToContents(toRaw(value.value.contents), [
+        expect(synchronize).toHaveBeenCalledTimes(1)
+        const next = applyStreamUpdatesToContents(value.value.contents, [
           { chunk: { delta: [{ text: ' one' }] }, timestamp: 2 },
           { chunk: { delta: [{ text: ' two' }], usage: { candidatesTokenCount: 5 } }, timestamp: 3 },
         ])
         expect(contents.at(-1)!.parts[0].text).toBe('message 259')
         value.value = { ...value.value, contents: next }
         run.value = { ...run.value, contents: next }
+        await nextTick()
         const after = projection.render(projection.rows.value.slice(-200))
         expect(projection.rows.value).toBe(rows)
         expect(projection.floorByMessageId.value).toBe(floors)
         expect(after[0]).toBe(before[0])
         expect(after.at(-1)!.content).toBe('message 259 one two')
         expect(after.at(-1)!.metadata?.usageMetadata).toEqual({ candidatesTokenCount: 5 })
+        expect(synchronize).toHaveBeenCalledTimes(2)
 
         const corrected = [...next]
         corrected[241] = { ...response(241), parts: [{ functionResponse: {
@@ -55,12 +60,17 @@ describe('Monitor 全局楼层和流式投影', () => {
         } }] }
         value.value = { ...value.value, contents: corrected, contentRevision: 2 }
         run.value = { ...run.value, contents: corrected }
+        await nextTick()
         const revised = projection.render(projection.rows.value.slice(-200))
         expect(revised.find(message => message.backendIndex === 240)!.tools![0]).toMatchObject({
           status: 'error', result: { success: false, error: '读取失败' },
         })
+        expect(synchronize).toHaveBeenCalledTimes(3)
       })
-    } finally { scope.stop() }
+    } finally {
+      scope.stop()
+      synchronize.mockRestore()
+    }
   })
 
   test('首次尾窗与前置历史楼层相同，Invocation/工具响应不占楼，前置不丢失尾部资格', () => {

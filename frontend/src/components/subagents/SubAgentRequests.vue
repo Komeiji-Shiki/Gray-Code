@@ -3,7 +3,8 @@ import { onBeforeUnmount, ref, watch } from 'vue';
 import { sendToExtension, onMessageFromExtension } from '../../utils/vscode';
 import type { ApprovalRequest as Approval, QuestionRequest as Question } from '../../../../packages/contracts/src/runtime';
 const props = defineProps<{ runId: string }>();
-const approvals = ref<Approval[]>([]); const questions = ref<Question[]>([]);
+const approvals = ref<Approval[]>([]);
+const questions = ref<Question[]>([]);
 const answers = ref<Record<string, string[]>>({});
 const busy = ref(new Set<string>());
 const requestErrors = ref(new Map<string, string>());
@@ -20,19 +21,26 @@ function cancelScheduledRefresh() {
 function scheduleRefresh() {
   // 一次请求结算可能连发审批、问题和运行事件，只保留一次列表读取。
   if (refreshTimer !== undefined) return;
-  refreshTimer = setTimeout(() => { refreshTimer = undefined; void load(); }, 50);
+  refreshTimer = setTimeout(() => {
+    refreshTimer = undefined;
+    void load();
+  }, 50);
 }
 
 async function load() {
   cancelScheduledRefresh();
-  const sequence = ++requestSequence; const id = props.runId;
+  const sequence = ++requestSequence;
+  const id = props.runId;
   try {
     const result = await sendToExtension('subagents.monitor.requests', { runId: id });
     if (sequence !== requestSequence || id !== props.runId) return;
-    approvals.value = result.approvals; questions.value = result.questions;
+    approvals.value = result.approvals;
+    questions.value = result.questions;
     error.value = '';
     for (const question of result.questions) answers.value[question.id] ??= question.questions.map(() => '');
-  } catch (cause) { if (sequence === requestSequence && id === props.runId) error.value = (cause as Error).message; }
+  } catch (cause) {
+    if (sequence === requestSequence && id === props.runId) error.value = (cause as Error).message;
+  }
 }
 async function submit(id: string, accepted?: boolean, choiceId?: string) {
   if (busy.value.has(id)) return;
@@ -58,15 +66,24 @@ async function submit(id: string, accepted?: boolean, choiceId?: string) {
 watch(() => props.runId, () => {
   runGeneration++;
   cancelScheduledRefresh();
-  approvals.value = []; questions.value = []; answers.value = {}; error.value = '';
-  busy.value.clear(); requestErrors.value.clear();
+  approvals.value = [];
+  questions.value = [];
+  answers.value = {};
+  error.value = '';
+  busy.value.clear();
+  requestErrors.value.clear();
   void load();
 }, { immediate: true });
 const unsubscribe = onMessageFromExtension((message: any) => {
   const event = message.type === 'subagentMonitor.event' ? message.data?.event : undefined;
   if (event?.runId === props.runId && /^(approval_|question_|run_)/.test(event.type)) scheduleRefresh();
 });
-onBeforeUnmount(() => { requestSequence++; runGeneration++; cancelScheduledRefresh(); unsubscribe(); });
+onBeforeUnmount(() => {
+  requestSequence++;
+  runGeneration++;
+  cancelScheduledRefresh();
+  unsubscribe();
+});
 </script>
 <template>
   <section v-if="approvals.length || questions.length || error" class="subagent-requests">
@@ -82,7 +99,11 @@ onBeforeUnmount(() => { requestSequence++; runGeneration++; cancelScheduledRefre
     </article>
     <article v-for="request in questions" :key="request.id"><strong>子 agent 的问题</strong>
       <label v-for="(question,index) in request.questions" :key="index"><span>{{ question.title }}</span>
-        <div v-if="question.options?.length" class="answer-options"><button v-for="option in question.options" :key="option" :class="{ selected: answers[request.id]?.[index] === option }" @click="answers[request.id][index] = option">{{ option }}</button></div>
+        <div v-if="question.options?.length" class="answer-options">
+          <button v-for="option in question.options" :key="option"
+            :class="{ selected: answers[request.id]?.[index] === option }"
+            @click="answers[request.id][index] = option">{{ option }}</button>
+        </div>
         <input v-model="answers[request.id][index]" placeholder="输入回答，也可以补充说明" :aria-label="question.title" />
       </label>
       <p v-if="requestErrors.has(request.id)" class="request-error" role="alert">{{ requestErrors.get(request.id) }}</p>
@@ -92,5 +113,60 @@ onBeforeUnmount(() => { requestSequence++; runGeneration++; cancelScheduledRefre
   </section>
 </template>
 <style scoped>
-.subagent-requests{margin:12px 0 18px}.subagent-requests article{border:1px solid var(--gc-border-control);padding:14px;margin-top:10px;background:var(--gc-surface-panel)}strong{font-size:13px}pre{max-height:200px;overflow:auto;white-space:pre-wrap;overflow-wrap:anywhere;font-size:12px;margin:12px 0}footer{display:flex;justify-content:flex-end;gap:8px;margin-top:12px}label{display:grid;gap:9px;margin-top:15px;font-size:13px}input,button{font:inherit;color:var(--gc-text-primary);background:var(--gc-surface-base);border:1px solid var(--gc-border-control);border-radius:var(--gc-radius-sm);padding:8px 10px}button{cursor:pointer}.primary,.answer-options .selected{background:var(--gc-button-primary);color:var(--gc-text-on-primary)}.answer-options{display:flex;flex-wrap:wrap;gap:6px}.request-error{font-size:12px;color:var(--gc-danger)}
+.subagent-requests {
+  margin: 12px 0 18px;
+}
+.subagent-requests article {
+  border: 1px solid var(--gc-border-control);
+  padding: 14px;
+  margin-top: 10px;
+  background: var(--gc-surface-panel);
+}
+strong {
+  font-size: 13px;
+}
+pre {
+  max-height: 200px;
+  overflow: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font-size: 12px;
+  margin: 12px 0;
+}
+footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 12px;
+}
+label {
+  display: grid;
+  gap: 9px;
+  margin-top: 15px;
+  font-size: 13px;
+}
+input, button {
+  font: inherit;
+  color: var(--gc-text-primary);
+  background: var(--gc-surface-base);
+  border: 1px solid var(--gc-border-control);
+  border-radius: var(--gc-radius-sm);
+  padding: 8px 10px;
+}
+button {
+  cursor: pointer;
+}
+.primary, .answer-options .selected {
+  background: var(--gc-button-primary);
+  color: var(--gc-text-on-primary);
+}
+.answer-options {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.request-error {
+  font-size: 12px;
+  color: var(--gc-danger);
+}
 </style>

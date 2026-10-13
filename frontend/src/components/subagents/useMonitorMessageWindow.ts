@@ -1,12 +1,17 @@
 import { computed, nextTick, onBeforeUnmount, onBeforeUpdate, onMounted, onUpdated, ref, watch, type Ref } from 'vue'
 import type { MonitorContentRow } from './monitorContentIndex'
+import { boundedRenderWindow, trailingWindowStart } from '../../../../shared/renderWindow'
 
 export const MAX_MONITOR_RENDERED_MESSAGES = 200
 const WINDOW_INCREMENT = 40
 const FOLLOW_THRESHOLD = 80
 const OLDER_THRESHOLD = 120
 
-interface HistoryAnchor { messageId?: string; anchorId?: string; offset: number }
+interface HistoryAnchor {
+  messageId?: string
+  anchorId?: string
+  offset: number
+}
 interface MonitorWindowOptions {
   rows: Readonly<Ref<MonitorContentRow[]>>
   runId: Readonly<Ref<string | undefined>>
@@ -31,7 +36,7 @@ export function useMonitorMessageWindow(options: MonitorWindowOptions) {
   let renderedRows: readonly MonitorContentRow[] = []
   let detach: (() => void) | undefined
   let resizeObserver: ResizeObserver | undefined
-  let observedShell: HTMLElement | undefined
+  let observedShell: HTMLElement | null | undefined
   const positions = computed(() => {
     const result = new Map<string, number>()
     options.rows.value.forEach((row, index) => {
@@ -42,10 +47,10 @@ export function useMonitorMessageWindow(options: MonitorWindowOptions) {
   })
   const bounds = computed(() => {
     const total = options.rows.value.length
-    const maximumStart = Math.max(0, total - MAX_MONITOR_RENDERED_MESSAGES)
+    const maximumStart = trailingWindowStart(total, MAX_MONITOR_RENDERED_MESSAGES)
     const start = shouldAutoFollow.value ? maximumStart
       : Math.min(firstId.value ? positions.value.get(firstId.value) ?? fallbackStart.value : fallbackStart.value, maximumStart)
-    return { start, end: Math.min(total, start + MAX_MONITOR_RENDERED_MESSAGES) }
+    return boundedRenderWindow(total, start, MAX_MONITOR_RENDERED_MESSAGES)
   })
   const visibleRows = computed(() => options.rows.value.slice(bounds.value.start, bounds.value.end))
   const hasEarlier = computed(() => bounds.value.start > 0)
@@ -99,9 +104,13 @@ export function useMonitorMessageWindow(options: MonitorWindowOptions) {
       && container && anchor && position === scrollPositionVersion.value) restoreHistoryAnchor(container, anchor)
     movingWindow = false
   }
-  function showEarlier() { return shiftWindow(Math.max(0, bounds.value.start - WINDOW_INCREMENT)) }
-  function showLater() { return shiftWindow(Math.min(bounds.value.start + WINDOW_INCREMENT,
-    Math.max(0, options.rows.value.length - MAX_MONITOR_RENDERED_MESSAGES))) }
+  function showEarlier() {
+    return shiftWindow(Math.max(0, bounds.value.start - WINDOW_INCREMENT))
+  }
+  function showLater() {
+    return shiftWindow(Math.min(bounds.value.start + WINDOW_INCREMENT,
+      trailingWindowStart(options.rows.value.length, MAX_MONITOR_RENDERED_MESSAGES)))
+  }
   function revealPrepended(previousFirstId: string | undefined) {
     const previousStart = previousFirstId ? positions.value.get(previousFirstId) ?? 0 : 0
     setStart(Math.max(0, previousStart - WINDOW_INCREMENT))
@@ -196,16 +205,16 @@ export function useMonitorMessageWindow(options: MonitorWindowOptions) {
       container.removeEventListener('scroll', handleScroll)
       container.removeEventListener('wheel', handleWheel)
     }
-    // 与现有滚动组件一致，非浏览器宿主可以仅使用更新前后的消息锚点。
-    if (typeof ResizeObserver === 'function') {
-      resizeObserver = new ResizeObserver(() => {
-        if (!options.disposed() && !shouldAutoFollow.value && !movingWindow && readingAnchor) restoreHistoryAnchor(container, readingAnchor)
-      })
-    }
+    resizeObserver = new ResizeObserver(() => {
+      if (!options.disposed() && !shouldAutoFollow.value && !movingWindow && readingAnchor) restoreHistoryAnchor(container, readingAnchor)
+    })
     renderedRows = visibleRows.value
     observeShell()
   })
-  onBeforeUnmount(() => { detach?.(); resizeObserver?.disconnect() })
+  onBeforeUnmount(() => {
+    detach?.()
+    resizeObserver?.disconnect()
+  })
   return {
     scrollbarRef, olderLoadEntryRef, shouldAutoFollow, viewGeneration, scrollPositionVersion,
     visibleRows, hasEarlier, hasLater, canLoadOlder, isViewCurrent, captureHistoryAnchor, restoreHistoryAnchor,

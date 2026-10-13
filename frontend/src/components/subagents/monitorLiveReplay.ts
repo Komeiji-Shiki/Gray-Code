@@ -1,4 +1,4 @@
-import { toRaw, type Ref } from 'vue'
+import type { Ref } from 'vue'
 import type { SubAgentRunEvent, SubAgentRunContentWindow, SubAgentRunManifest } from './monitorTypes'
 import { applyStreamUpdatesToContents } from '@/stores/agentRun/contentDelta'
 import { appendMonitorFloorIndices } from './monitorMessages'
@@ -69,7 +69,7 @@ export function createMonitorLiveReplay(windowsByRunId: Ref<Record<string, SubAg
     if (!accepted.length) return { window: contentWindow, blocked }
 
     // 同一版本的片段合批后只复制一次尾消息，顺序、参数最终快照和 usage 仍逐事件应用。
-    const nextContents = applyStreamUpdatesToContents(toRaw(contentWindow.contents), accepted.map(event => ({
+    const nextContents = applyStreamUpdatesToContents(contentWindow.contents, accepted.map(event => ({
       chunk: event.payload, timestamp: event.timestamp || Date.now(),
     })), contentWindow.startIndex)
     const sequence = accepted.reduce((latest, event) => Math.max(latest,

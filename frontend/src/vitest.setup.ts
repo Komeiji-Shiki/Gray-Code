@@ -2,6 +2,14 @@ import { beforeEach } from 'vitest'
 import { setDetectedLanguage, setLanguage } from './i18n'
 import { setShellLanguage } from '../../apps/client/src/i18n'
 
+// jsdom 不计算布局；需要模拟尺寸变化的用例提供自己的回调夹具，默认环境提供观察器接口。
+globalThis.ResizeObserver = class implements ResizeObserver {
+  constructor(_callback: ResizeObserverCallback) {}
+  observe(_target: Element, _options?: ResizeObserverOptions): void {}
+  unobserve(_target: Element): void {}
+  disconnect(): void {}
+}
+
 // Node 26 exposes its own global localStorage accessor. Without
 // --localstorage-file that accessor resolves to undefined, and its presence
 // prevents Vitest from installing jsdom's implementation on globalThis.

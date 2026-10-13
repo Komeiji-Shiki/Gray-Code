@@ -11,7 +11,6 @@
  * 目的：Main Chat 和SubAgent Monitor 共享同一套functionCall 合并规则，后续WP20 统一 reducer 可直接依赖。
  */
 
-import { toRaw } from 'vue'
 import type { Content, ContentPart } from '../../types'
 // WP15: 统一 functionCall merge 纯函数入口。
 // 为什么从独立模块导入：消除与 streamHelpers.ts / parsers.ts 的三份重复。
@@ -138,8 +137,6 @@ export interface AgentRunStreamUpdate {
 const streamContentChanges = new WeakMap<Content[], { lineage: object; start: number; snapshotVersion: number }>()
 
 export function getStreamContentChangeStart(previous: Content[], next: Content[]): number | undefined {
-  previous = toRaw(previous)
-  next = toRaw(next)
   if (previous === next) return next.length
   const before = streamContentChanges.get(previous)
   const after = streamContentChanges.get(next)
@@ -148,8 +145,8 @@ export function getStreamContentChangeStart(previous: Content[], next: Content[]
 
 /** 只有同一基线上的纯追加才能按长度取显示增量；权威快照必须重新建立真实文本基线。 */
 export function isAppendOnlyStreamChange(previous: Content[], next: Content[]): boolean {
-  const before = streamContentChanges.get(toRaw(previous))
-  const after = streamContentChanges.get(toRaw(next))
+  const before = streamContentChanges.get(previous)
+  const after = streamContentChanges.get(next)
   return !!before && !!after && before.lineage === after.lineage && before.snapshotVersion === after.snapshotVersion
 }
 
@@ -162,8 +159,7 @@ export function applyStreamChunkToContents(
 
 /** 同一批片段按原顺序应用，已经复制的尾消息可继续写入，快照边界仍保留完整语义。 */
 export function applyStreamUpdatesToContents(contents: Content[], updates: readonly AgentRunStreamUpdate[], baseIndex = 0): Content[] {
-  // Monitor 的窗口来自深响应式 ref，索引读取的是原始数组；两侧必须使用同一个身份。
-  const source = toRaw(contents || [])
+  const source = contents
   const next = [...source]
   const writable = new Set<Content>()
   const baseline = streamContentChanges.get(source) ?? { lineage: {}, start: source.length, snapshotVersion: 0 }

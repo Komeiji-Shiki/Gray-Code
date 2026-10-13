@@ -3,6 +3,7 @@ import { shellText as t } from '../i18n';
 import { computed, nextTick, onMounted, onUnmounted, reactive, ref, watch } from 'vue';
 import type { ProjectReplacement, ProjectSearchQuery, ProjectSearchResult, SourceRange } from '@graycode/contracts';
 import type { EditBatchHandle } from '../../../../shared/editorBatchHistory';
+import { fixedRowRenderWindow } from '../../../../shared/renderWindow';
 import { call } from '../api';
 const props = defineProps<{
   workspaceId: string;
@@ -48,9 +49,13 @@ const rows = computed<SearchRow[]>(() => {
   }
   return values;
 });
-const startRow = computed(() => Math.max(0, Math.floor(Math.max(0, scrollTop.value - listOffset.value) / rowHeight) - 8));
-const rowCount = computed(() => Math.ceil(viewportHeight.value / rowHeight) + 17);
-const visibleRows = computed(() => rows.value.slice(startRow.value, startRow.value + rowCount.value));
+const SEARCH_OVERSCAN_ROWS = 8;
+const firstVisibleRow = computed(() => Math.floor(Math.max(0, scrollTop.value - listOffset.value) / rowHeight));
+const viewportRows = computed(() => Math.ceil(viewportHeight.value / rowHeight));
+const visibleWindow = computed(() => fixedRowRenderWindow(rows.value.length, firstVisibleRow.value, viewportRows.value, SEARCH_OVERSCAN_ROWS));
+const startRow = computed(() => visibleWindow.value.start);
+const endRow = computed(() => visibleWindow.value.end);
+const visibleRows = computed(() => rows.value.slice(startRow.value, endRow.value));
 function measureResults() {
   viewportHeight.value = viewport.value?.clientHeight ?? 0;
   listOffset.value = resultList.value?.offsetTop ?? 0;

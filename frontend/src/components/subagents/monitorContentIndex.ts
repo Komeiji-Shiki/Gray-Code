@@ -1,4 +1,3 @@
-import { toRaw } from 'vue'
 import type { Content, ContentPart } from '@/types'
 import { getStreamContentChangeStart } from '@/stores/agentRun/contentDelta'
 import { computePaginatedMessageFloorMap } from '../message/messageListUtils'
@@ -36,7 +35,7 @@ export class MonitorContentIndex {
   }
 
   synchronize(run: MonitorMessageSource, window: SubAgentRunContentWindowState | undefined): void {
-    const contents = toRaw(run.contents)
+    const contents = run.contents
     const startIndex = window?.startIndex ?? 0
     if (this.contents === contents && this.runId === run.runId && this.startIndex === startIndex) return
     const sameWindow = this.runId === run.runId && this.startIndex === startIndex
@@ -120,7 +119,7 @@ export class MonitorContentIndex {
   }
 
   floors(window: SubAgentRunContentWindowState | undefined, streamingIndex?: number | null): Map<string, number> {
-    const indices = window?.floorIndices ? toRaw(window.floorIndices) : undefined
+    const indices = window?.floorIndices
     const total = window?.totalCount ?? 0
     const placeholder = this.placeholder(window, streamingIndex)
     const cached = this.floorCache

@@ -7,7 +7,7 @@ import { useMonitorMessageWindow } from './useMonitorMessageWindow'
 import { useMonitorSmoothText } from './useMonitorSmoothText'
 import MonitorElapsed from './MonitorElapsed.vue'
 import type { SubAgentContextCompactionRecord } from '@shared/subAgentContextCompaction'
-import { computed, nextTick, onMounted, onBeforeUnmount, provide, ref, watch } from 'vue'
+import { computed, nextTick, onMounted, onBeforeUnmount, provide, ref, shallowRef, watch, type ComponentPublicInstance } from 'vue'
 import { MESSAGE_NAMES } from '@shared/protocol'
 import { useI18n } from '@/i18n'
 import { CustomScrollbar } from '../common'
@@ -60,7 +60,7 @@ const DEFAULT_RUN_WINDOW_LIMIT = 20
 // 修改方式：状态拆成轻量 manifests 与按 run 缓存的 transcript window，只有聚焦 run 才加载 Content[]。
 // 修改目的：保持 Content[]/MessageItem 渲染语义不分叉，同时把首屏 payload 限制为 run 列表元数据。
 const manifests = ref<SubAgentRunManifest[]>([])
-const windowsByRunId = ref<Record<string, SubAgentRunContentWindow>>({})
+const windowsByRunId = shallowRef<Record<string, SubAgentRunContentWindow>>({})
 const contextCompactionsByRunId = ref<Record<string, SubAgentContextCompactionRecord[]>>({})
 const eventsByRunId = ref<Record<string, SubAgentRunEvent[]>>({})
 // 修改原因：工具状态是运行时事件状态，不能只从窗口内 functionResponse 反推，否则刷新丢失时工具卡会卡住。
@@ -562,6 +562,9 @@ const {
   loadOlder: loadOlderMessages,
   disposed: () => isDisposed,
 })
+function bindOlderLoadEntry(element: Element | ComponentPublicInstance | null) {
+  olderLoadEntryRef.value = element as HTMLElement | null
+}
 const floorByMessageId = messageProjection.floorByMessageId
 const renderMessages = computed(() => messageProjection.render(visibleRows.value))
 useMonitorSmoothText(renderMessages, () => focusedWindow.value?.contents)
@@ -964,7 +967,7 @@ onBeforeUnmount(() => {
           </div>
         </div>
 
-        <div v-if="canLoadOlder" ref="olderLoadEntryRef" class="load-older-row">
+        <div v-if="canLoadOlder" :ref="bindOlderLoadEntry" class="load-older-row">
           <!--
             修改原因：默认只加载尾部 20 条时，用户需要可控地向前补齐历史，而不是误以为早期内容丢失。
             修改方式：先展开本地已加载历史，用尽后再以 window.startIndex 请求上一页。

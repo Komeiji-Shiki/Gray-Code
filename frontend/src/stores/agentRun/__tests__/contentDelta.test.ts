@@ -8,21 +8,20 @@
  * - delta 路径：尾部是非 model 楼层时新建 model 楼层（ensureLastModelContent）。
  */
 import { describe, expect } from 'vitest'
-import { reactive, toRaw } from 'vue'
 import type { Content } from '../../../types'
 import { applyStreamChunkToContents, applyStreamUpdatesToContents, getStreamContentChangeStart, isAppendOnlyStreamChange } from '../contentDelta'
 
-test('响应式窗口与原始索引共享追加片段的变化边界', () => {
-  const before = reactive([makeModelContent(0), makeModelContent(1)])
+test('普通窗口数组保留追加片段的变化边界和未变化前缀身份', () => {
+  const before = [makeModelContent(0), makeModelContent(1)]
   const after = applyStreamChunkToContents(before, { delta: [{ text: ' a' }] })
-  const latest = applyStreamChunkToContents(reactive(after), { delta: [{ text: ' b' }] })
-  expect(getStreamContentChangeStart(toRaw(before), after)).toBe(1)
+  const latest = applyStreamChunkToContents(after, { delta: [{ text: ' b' }] })
+  expect(getStreamContentChangeStart(before, after)).toBe(1)
   expect(getStreamContentChangeStart(after, latest)).toBe(1)
-  expect(isAppendOnlyStreamChange(before, reactive(latest))).toBe(true)
+  expect(isAppendOnlyStreamChange(before, latest)).toBe(true)
   const replaced = applyStreamChunkToContents(latest, makeSnapshot('权威正文'))
   expect(isAppendOnlyStreamChange(latest, replaced)).toBe(false)
   expect(isAppendOnlyStreamChange(replaced, applyStreamChunkToContents(replaced, { delta: [{ text: '继续' }] }))).toBe(true)
-  expect(latest[0]).toBe(toRaw(before)[0])
+  expect(latest[0]).toBe(before[0])
   expect(latest[1].parts[0].text).toBe('model-1 a b')
 })
 

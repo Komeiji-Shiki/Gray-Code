@@ -34,8 +34,34 @@ const TerminalPanel = defineAsyncComponent(() => import('./TerminalPanel.vue'));
 const terminalSession = ref('');
 const CodeEditor = defineAsyncComponent(() => import('./CodeEditor.vue'));
 const DiffPanel = defineAsyncComponent(() => import('./DiffPanel.vue'));
-const { documents, synchronizedText, queues, recoveringDocuments, closingDocuments, connection,
-  flushDocument, flushDocuments, queue, change, recoverDocument, save } = useWorkbenchDocuments(() => disposed);
+const { documents, open: openDocument, close: closeDocument, focus: focusDocument,
+  flushDocument, flushDocuments, change, save, saveAll } = useWorkbenchDocuments({
+  disposed: () => disposed,
+  changed: change => {
+    editorRegistry.value?.reconcile(documents);
+    if (change.type === 'renamed') {
+      const nextKey = key(change.document);
+      if (current.value === change.previousKey) current.value = nextKey;
+      if (selections[change.previousKey]) {
+        selections[nextKey] = selections[change.previousKey];
+        delete selections[change.previousKey];
+      }
+      return;
+    }
+    if (closing.value === change.document) closing.value = null;
+    if (!change.reopened && current.value === key(change.document)) {
+      const next = change.type === 'removed' ? documents[0] : documents[change.index] ?? documents.at(-1);
+      current.value = next ? key(next) : '';
+    }
+    if (!documents.length && pane.value === 'editor') pane.value = openedPanels.value.at(-1) ?? 'empty';
+  },
+  saveFailed: document => {
+    current.value = key(document);
+    pane.value = 'editor';
+    state.chatFocused = false;
+    state.settingsOpen = false;
+  },
+});
 const editorRegistry = shallowRef<WorkbenchDocumentModels>();
 let modelModule: Promise<typeof import('../workbenchModels')> | undefined;
 const current = ref('');
@@ -116,7 +142,9 @@ function activatePanel(id: string) {
 }
 watch(
   () => state.workbenchPanelRequest,
-  (request) => { if (request) activatePanel(request.id); },
+  (request) => {
+    if (request) activatePanel(request.id);
+  },
   { flush: 'sync' },
 );
 watch(
@@ -176,26 +204,6 @@ function openRange(path: string, range: SourceRange, workspaceId: string) {
     endColumn: range.end.character + 1,
   });
 }
-async function saveAll() {
-  const failures: { doc: DocumentState; error: unknown }[] = [];
-  for (const doc of documents) {
-    try {
-      await flushDocument(doc);
-      if (doc.dirty) await save(doc);
-    } catch (error) {
-      failures.push({ doc, error });
-    }
-  }
-  if (failures.length) {
-    if (!disposed) {
-      current.value = key(failures[0].doc);
-      pane.value = 'editor';
-      state.chatFocused = false;
-      state.settingsOpen = false;
-    }
-    throw new Error(failures.map((item) => `${item.doc.path}: ${item.error instanceof Error ? item.error.message : String(item.error)}`).join('\n'));
-  }
-}
 async function replaceFiles(workspaceId: string, edits: ProjectReplacement[]): Promise<EditBatchHandle> {
   await Promise.all(edits.map((edit) => open(edit.path, workspaceId, undefined, false)));
   await flushDocuments();
@@ -242,7 +250,9 @@ const active = computed(() => documents.find((doc) => key(doc) === current.value
 // 可见文档统一按视口准备，窄屏首次打开后切回桌面布局也能取得模型。
 watch(() => [props.compact, active.value, pane.value] as const, ([compact, document, panel], _previous, onCleanup) => {
   let current = true;
-  onCleanup(() => { current = false; });
+  onCleanup(() => {
+    current = false;
+  });
   if (compact || !document || panel !== 'editor') return;
   void readyModel(document).catch(error => {
     if (current && !disposed) report(error);
@@ -299,17 +309,8 @@ async function open(path: string, workspaceId = state.workspaceId, selection?: I
       if (props.compact && focus && currentIntent()) mobileTreeVisible.value = false;
       return;
     }
-    let doc = documents.find((item) => item.workspaceId === workspaceId && item.path === path);
-    if (!doc) {
-      const opened = await call<DocumentState>('documents.open', { workspaceId, path });
-      if (disposed) return;
-      doc = documents.find((item) => key(item) === key(opened));
-      if (!doc) {
-        documents.push(opened);
-        doc = documents[documents.length - 1];
-        synchronizedText.set(doc, { text: doc.text, version: doc.version });
-      }
-    }
+    const doc = await openDocument(path, workspaceId);
+    if (!doc) return;
     const id = key(doc);
     if (focus && currentIntent()) {
       pane.value = 'editor';
@@ -329,11 +330,7 @@ watch(
   () => [active.value?.workspaceId, active.value?.path],
   () => {
     const doc = active.value;
-    if (doc && closingDocuments.has(doc)) return;
-    void call('documents.focus', { workspaceId: doc?.workspaceId, path: doc?.path ?? null }).catch((error) => {
-      // 连续关闭标签时，旧焦点请求可能晚于文档关闭返回，只报告当前文档的错误。
-      if (active.value === doc && (!doc || !closingDocuments.has(doc))) report(error);
-    });
+    focusDocument(doc);
   },
   { immediate: true },
 );
@@ -356,107 +353,9 @@ async function close(doc: DocumentState, discard = false) {
     closing.value = doc;
     return;
   }
-  if (closingDocuments.has(doc)) return;
-  closingDocuments.add(doc);
-  try {
-    await (queues.get(key(doc)) ?? Promise.resolve()).catch(() => undefined);
-    if (documents.includes(doc))
-      await call('documents.close', {
-        workspaceId: doc.workspaceId,
-        path: doc.path,
-        discard,
-      });
-    const index = documents.indexOf(doc);
-    if (index >= 0) documents.splice(index, 1);
-    // 关闭回执后立即释放旧所有者，随后同路径重新打开不会借用即将销毁的模型。
-    editorRegistry.value?.reconcile(documents);
-    const reopened = documents.some((item) => key(item) === key(doc));
-    // 删除通知或重新打开可先于关闭回执到达，只释放原文档仍拥有的界面状态。
-    if (!reopened) {
-      queues.delete(key(doc));
-    }
-    if (closing.value === doc) closing.value = null;
-    if (!reopened && current.value === key(doc)) current.value = documents[index] ? key(documents[index]) : documents.at(-1) ? key(documents.at(-1)!) : '';
-    if (!documents.length && pane.value === 'editor') pane.value = openedPanels.value.at(-1) ?? 'empty';
-  } finally {
-    closingDocuments.delete(doc);
-  }
+  await closeDocument(doc, discard);
 }
-watch(
-  () => documents.filter((doc) => doc.dirty).length,
-  (count) => void guard(() => call('desktop.dirtyDocuments', { count })),
-);
 const unsubscribe = subscribe((event) => {
-  if (event.type === 'transport.disconnected') {
-    connection.connected = false;
-    return;
-  }
-  if (event.type === 'transport.resumed') {
-    const disconnected = !connection.connected;
-    connection.connected = true;
-    if (!disconnected && !event.snapshotRequired && !event.authenticatedAgain) return;
-    for (const doc of documents) recoveringDocuments.add(doc);
-    void Promise.allSettled(documents.map(recoverDocument))
-      .then(() => {
-        const doc = active.value;
-        if (!disposed && connection.connected && doc && documents.includes(doc) && !closingDocuments.has(doc) && !recoveringDocuments.has(doc))
-          return call('documents.focus', { workspaceId: doc.workspaceId, path: doc.path });
-      })
-      .catch((error) => {
-        if (!disposed) report(error);
-      });
-    return;
-  }
-  if (event.type === 'desktop.saveAll') {
-    void (async () => {
-      let error: string | undefined;
-      try {
-        await saveAll();
-        if (!disposed) await call('desktop.dirtyDocuments', { count: documents.filter((doc) => doc.dirty).length });
-      } catch (cause) {
-        error = cause instanceof Error ? cause.message : String(cause);
-        if (!disposed) report(cause);
-      }
-      await call('desktop.saveResult', { requestId: event.requestId, participant: 'documents', error });
-    })().catch((error) => {
-      if (!disposed) report(error);
-    });
-    return;
-  }
-  if (event.type === 'document.reset') {
-    const doc = documents.find((item) => item.workspaceId === event.workspaceId && item.path === event.path);
-    if (!doc) return;
-    if (typeof event.previousVersion === 'number' && doc.version > event.previousVersion) return;
-    // 输入后撤销回原文字也属于本地编辑，不能仅凭正文相同接受外部重置或删除。
-    const newerText = doc.dirty || doc.text !== event.previousText;
-    if (event.document) {
-      const previousKey = key(doc);
-      const wasCurrent = current.value === previousKey;
-      const text = doc.text;
-      Object.assign(doc, event.document);
-      synchronizedText.set(doc, { text: event.document.text, version: event.document.version });
-      if (key(doc) !== previousKey) {
-        if (wasCurrent) current.value = key(doc);
-        const pending = queues.get(previousKey);
-        queues.delete(previousKey);
-        if (pending) queues.set(key(doc), pending);
-        if (selections[previousKey]) {
-          selections[key(doc)] = selections[previousKey];
-          delete selections[previousKey];
-        }
-      }
-      if (newerText && text !== doc.text) change(doc, text);
-    } else if (!newerText) {
-      documents.splice(documents.indexOf(doc), 1);
-      editorRegistry.value?.reconcile(documents);
-      if (current.value === key(doc)) current.value = documents.length ? key(documents[0]) : '';
-      if (!event.removed) report(new Error(event.error));
-    } else {
-      doc.dirty = true;
-      report(new Error(event.error ?? t('uiWorkbenchFileChangedKeepInput')));
-    }
-    return;
-  }
   if (event.type === 'workspace.terminal.open') {
     terminalSession.value = event.id;
     activatePanel('terminal');
@@ -483,29 +382,6 @@ const unsubscribe = subscribe((event) => {
     activatePanel('diff');
     return;
   }
-  if (event.type !== 'file.changed') return;
-  const doc = documents.find((doc) => doc.workspaceId === event.workspaceId && doc.path === event.path);
-  if (!doc || doc.dirty) return;
-  void queue(doc, async () => {
-    if (!documents.includes(doc) || doc.dirty || closingDocuments.has(doc)) return;
-    const text = doc.text,
-      version = doc.version;
-    const next = await call<DocumentState>('documents.open', {
-      workspaceId: doc.workspaceId,
-      path: doc.path,
-      reload: true,
-    });
-    if (!documents.includes(doc) || doc.version !== version) return;
-    // 新输入已排在刷新后；先接续宿主版本，不能覆盖读盘期间的本地文本。
-    const changed = doc.dirty || doc.text !== text;
-    const latest = doc.text;
-    Object.assign(doc, next);
-    synchronizedText.set(doc, { text: next.text, version: next.version });
-    if (changed) {
-      doc.text = latest;
-      doc.dirty = true;
-    }
-  });
 });
 onUnmounted(() => {
   disposed = true;

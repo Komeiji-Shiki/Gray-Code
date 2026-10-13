@@ -3,8 +3,15 @@ import { computed, nextTick, onBeforeUnmount, onMounted, ref, shallowRef, watch,
 import CustomScrollbar from '../../common/CustomScrollbar.vue'
 import { escapeHtml } from '../../common/markdownUtils'
 import { useOpenWorkspaceFile } from '../../../composables/useOpenWorkspaceFile'
+import { boundedRenderWindow, measuredRowRenderWindow, rowAtOffset } from '../../../../../shared/renderWindow'
 
-interface SearchMatch { file: string; line: number; column: number; match: string; context: string }
+interface SearchMatch {
+  file: string
+  line: number
+  column: number
+  match: string
+  context: string
+}
 const props = withDefaults(defineProps<{ matches: SearchMatch[]; compact?: boolean; maxHeight?: number }>(), { maxHeight: 300 })
 const { openFileAt } = useOpenWorkspaceFile()
 const scrollbar = ref<InstanceType<typeof CustomScrollbar>>()
@@ -18,26 +25,24 @@ let observer: ResizeObserver | undefined
 let container: HTMLElement | null = null
 let width = 0
 let disposed = false
-const virtual = computed(() => props.matches.length > 30)
+const VIRTUAL_MATCH_THRESHOLD = 30
+const MATCH_OVERSCAN_PIXELS = 160
+const COMPACT_ESTIMATED_HEIGHT = 28
+const EXPANDED_ESTIMATED_HEIGHT = 80
+const virtual = computed(() => props.matches.length > VIRTUAL_MATCH_THRESHOLD)
 function rowOffsets(matches: SearchMatch[], heights: Map<SearchMatch, number>) {
   const result = [0]
-  for (const match of matches) result.push(result.at(-1)! + (heights.get(match) ?? (props.compact ? 28 : 80)))
+  for (const match of matches) {
+    result.push(result.at(-1)! + (heights.get(match) ?? (props.compact ? COMPACT_ESTIMATED_HEIGHT : EXPANDED_ESTIMATED_HEIGHT)))
+  }
   return result
 }
 const offsets = computed(() => rowOffsets(props.matches, measured.value))
-function indexAt(position: number, positions = offsets.value): number {
-  let low = 0
-  let high = positions.length - 1
-  while (low < high) {
-    const middle = Math.floor((low + high + 1) / 2)
-    if (positions[middle] <= position) low = middle
-    else high = middle - 1
-  }
-  return Math.min(low, Math.max(0, positions.length - 2))
-}
-const startIndex = computed(() => virtual.value ? indexAt(Math.max(0, scrollTop.value - 160)) : 0)
-const endIndex = computed(() => virtual.value
-  ? Math.min(props.matches.length, indexAt(scrollTop.value + viewportHeight.value + 160) + 1) : props.matches.length)
+const visibleWindow = computed(() => virtual.value
+  ? measuredRowRenderWindow(offsets.value, scrollTop.value, viewportHeight.value, MATCH_OVERSCAN_PIXELS)
+  : boundedRenderWindow(props.matches.length, 0, props.matches.length))
+const startIndex = computed(() => visibleWindow.value.start)
+const endIndex = computed(() => visibleWindow.value.end)
 // 旧 ref 回调也必须保留当次渲染的绝对编号，不能在卸载时读取新窗口的起点。
 const visible = computed(() => props.matches.slice(startIndex.value, endIndex.value)
   .map((match, index) => ({ match, index: startIndex.value + index })))
@@ -54,7 +59,7 @@ watch(() => props.matches, (matches, previous) => {
   }
   const oldOffsets = rowOffsets(previous, heights)
   const top = container?.scrollTop ?? scrollTop.value
-  const anchor = indexAt(top, oldOffsets)
+  const anchor = rowAtOffset(oldOffsets, top)
   const within = top - oldOffsets[anchor]
   const target = sameMatch(matches[anchor], previous[anchor]) ? anchor
     : matches.findIndex(match => sameMatch(match, previous[anchor]))
@@ -84,10 +89,15 @@ function bindRow(index: number, node: Element | ComponentPublicInstance | null) 
   const before = elements.get(index)
   if (before === node) return
   if (before) observer?.unobserve(before)
-  if (node instanceof HTMLElement) { elements.set(index, node); if (virtual.value) observer?.observe(node) }
+  if (node instanceof HTMLElement) {
+    elements.set(index, node)
+    if (virtual.value) observer?.observe(node)
+  }
   else elements.delete(index)
 }
-function onScroll() { scrollTop.value = container?.scrollTop ?? 0 }
+function onScroll() {
+  scrollTop.value = container?.scrollTop ?? 0
+}
 async function navigate(event: KeyboardEvent) {
   if (!virtual.value || props.compact || !container || !(event.target instanceof HTMLElement)) return
   const row = event.target.closest<HTMLElement>('[data-match-index]')
@@ -116,7 +126,7 @@ onMounted(() => {
   container.addEventListener('scroll', onScroll, { passive: true })
   observer = new ResizeObserver(entries => {
     if (!container) return
-    const anchor = indexAt(container.scrollTop)
+    const anchor = rowAtOffset(offsets.value, container.scrollTop)
     const anchorMatch = props.matches[anchor]
     const within = container.scrollTop - offsets.value[anchor]
     const resized = width !== container.clientWidth
@@ -131,7 +141,10 @@ onMounted(() => {
       const match = props.matches[index]
       if (element === container || !match || elements.get(index) !== element) continue
       const height = entry.borderBoxSize?.[0]?.blockSize ?? element.getBoundingClientRect().height
-      if (height > 0 && next.get(match) !== height) { next.set(match, height); changed = true }
+      if (height > 0 && next.get(match) !== height) {
+        next.set(match, height)
+        changed = true
+      }
     }
     if (!changed) return
     measured.value = next
@@ -147,7 +160,11 @@ onMounted(() => {
     for (const element of elements.values()) observer.observe(element)
   }
 })
-onBeforeUnmount(() => { disposed = true; observer?.disconnect(); container?.removeEventListener('scroll', onScroll) })
+onBeforeUnmount(() => {
+  disposed = true
+  observer?.disconnect()
+  container?.removeEventListener('scroll', onScroll)
+})
 
 function highlighted(match: SearchMatch): string {
   const previous = highlights.get(match)

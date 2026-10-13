@@ -8,6 +8,7 @@ import WorkspaceFileDialog from './WorkspaceFileDialog.vue';
 import NavigationIcon from './navigation/NavigationIcon.vue';
 import type { FileDialogRequest } from './files/types';
 import { officeFormatFor } from '../../../../shared/officeFormats';
+import { fixedRowRenderWindow } from '../../../../shared/renderWindow';
 import { shellText as t } from '../i18n';
 const emit = defineEmits<{ open: [path: string, workspaceId: string]; hide: [] }>();
 const isWeb = window.graycode?.kind === 'web';
@@ -24,7 +25,9 @@ const uploadInput = ref<HTMLInputElement>();
 const viewport = ref<HTMLElement>();
 const viewportHeight = ref(0);
 const scrollTop = ref(0);
-const rowHeight = ref(28);
+const TREE_ROW_HEIGHT = 28;
+const COMPACT_TREE_ROW_HEIGHT = 38;
+const rowHeight = ref(TREE_ROW_HEIGHT);
 const compactScreen = window.matchMedia('(max-width: 600px)');
 let resizeObserver: ResizeObserver | undefined;
 let refreshTimer: ReturnType<typeof setTimeout> | undefined;
@@ -44,11 +47,15 @@ const nodes = computed(() => {
   return output;
 });
 // 固定行高只渲染视口附近的目录项，展开状态和选择状态仍属于完整文件树。
-const startRow = computed(() => Math.max(0, Math.floor(scrollTop.value / rowHeight.value) - 8));
-const visibleRowCount = computed(() => Math.ceil(viewportHeight.value / rowHeight.value) + 17);
-const visibleNodes = computed(() => nodes.value.slice(startRow.value, startRow.value + visibleRowCount.value));
+const TREE_OVERSCAN_ROWS = 8;
+const firstVisibleRow = computed(() => Math.floor(scrollTop.value / rowHeight.value));
+const viewportRows = computed(() => Math.ceil(viewportHeight.value / rowHeight.value));
+const visibleWindow = computed(() => fixedRowRenderWindow(nodes.value.length, firstVisibleRow.value, viewportRows.value, TREE_OVERSCAN_ROWS));
+const startRow = computed(() => visibleWindow.value.start);
+const endRow = computed(() => visibleWindow.value.end);
+const visibleNodes = computed(() => nodes.value.slice(startRow.value, endRow.value));
 function measure() {
-  rowHeight.value = compactScreen.matches ? 38 : 28;
+  rowHeight.value = compactScreen.matches ? COMPACT_TREE_ROW_HEIGHT : TREE_ROW_HEIGHT;
   viewportHeight.value = viewport.value?.clientHeight ?? 0;
 }
 onMounted(() => {

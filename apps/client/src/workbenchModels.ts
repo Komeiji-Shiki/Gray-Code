@@ -41,23 +41,32 @@ export class WorkbenchDocumentModels {
     // prepare 也可能由编辑器挂载回调调用，模型监听必须脱离该组件的 effectScope。
     const scope = effectScope(true);
     const entry = scope.run((): OwnedModel => {
-      const workspaceId = document.workspaceId, path = document.path;
+      const workspaceId = document.workspaceId;
+      const path = document.path;
       const model = monaco.editor.getModel(editorUri(workspaceId, path))
         ?? monaco.editor.createModel(document.text, editorLanguageId(documentLanguageId(path)), editorUri(workspaceId, path));
       void ensureEditorLanguage(editorLanguageId(documentLanguageId(path))).catch(report);
       const languageState = shallowRef<LanguageDocumentStatus>({ languageId: documentLanguageId(path) });
-      const language = bindLanguageDocument({ model, workspaceId, path, version: () => document.version,
+      const language = bindLanguageDocument({
+        model,
+        workspaceId,
+        path,
+        version: () => document.version,
         flush: () => this.operations.flush(document),
         open: (file, range, focus) => this.operations.open(file, workspaceId, range, focus),
-        status: value => { languageState.value = value; },
+        status: value => {
+          languageState.value = value;
+        },
       });
       const debugging = bindModelDebugging(model, workspaceId, path);
       const undo = bindModelUndo(model);
-      let applying = false, synced = model.getValue(undefined, true);
+      let applying = false;
+      let synced = model.getValue(undefined, true);
       const changed = model.onDidChangeContent(event => {
         language.clearMarkers();
         if (applying) return;
-        const before = synced, text = model.getValue(undefined, true);
+        const before = synced;
+        const text = model.getValue(undefined, true);
         synced = text;
         const region = event.isFlush || event.isEolChange ? undefined
           : documentChangeRegion(event.changes, text.length - model.getValueLength());
@@ -67,11 +76,22 @@ export class WorkbenchDocumentModels {
       watch(() => document.text, text => {
         if (text === synced) return;
         applying = true;
-        try { model.setValue(text); synced = model.getValue(undefined, true); }
-        finally { applying = false; }
+        try {
+          model.setValue(text);
+          synced = model.getValue(undefined, true);
+        } finally {
+          applying = false;
+        }
       });
-      watch(() => document.version, () => { void language.updateMarkers(); });
-      return { model, language, languageState, workspaceId, path,
+      watch(() => document.version, () => {
+        void language.updateMarkers();
+      });
+      return {
+        model,
+        language,
+        languageState,
+        workspaceId,
+        path,
         viewState: previous?.viewState ?? null,
         dispose() {
           scope.stop();
@@ -89,8 +109,12 @@ export class WorkbenchDocumentModels {
 
   reconcile(documents: readonly DocumentState[]): void {
     for (const [document, entry] of this.entries) {
-      if (!documents.includes(document)) { entry.dispose(); this.entries.delete(document); }
-      else if (entry.workspaceId !== document.workspaceId || entry.path !== document.path) this.prepare(document);
+      if (!documents.includes(document)) {
+        entry.dispose();
+        this.entries.delete(document);
+      } else if (entry.workspaceId !== document.workspaceId || entry.path !== document.path) {
+        this.prepare(document);
+      }
     }
   }
 

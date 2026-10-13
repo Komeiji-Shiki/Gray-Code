@@ -31,23 +31,38 @@ const languageLabel = computed(() => {
   if (state.reason === 'unavailable') return t('uiCodeEditorLanguageServiceMissing', { value1: state.languageId });
   return t('uiCodeEditorSyntaxHighlighting', { value1: state.languageId });
 });
-function suggest() { editor?.focus(); editor?.trigger('graycode', 'editor.action.triggerSuggest', {}); }
-function quickFix() { editor?.focus(); editor?.trigger('graycode', 'editor.action.codeAction', { kind: 'quickfix', apply: 'never' }); }
+function suggest() {
+  editor?.focus();
+  editor?.trigger('graycode', 'editor.action.triggerSuggest', {});
+}
+function quickFix() {
+  editor?.focus();
+  editor?.trigger('graycode', 'editor.action.codeAction', { kind: 'quickfix', apply: 'never' });
+}
 function options() {
-  return { fontFamily: appearance.value?.codeFont, fontSize: appearance.value?.codeFontSize,
-    lineHeight: Math.round((appearance.value?.codeFontSize ?? 14) * (appearance.value?.lineHeight ?? 1.6)), theme: WORKBENCH_THEME };
+  return {
+    fontFamily: appearance.value?.codeFont,
+    fontSize: appearance.value?.codeFontSize,
+    lineHeight: Math.round((appearance.value?.codeFontSize ?? 14) * (appearance.value?.lineHeight ?? 1.6)),
+    theme: WORKBENCH_THEME,
+  };
 }
 function updateCounts() {
   const model = editor?.getModel();
   const markers = model ? monaco.editor.getModelMarkers({ resource: model.uri }) : [];
-  diagnosticCounts.value = { errors: markers.filter(item => item.severity === monaco.MarkerSeverity.Error).length,
-    warnings: markers.filter(item => item.severity === monaco.MarkerSeverity.Warning).length };
+  diagnosticCounts.value = {
+    errors: markers.filter(item => item.severity === monaco.MarkerSeverity.Error).length,
+    warnings: markers.filter(item => item.severity === monaco.MarkerSeverity.Warning).length,
+  };
 }
 function applySelection() {
-  const entry = binding.value, selection = props.selection;
+  const entry = binding.value;
+  const selection = props.selection;
   if (!entry || !selection || selection === entry.selection || !editor) return;
   entry.selection = selection;
-  editor.setSelection(selection); editor.revealRangeInCenter(selection); editor.focus();
+  editor.setSelection(selection);
+  editor.revealRangeInCenter(selection);
+  editor.focus();
 }
 function switchDocument() {
   if (!editor) return;
@@ -58,22 +73,37 @@ function switchDocument() {
   editor.setModel(entry.model);
   if (entry.viewState) editor.restoreViewState(entry.viewState);
   debugBinding = bindEditorDebugging(editor, props.document.workspaceId, props.document.path);
-  applySelection(); updateCounts();
+  applySelection();
+  updateCounts();
   cursor.value = editor.getPosition() ?? { lineNumber: 1, column: 1 };
 }
 onMounted(() => {
-  editor = monaco.editor.create(root.value!, { model: null, automaticLayout: true, fixedOverflowWidgets: true,
-    minimap: { enabled: false }, glyphMargin: true, scrollBeyondLastLine: false, padding: { top: 14 }, ...options(),
-    theme: resolvedTheme.value === 'light' ? 'vs' : 'vs-dark' }, workspaceEditorServices);
+  editor = monaco.editor.create(root.value!, {
+    model: null,
+    automaticLayout: true,
+    fixedOverflowWidgets: true,
+    minimap: { enabled: false },
+    glyphMargin: true,
+    scrollBeyondLastLine: false,
+    padding: { top: 14 },
+    ...options(),
+    theme: resolvedTheme.value === 'light' ? 'vs' : 'vs-dark',
+  }, workspaceEditorServices);
   applyWorkbenchTheme(appearancePalette.value, resolvedTheme.value === 'light');
   undoBinding = bindEditorUndo(editor);
   markerListener = monaco.editor.onDidChangeMarkers(uris => {
     const model = editor?.getModel();
     if (model && uris.some(uri => uri.toString() === model.uri.toString())) updateCounts();
   });
-  editor.onDidChangeCursorPosition(event => { cursor.value = event.position; });
-  editor.addAction({ id: 'graycode.showCompletions', label: t('uiCodeEditorShowCompletion'),
-    keybindings: [monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyJ], run: suggest });
+  editor.onDidChangeCursorPosition(event => {
+    cursor.value = event.position;
+  });
+  editor.addAction({
+    id: 'graycode.showCompletions',
+    label: t('uiCodeEditorShowCompletion'),
+    keybindings: [monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyJ],
+    run: suggest,
+  });
   editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyS, () => emit('save'));
   switchDocument();
 });
@@ -85,7 +115,10 @@ watch([appearancePalette, resolvedTheme], () => {
 });
 onUnmounted(() => {
   if (binding.value) binding.value.viewState = editor?.saveViewState() ?? null;
-  debugBinding?.dispose(); undoBinding?.dispose(); markerListener?.dispose(); editor?.dispose();
+  debugBinding?.dispose();
+  undoBinding?.dispose();
+  markerListener?.dispose();
+  editor?.dispose();
 });
 </script>
 <template>

@@ -1,15 +1,26 @@
-import { reactive } from 'vue';
+import { onUnmounted, reactive, watch } from 'vue';
 import type { DocumentState } from '@graycode/contracts';
 import { documentTextPatch, trackDocumentChange, type DocumentChangeRegion, type TrackedDocumentChange } from '../../../shared/documentPatch';
 import { PendingDocumentChanges } from './pendingDocumentChanges';
-import { call } from './api';
+import { call, subscribe } from './api';
 import { report } from './state';
 import { shellText as t } from './i18n';
 
 export const workbenchDocumentKey = (document: Pick<DocumentState, 'workspaceId' | 'path'>) => `${document.workspaceId}:${document.path}`;
 
+export type WorkbenchDocumentChange =
+  | { type: 'renamed'; document: DocumentState; previousKey: string }
+  | { type: 'removed' | 'closed'; document: DocumentState; index: number; reopened: boolean };
+
+interface WorkbenchDocumentOptions {
+  disposed(): boolean;
+  changed(change: WorkbenchDocumentChange): void;
+  saveFailed(document: DocumentState): void;
+}
+
 /** 文档同步、保存与断线恢复共用同一队列，不随可见编辑器切换而重建。 */
-export function useWorkbenchDocuments(isDisposed: () => boolean) {
+export function useWorkbenchDocuments(options: WorkbenchDocumentOptions) {
+  const isDisposed = options.disposed;
   const key = workbenchDocumentKey;
   const documents = reactive<DocumentState[]>([]);
   const synchronizedText = new WeakMap<DocumentState, { text: string; version: number }>();
@@ -18,10 +29,15 @@ export function useWorkbenchDocuments(isDisposed: () => boolean) {
   const recoveringDocuments = new Set<DocumentState>();
   const documentConflicts = new WeakSet<DocumentState>();
   const closingDocuments = new Set<DocumentState>();
-  const connection = { connected: true };
+  let connected = true;
+  let focusedDocument: DocumentState | undefined;
   const recoveryConflict = (doc: DocumentState) => new Error(`${doc.path}: ${t('documentRecoveryConflict')}`);
-  function flushDocument(doc: DocumentState) { return queues.get(key(doc)) ?? Promise.resolve(); }
-  async function flushDocuments() { await Promise.all(documents.map(flushDocument)); }
+  function flushDocument(doc: DocumentState) {
+    return queues.get(key(doc)) ?? Promise.resolve();
+  }
+  async function flushDocuments() {
+    await Promise.all(documents.map(flushDocument));
+  }
   function queue(doc: DocumentState, operation: () => Promise<unknown>, isChange = false) {
     if (!isChange) pendingChanges.barrier(doc);
     const id = key(doc);
@@ -38,7 +54,7 @@ export function useWorkbenchDocuments(isDisposed: () => boolean) {
     },
     async (doc, text) => {
       // 重连先核对原文和版本，再发送离线输入；否则服务器重启后的版本号可能恰好相同。
-      if (!connection.connected || recoveringDocuments.has(doc)) return;
+      if (!connected || recoveringDocuments.has(doc)) return;
       if (documentConflicts.has(doc)) throw recoveryConflict(doc);
       const base = synchronizedText.get(doc),
         tracked = changeTracks.get(doc);
@@ -107,13 +123,13 @@ export function useWorkbenchDocuments(isDisposed: () => boolean) {
     });
   }
   async function save(doc: DocumentState) {
-    if (!connection.connected) throw new Error(t('connectionTimeout'));
+    if (!connected) throw new Error(t('connectionTimeout'));
     if (recoveringDocuments.has(doc)) await recoverDocument(doc);
     const synchronized = flushDocument(doc);
     await queue(doc, async () => {
       // 保存边界仍在点击时入队；此前的编辑同步失败时，不能继续把宿主旧正文保存为成功。
       await synchronized;
-      if (!connection.connected) throw new Error(t('connectionTimeout'));
+      if (!connected) throw new Error(t('connectionTimeout'));
       if (documentConflicts.has(doc)) throw recoveryConflict(doc);
       const result = await call<DocumentState>('documents.save', {
         workspaceId: doc.workspaceId,
@@ -125,6 +141,158 @@ export function useWorkbenchDocuments(isDisposed: () => boolean) {
     });
   }
 
-  return { documents, synchronizedText, queues, recoveringDocuments, closingDocuments, connection,
-    flushDocument, flushDocuments, queue, change, recoverDocument, save };
+  async function open(path: string, workspaceId: string): Promise<DocumentState | undefined> {
+    const existing = documents.find(document => document.workspaceId === workspaceId && document.path === path);
+    if (existing) return existing;
+    const opened = await call<DocumentState>('documents.open', { workspaceId, path });
+    if (isDisposed()) return;
+    const concurrent = documents.find(document => key(document) === key(opened));
+    if (concurrent) return concurrent;
+    documents.push(opened);
+    const document = documents[documents.length - 1];
+    synchronizedText.set(document, { text: document.text, version: document.version });
+    return document;
+  }
+
+  async function close(document: DocumentState, discard: boolean): Promise<void> {
+    if (closingDocuments.has(document)) return;
+    closingDocuments.add(document);
+    try {
+      await flushDocument(document).catch(() => undefined);
+      if (documents.includes(document)) {
+        await call('documents.close', { workspaceId: document.workspaceId, path: document.path, discard });
+      }
+      const index = documents.indexOf(document);
+      if (index >= 0) documents.splice(index, 1);
+      const reopened = documents.some(item => key(item) === key(document));
+      if (!reopened) queues.delete(key(document));
+      options.changed({ type: 'closed', document, index, reopened });
+    } finally {
+      closingDocuments.delete(document);
+    }
+  }
+
+  function focus(document: DocumentState | undefined): void {
+    focusedDocument = document;
+    if (document && closingDocuments.has(document)) return;
+    void call('documents.focus', { workspaceId: document?.workspaceId, path: document?.path ?? null }).catch(error => {
+      // 焦点与关闭可并发，旧请求的错误只属于当时选中的文档。
+      if (!isDisposed() && focusedDocument === document && (!document || !closingDocuments.has(document))) report(error);
+    });
+  }
+
+  async function saveAll(): Promise<void> {
+    const failures: { document: DocumentState; error: unknown }[] = [];
+    for (const document of documents) {
+      try {
+        await flushDocument(document);
+        if (document.dirty) await save(document);
+      } catch (error) {
+        failures.push({ document, error });
+      }
+    }
+    if (failures.length) {
+      if (!isDisposed()) options.saveFailed(failures[0].document);
+      throw new Error(failures.map(({ document, error }) =>
+        `${document.path}: ${error instanceof Error ? error.message : String(error)}`).join('\n'));
+    }
+  }
+
+  function reset(event: Record<string, any>): void {
+    const document = documents.find(item => item.workspaceId === event.workspaceId && item.path === event.path);
+    if (!document) return;
+    if (typeof event.previousVersion === 'number' && document.version > event.previousVersion) return;
+    const newerText = document.dirty || document.text !== event.previousText;
+    if (event.document) {
+      const previousKey = key(document);
+      const text = document.text;
+      Object.assign(document, event.document);
+      synchronizedText.set(document, { text: event.document.text, version: event.document.version });
+      if (key(document) !== previousKey) {
+        const pending = queues.get(previousKey);
+        queues.delete(previousKey);
+        if (pending) queues.set(key(document), pending);
+        options.changed({ type: 'renamed', document, previousKey });
+      }
+      if (newerText && text !== document.text) change(document, text);
+    } else if (!newerText) {
+      const index = documents.indexOf(document);
+      documents.splice(index, 1);
+      options.changed({ type: 'removed', document, index, reopened: false });
+      if (!event.removed) report(new Error(event.error));
+    } else {
+      document.dirty = true;
+      report(new Error(event.error ?? t('uiWorkbenchFileChangedKeepInput')));
+    }
+  }
+
+  function refreshFile(workspaceId: string, path: string): void {
+    const document = documents.find(item => item.workspaceId === workspaceId && item.path === path);
+    if (!document || document.dirty) return;
+    void queue(document, async () => {
+      if (!documents.includes(document) || document.dirty || closingDocuments.has(document)) return;
+      const text = document.text;
+      const version = document.version;
+      const next = await call<DocumentState>('documents.open', { workspaceId, path, reload: true });
+      if (!documents.includes(document) || document.version !== version) return;
+      const changed = document.dirty || document.text !== text;
+      const latest = document.text;
+      Object.assign(document, next);
+      synchronizedText.set(document, { text: next.text, version: next.version });
+      if (changed) {
+        document.text = latest;
+        document.dirty = true;
+      }
+    });
+  }
+
+  watch(() => documents.filter(document => document.dirty).length, count => {
+    void call('desktop.dirtyDocuments', { count }).catch(report);
+  });
+  const unsubscribe = subscribe(event => {
+    if (event.type === 'transport.disconnected') {
+      connected = false;
+    } else if (event.type === 'transport.resumed') {
+      const disconnected = !connected;
+      connected = true;
+      if (!disconnected && !event.snapshotRequired && !event.authenticatedAgain) return;
+      for (const document of documents) recoveringDocuments.add(document);
+      void Promise.allSettled(documents.map(recoverDocument)).then(() => {
+        const document = focusedDocument;
+        if (!isDisposed() && connected && document && documents.includes(document)
+          && !closingDocuments.has(document) && !recoveringDocuments.has(document)) focus(document);
+      });
+    } else if (event.type === 'document.reset') {
+      reset(event);
+    } else if (event.type === 'file.changed') {
+      refreshFile(event.workspaceId, event.path);
+    } else if (event.type === 'desktop.saveAll') {
+      void (async () => {
+        let error: string | undefined;
+        try {
+          await saveAll();
+          if (!isDisposed()) await call('desktop.dirtyDocuments', { count: documents.filter(document => document.dirty).length });
+        } catch (cause) {
+          error = cause instanceof Error ? cause.message : String(cause);
+          if (!isDisposed()) report(cause);
+        }
+        await call('desktop.saveResult', { requestId: event.requestId, participant: 'documents', error });
+      })().catch(error => {
+        if (!isDisposed()) report(error);
+      });
+    }
+  });
+  onUnmounted(unsubscribe);
+
+  return {
+    documents: documents as readonly DocumentState[],
+    open,
+    close,
+    focus,
+    flushDocument,
+    flushDocuments,
+    change,
+    save,
+    saveAll,
+  };
 }
