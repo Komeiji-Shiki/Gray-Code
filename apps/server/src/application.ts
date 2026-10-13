@@ -522,13 +522,13 @@ export class PlatformApplication {
   private async persistConfiguration(): Promise<void> {
     if (this.configurationReady) await this.configurationPersistence?.save(this);
   }
-  refreshMutationTools(languageChanged = false): void {
-    if (languageChanged) {
-      // 这些声明只随语言变化，不因保存其他设置反复重建；运行中的目录仍使用原捕获版本。
-      for (const tool of [...readTools(this), ...languageTools(this), ...officeTools(this), this.skills.tool()]) {
-        this.tools.replaceNamespace(tool.declaration.name, [tool]);
-      }
+  refreshLocalizedTools(): void {
+    // 这些声明只随语言变化，不因保存其他设置反复重建；运行中的目录仍使用原捕获版本。
+    for (const tool of [...readTools(this), ...languageTools(this), ...officeTools(this), this.skills.tool()]) {
+      this.tools.replaceNamespace(tool.declaration.name, [tool]);
     }
+  }
+  refreshConfiguredTools(): void {
     for (const tool of this.media.tools(this.product.runtimeSettings())) this.tools.replaceNamespace(tool.declaration.name, [tool]);
     const terminal = this.terminals.tool(this.product.runtimeSettings().getExecuteCommandConfig());
     this.tools.replaceNamespace('execute_command', [terminal]);

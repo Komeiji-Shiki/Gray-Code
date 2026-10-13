@@ -20,7 +20,9 @@ import { isLegacyBotIdentityText } from '../../../../shared/botConversation';
 import { botFailureContext } from '../bots/errorSummary';
 import { CONTEXT_NOTES_GUIDANCE, CONTEXT_TOOL_NAMES } from '../../../../shared/contextManagement';
 import { LONG_MEMORY_GUIDANCE, LONG_MEMORY_TOOL_NAMES } from '../memory/longTerm/content';
-import { filterPlatformModeToolNames, filterPromptModeToolNames, searchReplaceRestriction } from '../../../../backend/modules/settings/modeToolsPolicy';
+import {
+  filterPlatformModeToolNames, filterPromptModeToolNames, resolvePlatformMode, searchReplaceRestriction,
+} from '../../../../backend/modules/settings/modeToolsPolicy';
 import { engineeringLogActionRestrictions } from '../memory/engineeringLogPolicy';
 import { isApprovedPlanExecutionResponse } from '../../../../backend/modules/api/chat/services/approvalGateRules';
 
@@ -73,8 +75,7 @@ export class PlatformPromptService {
     };
     const settings = input.settingsOverride ?? this.app.product.runtimeSettings();
     const conversationMode = (input.conversation.custom as Record<string, unknown> | undefined)?.platformMode;
-    const platformMode = conversationMode === 'chat' || conversationMode === 'code' || conversationMode === 'character'
-      ? conversationMode : undefined;
+    const platformMode = resolvePlatformMode(conversationMode);
     const profile = platformMode ? this.app.settings.read('modeProfiles').modeProfiles?.[platformMode] : undefined;
     const mode = settings.resolvePromptMode(input.request.promptModeId ?? profile?.promptModeId ?? input.agent.promptModeId);
     const channelWorkspace = botEnvironment?.version === 1 && typeof conversation.workspaceId === 'string'

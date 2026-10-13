@@ -38,6 +38,11 @@ type PlatformMode = 'chat' | 'code' | 'character';
 type PlatformModeToolProfile = { toolNames?: readonly string[] };
 const DEFAULT_CHAT_MODE_TOOLS: ReadonlySet<string> = new Set(DEFAULT_CHAT_MODE_TOOL_NAMES);
 
+/** 旧会话可以未标记平台模式，未知值不补成默认对话模式。 */
+export function resolvePlatformMode(value: unknown): PlatformMode | undefined {
+    return value === 'chat' || value === 'code' || value === 'character' ? value : undefined;
+}
+
 /** 显式空数组保留禁用语义；只有未自选的对话模式使用内置默认清单。 */
 export function resolvePlatformModeToolNames(
     platformMode: PlatformMode | undefined,
@@ -54,7 +59,7 @@ export function filterPlatformModeToolNames(
     names: string[],
 ): string[] {
     const allowed = resolvePlatformModeToolNames(platformMode, profile);
-    const preserveMcp = platformMode === 'chat' && profile?.toolNames === undefined;
+    const preserveMcp = allowed === DEFAULT_CHAT_MODE_TOOLS;
     return names.filter(name => !allowed || allowed.has(name) || preserveMcp && isMcpToolName(name));
 }
 
@@ -91,7 +96,7 @@ const PLAN_EXECUTION_TOOL_NAMES: ReadonlySet<string> = new Set([
 export function filterPromptModeToolNames(
     mode: Pick<PromptMode, 'toolPolicy' | 'toolPolicyCustomized'>,
     names: string[],
-    options: { planExecution?: boolean; platformMode?: 'chat' | 'code' | 'character' } = {}
+    options: { planExecution?: boolean; platformMode?: PlatformMode } = {}
 ): string[] {
     const modeNames = options.platformMode === 'chat' || options.platformMode === 'character'
         ? names : names.filter(name => name !== 'pet_control');

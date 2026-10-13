@@ -84,4 +84,23 @@ describe('自动对话工作区释放', () => {
     await access(live.directory);
     await access(f.source);
   });
+
+  test('孤儿检查只批量读取受管工作区的候选摘要，不逐条读取对话或历史', async () => {
+    const live = await createAutomatic('batch-live');
+    const orphan = await createAutomatic('batch-orphan');
+    await app.createConversation('owner', '无关对话', undefined, undefined, undefined, { id: 'unrelated' });
+    await app.storage.deleteConversation('batch-orphan');
+    const summaries = jest.spyOn(app.storage, 'listConversations');
+    const conversation = jest.spyOn(app.storage, 'getConversation');
+    const history = jest.spyOn(app.storage, 'readFullHistory');
+
+    await app.conversationWorkspaces.cleanupOrphans();
+
+    expect(summaries).toHaveBeenCalledTimes(1);
+    expect(summaries).toHaveBeenCalledWith({ ids: ['batch-live', 'batch-orphan'], limit: 2 });
+    expect(conversation).not.toHaveBeenCalled(); expect(history).not.toHaveBeenCalled();
+    expect(app.settings.find('workspaces', live.id)).toBeDefined();
+    expect(app.settings.find('workspaces', orphan.id)).toBeUndefined();
+    await expect(access(orphan.directory)).rejects.toMatchObject({ code: 'ENOENT' });
+  });
 });

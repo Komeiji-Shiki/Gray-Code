@@ -27,7 +27,10 @@ describe('会话列表批量读取', () => {
       const item = all.items.find(row => row.id === id)!;
       expect('actorId' in item).toBe(false); expect('platformMode' in item).toBe(false);
     }
-    for (const options of [{}, { workspaceUri: 'file:///odd' }, { query: '会话 list_' }]) {
+    const selected = await f.store.listConversations({ ids: ['list_1', 'missing', 'list_4', 'list_1'], limit: 1000 });
+    expect(selected.items.map(item => item.id).sort()).toEqual(['list_1', 'list_4']);
+    expect((await f.store.listConversations({ ids: [] })).items).toEqual([]);
+    for (const options of [{}, { workspaceUri: 'file:///odd' }, { query: '会话 list_' }, { ids: ['list_1', 'missing', 'list_4'] }]) {
       const summaries: string[] = [], ids: string[] = [];
       let cursor: { updatedAt: number; id: string } | undefined;
       do { const page = await f.store.listConversations({ ...options, limit: 2, cursor }); summaries.push(...page.items.map(item => item.id)); cursor = page.nextCursor; } while (cursor);

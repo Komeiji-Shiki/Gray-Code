@@ -66,7 +66,8 @@ export class ProductConfiguration {
     this.saved.mcpSecrets = persisted?.mcpSecrets ?? {};
     this.saved.mcpServers = await revealMcpSettings(persisted?.mcpServers ?? [], this.saved.mcpSecrets, reference => this.application.settings.credential(reference));
     this.application.settings.setProjection(this);
-    this.application.refreshMutationTools(true);
+    this.application.refreshLocalizedTools();
+    this.application.refreshConfiguredTools();
   }
   get branchRetentionDays(): number { return this.saved.branchRetentionDays ?? DEFAULT_BRANCH_RETENTION_DAYS; }
   get importedSkills(): SavedPlatformSkill[] { return structuredClone(this.saved.importedSkills ?? []); }
@@ -189,7 +190,8 @@ export class ProductConfiguration {
         this.saved = saved;
         this.activeSettings = activeSettings;
         // 工具工厂会捕获说明语言，必须在创建声明及发布 settings.changed 前同步。
-        this.application.refreshMutationTools(previousLanguage !== getActualLanguage());
+        if (previousLanguage !== getActualLanguage()) this.application.refreshLocalizedTools();
+        this.application.refreshConfiguredTools();
         this.application.files.rebindWorkspaces(previous.workspaces, next.workspaces);
       },
       activate: async () => {

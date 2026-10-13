@@ -12,7 +12,7 @@ import { workspaceUiHandlers } from '../workspace/ui';
 import { BranchRetention } from '../conversations/retention';
 import { withDependencyRuntime } from '../../../../backend/modules/dependencies/runtime';
 import { validateDevelopmentSettings } from '../development/settings';
-import { DEFAULT_CHAT_MODE_TOOL_NAMES } from '../../../../backend/modules/settings/modeToolsPolicy';
+import { DEFAULT_CHAT_MODE_TOOL_NAMES, resolvePlatformMode } from '../../../../backend/modules/settings/modeToolsPolicy';
 import { validateExternalAgentProfiles } from '../externalAgents/settings';
 import { randomUUID } from 'node:crypto';
 import { createCharacterStarterPreset } from '../../../../shared/characterPromptModules';
@@ -234,15 +234,17 @@ export class ProductUi {
         await deleteConversation(this.app, client.actorId, params.conversationId); return { success: true };
       },
       'ui.mode.new': async params => {
-        if (!['chat', 'code', 'character'].includes(params.mode)) throw new Error('未知对话模式。');
-        if (params.automaticWorkspace !== undefined && (params.mode !== 'chat' || typeof params.automaticWorkspace !== 'boolean')) throw new Error('新建对话的工作区选项无效。');
-        ui.mode = params.mode;
-        const workspaceId = params.mode === 'chat' ? undefined : params.workspaceId || undefined;
+        const mode = resolvePlatformMode(params.mode);
+        if (!mode) throw new Error('未知对话模式。');
+        if (params.automaticWorkspace !== undefined && (mode !== 'chat' || typeof params.automaticWorkspace !== 'boolean'))
+          throw new Error('新建对话的工作区选项无效。');
+        ui.mode = mode;
+        const workspaceId = mode === 'chat' ? undefined : params.workspaceId || undefined;
         const profile = this.app.settings.read('modeProfiles').modeProfiles?.[ui.mode!];
         const preset = profile?.promptModeId ?? this.app.product.runtimeSettings().getCurrentPromptModeId();
         const custom = { platformMode: ui.mode, promptModeConfig: { modeId: preset } };
         const automaticWorkspace = params.automaticWorkspace !== false;
-        const conversation = await this.app.createConversation(client.actorId, params.mode === 'character' ? '新角色对话' : '新对话', workspaceId,
+        const conversation = await this.app.createConversation(client.actorId, mode === 'character' ? '新角色对话' : '新对话', workspaceId,
           automaticWorkspace ? custom : await this.app.companion.forNewConversation(client.actorId, custom), undefined, { automaticWorkspace });
         ui.workspaceId = typeof conversation.workspaceId === 'string' ? conversation.workspaceId : undefined;
         return { conversationId: conversation.id };
@@ -424,8 +426,8 @@ export class ProductUi {
         }
         const focusedWorkspace = this.app.settings.find('workspaces', typeof conversation?.workspaceId === 'string' ? conversation.workspaceId : undefined);
         if (conversation && !data.resynchronized) ui.workspaceId = focusedWorkspace?.id;
-        const focusedMode = (conversation?.custom as Record<string, unknown> | undefined)?.platformMode;
-        if (typeof focusedMode === 'string' && ['chat', 'code', 'character'].includes(focusedMode)) ui.mode = focusedMode as UiSession['mode'];
+        const focusedMode = resolvePlatformMode((conversation?.custom as Record<string, unknown> | undefined)?.platformMode);
+        if (focusedMode) ui.mode = focusedMode;
         this.app.publish({ type: 'ui.conversation.focused', clientId: client.clientId, conversationId: conversation?.id ?? null, workspaceId: focusedWorkspace?.id ?? null, mode: (conversation?.custom as Record<string, unknown> | undefined)?.platformMode, resynchronized: data.resynchronized === true,
           defaultPromptModeId: this.app.settings.read('modeProfiles').modeProfiles?.[ui.mode ?? 'chat']?.promptModeId ?? this.app.product.runtimeSettings().getCurrentPromptModeId() });
         return { mode: (conversation?.custom as Record<string, unknown> | undefined)?.platformMode };
@@ -437,8 +439,10 @@ export class ProductUi {
         this.app.publish({ type: 'ui.conversation.views', clientId: client.clientId, views }); return { success: true };
       }
       case 'ui.mode.select': {
-        if (!['chat', 'code', 'character'].includes(data.mode)) throw new Error('未知对话模式。');
-        const preset = this.app.settings.read('modeProfiles').modeProfiles?.[data.mode as 'chat' | 'code' | 'character']?.promptModeId ?? this.app.product.runtimeSettings().getCurrentPromptModeId();
+        const mode = resolvePlatformMode(data.mode);
+        if (!mode) throw new Error('未知对话模式。');
+        const preset = this.app.settings.read('modeProfiles').modeProfiles?.[mode]?.promptModeId
+          ?? this.app.product.runtimeSettings().getCurrentPromptModeId();
         let workspaceId: string | undefined;
         if (data.conversationId) {
           await this.app.conversation(client.actorId, data.conversationId);
@@ -446,14 +450,17 @@ export class ProductUi {
           const state = await this.app.storage.getConversationInfo(data.conversationId);
           if (!state) throw new Error('当前对话已删除。');
           workspaceId = typeof state.metadata.workspaceId === 'string' ? state.metadata.workspaceId : undefined;
-          const workspace = !workspaceId && data.mode === 'code' && data.workspaceId ? this.app.workspace(client.actorId, data.workspaceId, ['workspace_read']) : undefined;
+          const workspace = !workspaceId && mode === 'code' && data.workspaceId
+            ? this.app.workspace(client.actorId, data.workspaceId, ['workspace_read']) : undefined;
           workspaceId ??= workspace?.id;
-          const metadata = { ...state.metadata, ...(workspace ? { workspaceId: workspace.id, workspaceUri: pathToFileURL(workspace.directory).toString() } : {}), custom: { ...state.metadata.custom as Record<string, unknown>, platformMode: data.mode, promptModeConfig: { modeId: preset } } };
+          const metadata = { ...state.metadata,
+            ...(workspace ? { workspaceId: workspace.id, workspaceUri: pathToFileURL(workspace.directory).toString() } : {}),
+            custom: { ...state.metadata.custom as Record<string, unknown>, platformMode: mode, promptModeConfig: { modeId: preset } } };
           await this.app.storage.commitConversation({ conversationId: data.conversationId, expectedRevision: state.historyRevision, expectedMetadataToken: state.metadataToken, metadata });
           this.conversations.clearMetadataCache();
         }
-        ui.mode = data.mode;
-        notify({ type: 'command', command: 'platform.modeSelected', data: { mode: data.mode, promptModeId: preset } });
+        ui.mode = mode;
+        notify({ type: 'command', command: 'platform.modeSelected', data: { mode, promptModeId: preset } });
         return { success: true, workspaceId };
       }
       case 'platform.modes.createCharacterPreset': {
@@ -484,9 +491,10 @@ export class ProductUi {
         presets: ui.preferences.settings.getAllPromptModes(), tools: this.app.tools.names().map(name => ({ name })),
         defaultChatToolNames: DEFAULT_CHAT_MODE_TOOL_NAMES };
       case 'platform.modes.update': {
-        if (!['chat', 'code', 'character'].includes(data.mode)) throw new Error('未知对话模式。');
+        const mode = resolvePlatformMode(data.mode);
+        if (!mode) throw new Error('未知对话模式。');
         ui.preferences.app.modeProfiles ??= {};
-        ui.preferences.app.modeProfiles[data.mode as 'chat' | 'code' | 'character'] = {
+        ui.preferences.app.modeProfiles[mode] = {
           promptModeId: typeof data.promptModeId === 'string' && data.promptModeId ? data.promptModeId : undefined,
           toolNames: Array.isArray(data.toolNames) ? data.toolNames.filter((name: unknown): name is string => typeof name === 'string') : undefined,
         };
@@ -498,7 +506,8 @@ export class ProductUi {
       case 'ui.context.set': {
         const nextWorkspace = data.workspaceId ? this.app.workspace(client.actorId, data.workspaceId, ['workspace_read']) : undefined;
         ui.workspaceId = nextWorkspace?.id;
-        if (['chat', 'code', 'character'].includes(data.mode)) ui.mode = data.mode;
+        const mode = resolvePlatformMode(data.mode);
+        if (mode) ui.mode = mode;
         notify({ type: 'workspaceUri', data: nextWorkspace ? pathToFileURL(nextWorkspace.directory).toString() : null }); return;
       }
       case 'ui.settings.begin':

@@ -520,6 +520,12 @@ export class PlatformDatabase {
     if (!Number.isSafeInteger(limit) || limit < 1 || limit > 1000) invalid('List limit must be between 1 and 1000.');
     const where: string[] = [];
     const args: Array<string | number> = [];
+    if (options.ids !== undefined) {
+      if (!Array.isArray(options.ids) || options.ids.length > 1000) invalid('Conversation id batches must contain at most 1000 items.');
+      for (const id of options.ids) assertIdentifier(id);
+      where.push(options.ids.length ? `conversations.id IN (${options.ids.map(() => '?').join(',')})` : '0');
+      args.push(...options.ids);
+    }
     if (options.workspaceUri !== undefined) { where.push('conversations.workspace_uri=?'); args.push(options.workspaceUri); }
     if (options.query !== undefined) {
       const query = this.validateSearchQuery(options.query);

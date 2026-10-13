@@ -7,7 +7,9 @@ import { buildLastSentHistoryProjection, restoreLastSentHistory } from '../../..
 import { ensureSubAgentTranscriptTracking, getSubAgentSummaryCoverage, getSubAgentTranscriptIndex } from '../../../../backend/tools/subagents/executor/historyMetadata';
 import type { PlatformApplication } from '../application';
 import { configuredAgent } from '../settings/agent';
-import { filterPlatformModeToolNames, filterPromptModeToolNames, searchReplaceRestriction } from '../../../../backend/modules/settings/modeToolsPolicy';
+import {
+  filterPlatformModeToolNames, filterPromptModeToolNames, resolvePlatformMode, searchReplaceRestriction,
+} from '../../../../backend/modules/settings/modeToolsPolicy';
 import { engineeringLogActionRestrictions } from '../memory/engineeringLogPolicy';
 import { createSubagentRecord } from './profile';
 import { legacySubagentSnapshot, readLegacySubagent } from './legacySource';
@@ -132,8 +134,7 @@ export class LegacySubagents {
     if (!provider || !(selected?.modelId?.trim() || provider.model?.trim())) throw new Error('旧记录未保存完整执行配置，请先在所属主对话选择渠道和模型，再重试。');
     const base = appSettings.agents[0]; if (!base) throw new Error('请先配置主 Agent。');
     const agent = configuredAgent(this.app, base);
-    const platformMode = custom?.platformMode === 'chat' || custom?.platformMode === 'code' || custom?.platformMode === 'character'
-      ? custom.platformMode as 'chat' | 'code' | 'character' : undefined;
+    const platformMode = resolvePlatformMode(custom?.platformMode);
     const profile = platformMode ? appSettings.modeProfiles?.[platformMode] : undefined;
     const promptModeId = custom?.promptModeConfig?.modeId ?? profile?.promptModeId ?? agent.promptModeId;
     const mode = preferences.resolvePromptMode(promptModeId);

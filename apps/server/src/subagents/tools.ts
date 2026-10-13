@@ -10,7 +10,7 @@ export function subagentTools(app: PlatformApplication, config: SubAgentsConfig 
   const names = config.agents.filter(agent => agent.enabled).map(agent => agent.name);
   if (config.generalWorkerEnabled !== false) names.unshift('General Worker');
   // 与系统提示词的 User Language 同源：界面语言为 auto 或尚未加载设置时按系统区域判断。
-  // 首次注册早于设置初始化，refreshMutationTools 会在设置加载和每次保存后按新语言重建。
+  // 首次注册早于设置初始化，refreshConfiguredTools 会在设置加载和每次保存后按新语言重建。
   const language = app.product?.runtimeSettings()?.getUISettings().language;
   const isZh = (language && language !== 'auto' ? language : Intl.DateTimeFormat().resolvedOptions().locale).startsWith('zh');
   const declaration = createSubagentsDeclaration({ agentNames: names, isZh, generalWorkerMaxRuntimeSeconds: config.generalWorkerMaxRuntimeSeconds,

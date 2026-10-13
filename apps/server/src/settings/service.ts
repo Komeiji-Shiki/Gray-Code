@@ -19,6 +19,7 @@ import type {
 import { PlatformStorage, RuntimeToolRegistry } from "@graycode/core";
 import { revealSettingsFields, sealSettingsFields } from './sealedFields';
 import { upgradeAgentToolNames } from './agent';
+import { resolvePlatformMode } from '../../../../backend/modules/settings/modeToolsPolicy';
 
 export interface SecretCodec {
   encrypt(value: string): Promise<Uint8Array>;
@@ -373,7 +374,7 @@ export class SettingsService<T = never> {
         );
     }
     for (const [mode, profile] of Object.entries(settings.modeProfiles ?? {})) {
-      if (!['chat', 'code', 'character'].includes(mode) || !profile ||
+      if (!resolvePlatformMode(mode) || !profile ||
         profile.promptModeId !== undefined && typeof profile.promptModeId !== 'string' ||
         profile.toolNames !== undefined && (!Array.isArray(profile.toolNames) || profile.toolNames.some(name => typeof name !== 'string')))
         throw new Error('对话模式配置无效。');

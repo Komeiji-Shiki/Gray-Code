@@ -17,6 +17,8 @@ export interface HistoryWriteResult { revision: number; total: number }
 export interface HistoryOutline { conversationId: string; total: number; revision: number; entries: HistoryOutlineEntry[] }
 export interface ConversationListOptions {
   limit?: number;
+  /** 按候选编号查询，缺失会话不返回摘要；每批最多 1000 个。 */
+  ids?: string[];
   workspaceUri?: string;
   query?: string;
   cursor?: { updatedAt: number; id: string };

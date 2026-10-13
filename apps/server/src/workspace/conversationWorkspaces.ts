@@ -47,9 +47,15 @@ export class ConversationWorkspaces {
     this.queue = operation; return operation;
   }
   async cleanupOrphans(): Promise<void> {
-    const ids = new Set(this.app.settings.read('workspaces').workspaces.flatMap(item => item.managedConversationId ? [item.managedConversationId] : []));
+    const ids = [...new Set(this.app.settings.read('workspaces').workspaces
+      .flatMap(item => item.managedConversationId ? [item.managedConversationId] : []))];
     const orphaned: string[] = [];
-    for (const id of ids) if (!await this.app.storage.getConversation(id)) orphaned.push(id);
+    for (let offset = 0; offset < ids.length; offset += 1000) {
+      const batch = ids.slice(offset, offset + 1000);
+      const page = await this.app.storage.listConversations({ ids: batch, limit: batch.length });
+      const existing = new Set(page.items.map(item => item.id));
+      orphaned.push(...batch.filter(id => !existing.has(id)));
+    }
     if (orphaned.length) await this.release(orphaned);
   }
 }
