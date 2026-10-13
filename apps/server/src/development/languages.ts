@@ -461,7 +461,8 @@ export class LanguageServices {
     const settings = snapshot.development;
     const key = JSON.stringify({ servers: settings?.languageServers, disabled: settings?.disabledLanguageServers, workspaces: snapshot.workspaces });
     if (key === this.configurationSnapshot) return;
-    const definitions = this.definitions();
+    // 只有已运行的会话需要和新定义比较；启动时没有会话，不为此扫描 PATH 检测系统服务。
+    const definitions = this.sessions.size ? this.definitions() : [];
     const selected = (file: string) => definitions.find(value => value.languages.includes(documentLanguage(file)) && !settings?.disabledLanguageServers?.includes(value.id));
     const results = await Promise.allSettled([...this.sessions.values()].filter(session => settings?.disabledLanguageServers?.includes(session.definition.id) ||
       JSON.stringify(definitions.find(item => item.id === session.definition.id)) !== JSON.stringify(session.definition) ||

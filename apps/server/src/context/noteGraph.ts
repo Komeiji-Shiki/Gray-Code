@@ -3,7 +3,7 @@ import type { LongMemoryConfidence, PlatformMessage } from '@graycode/contracts'
 import { sourceMessageOrigin } from '../memory/longTerm/content';
 import { isHistoricalUserInput } from './retention';
 import { CONTEXT_TEXT_FORMAT, contextMessageText, legacyContextMessageText } from './textPage';
-import { ToolSchemaValidators } from '../../../../packages/core/src/runtime/toolSchemaValidation';
+import { toolSchemaValidators } from '../../../../packages/core/src/runtime/toolSchemaValidation';
 import { NOTE_ENTRY_SCHEMA, NOTE_KINDS, NOTE_RELATIONS } from './noteSchema';
 
 export { NOTE_KINDS, NOTE_RELATIONS } from './noteSchema';
@@ -37,7 +37,7 @@ export interface ContextNoteGraph {
 
 const digest = (value: unknown) => createHash('sha256').update(JSON.stringify(value)).digest('hex');
 const sourceDigest = (message: PlatformMessage) => digest([message.role, message.parts]);
-const noteEntryValidator = new ToolSchemaValidators().compile(NOTE_ENTRY_SCHEMA);
+const noteEntryValidator = toolSchemaValidators.compile(NOTE_ENTRY_SCHEMA);
 const object = (value: unknown): Record<string, unknown> => {
   if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('笔记条目必须是对象。');
   return value as Record<string, unknown>;

@@ -65,3 +65,6 @@ export class ToolSchemaValidators {
     } };
   }
 }
+
+/** 编译后即释放 Ajv 的对象缓存，进程内各工具目录与批量条目共用编译器，元 Schema 只编译一次。 */
+export const toolSchemaValidators = new ToolSchemaValidators();

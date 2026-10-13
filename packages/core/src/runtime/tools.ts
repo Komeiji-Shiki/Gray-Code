@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { ToolSchemaValidators, type CompiledToolSchema } from './toolSchemaValidation';
+import { toolSchemaValidators, type CompiledToolSchema } from './toolSchemaValidation';
 import type { ActorIdentity, AgentDefinition, ToolDeclaration, ToolEffect, ToolOutcome, WorkspaceDefinition, UserQuestion, QuestionRequest, ModelInput, ApprovalChoice, ApprovalDecision } from '@graycode/contracts';
 
 export interface ToolContext {
@@ -102,7 +102,6 @@ function validationParameters(tool: RuntimeTool, declaration?: ToolDeclaration):
 /** Tool selection belongs to agent configuration, never to the current speaker's role. */
 export class RuntimeToolRegistry {
   private readonly tools = new Map<string, RuntimeTool>();
-  private readonly schemaValidators = new ToolSchemaValidators();
   private readonly validators = new Map<string, { schema: string } & CompiledToolSchema>();
   private readonly definitions = new WeakMap<RuntimeTool, ToolDefinitionSnapshot>();
   private readonly overrideDefinitions = new Map<string, { fingerprint: string; definition: ToolDefinitionSnapshot }>();
@@ -150,7 +149,7 @@ export class RuntimeToolRegistry {
       let cached = this.validators.get(name);
       if (cached?.schema !== schema) {
         let compiled: CompiledToolSchema;
-        try { compiled = this.schemaValidators.compile(parameters); }
+        try { compiled = toolSchemaValidators.compile(parameters); }
         catch (error) { throw new Error(`${name} 的参数声明无效：${error instanceof Error ? error.message : String(error)}`); }
         cached = { schema, ...compiled };
         this.validators.set(name, cached);

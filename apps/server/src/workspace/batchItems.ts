@@ -1,5 +1,5 @@
 import type { RuntimeTool } from '@graycode/core';
-import { ToolSchemaValidators } from '../../../../packages/core/src/runtime/toolSchemaValidation';
+import { toolSchemaValidators } from '../../../../packages/core/src/runtime/toolSchemaValidation';
 
 interface BatchItemResult {
   index?: number;
@@ -20,7 +20,7 @@ export function withBatchItems(tool: RuntimeTool, field: string, options: {
   const parameters = tool.validationSchema ?? tool.declaration.parameters;
   const properties = parameters.properties as Record<string, Record<string, unknown>>;
   const arraySchema = properties[field];
-  const compiled = new ToolSchemaValidators().compile(arraySchema.items as Record<string, unknown>);
+  const compiled = toolSchemaValidators.compile(arraySchema.items as Record<string, unknown>);
   return {
     ...tool,
     validationSchema: { ...parameters, properties: { ...properties, [field]: { ...arraySchema, items: {} } } },
