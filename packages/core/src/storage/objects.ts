@@ -39,6 +39,11 @@ export interface ValueProjection extends ValueSelection {
 
 interface ChunkRow { hash: Buffer; raw_bytes: number; codec: number; data: Buffer | null; file_id: string | null }
 
+export interface ValueWriteOptions {
+  requestScope?: string;
+  shareLargeMaps?: boolean;
+}
+
 /** Immutable, chunked content. SQL references commit only after external bytes are durable. */
 export class ObjectStore {
   private readonly requestValues = new RequestValueCache();
@@ -96,11 +101,10 @@ export class ObjectStore {
   }
 
   /** Only objects referenced by the selected message are decoded; attachments remain lossless. */
-  putValue(value: unknown, deduplicateRequestArrays = false, shareLargeMaps = false, requestCacheScope?: string): Buffer {
+  putValue(value: unknown, options: ValueWriteOptions = {}): Buffer {
     const children: Buffer[] = [];
     const ancestors = new Set<object>();
-    const cacheRequest = deduplicateRequestArrays && requestCacheScope !== undefined;
-    const objectExists = cacheRequest ? this.db.prepare('SELECT 1 FROM objects WHERE hash=?') : undefined;
+    const cacheRequest = options.requestScope !== undefined;
     const childPath = (path: string, name: string | number) => cacheRequest ? `${path}/${JSON.stringify(name)}` : '';
     const edge = this.db.prepare('INSERT OR IGNORE INTO object_edges(parent_hash,child_hash) VALUES(?,?)');
     const writeValue = (transformed: unknown, references: Buffer[]) => {
@@ -141,12 +145,11 @@ export class ObjectStore {
       ancestors.add(input);
       try {
         if (Array.isArray(input)) return input.map((item, index) => {
-          const shared = deduplicateRequestArrays && REQUEST_ARRAY_FIELDS.has(key) && item && typeof item === 'object' && !Array.isArray(item);
+          const shared = cacheRequest && REQUEST_ARRAY_FIELDS.has(key) && item && typeof item === 'object' && !Array.isArray(item);
           const itemPath = childPath(path, index);
-          const cacheKey = cacheRequest && shared ? JSON.stringify([requestCacheScope, itemPath]) : undefined;
+          const cacheKey = shared ? JSON.stringify([options.requestScope, itemPath]) : undefined;
           const cached = cacheKey === undefined ? undefined : this.requestValues.find(cacheKey, item);
-          // 回滚或 GC 可能移除已缓存的对象，只复用数据库中仍然存在的引用。
-          if (cached && objectExists!.get(cached.hash)) {
+          if (cached) {
             children.push(cached.hash);
             return new ExtData(VALUE_REFERENCE, cached.hash);
           }
@@ -182,7 +185,7 @@ export class ObjectStore {
           .filter(([, item]) => item !== undefined)
           .map(([name, item]) => [name, transform(item, name, depth + 1, childPath(path, name))]);
         const transformed = Object.fromEntries(entries);
-        if (depth > 0 && (key === 'characterTurn' || shareLargeMaps && entries.length >= SHARED_MAP_ENTRIES)) {
+        if (depth > 0 && (key === 'characterTurn' || options.shareLargeMaps && entries.length >= SHARED_MAP_ENTRIES)) {
           // 角色回合与大型字典共用既有值引用，专门用例覆盖旧历史、备份、分叉与回收。
           const child = writeValue(transformed, children.splice(start));
           children.push(child);
@@ -191,19 +194,22 @@ export class ObjectStore {
         return transformed;
       } finally { ancestors.delete(input); }
     };
-    try {
-      const hash = writeValue(transform(value, '', 0, ''), children);
-      if (cacheRequest) this.requestValues.commit();
-      return hash;
-    } finally {
-      if (cacheRequest) this.requestValues.discard();
-    }
+    return writeValue(transform(value, '', 0, ''), children);
   }
 
-  clearRequestCache(): void { this.requestValues.clear(); }
+  commitRequestCache(): void {
+    this.requestValues.commit();
+  }
 
-  getValue<T = unknown>(hash: Buffer, projection?: ValueProjection,
-    additionalSelection?: (projected: T) => ValueSelection | undefined): T {
+  discardRequestCache(): void {
+    this.requestValues.discard();
+  }
+
+  clearRequestCache(): void {
+    this.requestValues.clear();
+  }
+
+  getValue<T = unknown>(hash: Buffer, projection?: ValueProjection): T {
     const restore = (value: unknown, depth = 0, selection?: ValueSelection): unknown => {
       if (depth > 128) throw new PlatformStorageError('CORRUPT_DATA', 'Stored value nesting exceeds 128 levels.');
       if (value instanceof Uint8Array) return projection?.omitBinary ? new Uint8Array() : value;
@@ -241,15 +247,7 @@ export class ObjectStore {
       });
     try {
       const stored = unpack(this.get(hash));
-      let projected = restore(stored, 0, projection);
-      // 用量先读标记，只有部分输出才恢复正文；补充字段复用同一次解码及 omitBinary 规则。
-      const additional = additionalSelection?.(projected as T);
-      if (additional) {
-        projected = {
-          ...(projected as Record<string, unknown>),
-          ...(restore(stored, 0, additional) as Record<string, unknown>),
-        };
-      }
+      const projected = restore(stored, 0, projection);
       if (!projection?.paths && !projection?.mapStats) return projected as T;
       // 在存储线程内聚合旧记录的大型字典，列表只接收统计值，不复制整份文件清单。
       const expandStoredValue = (input: unknown): unknown => {

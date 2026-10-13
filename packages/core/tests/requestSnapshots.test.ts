@@ -17,7 +17,7 @@ function snapshot() {
   ] }, prefix: { tools: [tool] } };
 }
 
-test('请求条目按完整副本复用，原地编辑、回滚与回收不能留下错误引用', async () => {
+test('请求条目按 Worker 私有输入复用，调用方编辑、回滚与回收不能留下错误引用', async () => {
   const f = await fixture();
   await f.store.close();
   // 直接执行当前编码与记录处理源码，不让旧 worker 产物代替本次缓存实现。
@@ -25,7 +25,8 @@ test('请求条目按完整副本复用，原地编辑、回滚与回收不能�
   const writes = jest.spyOn(ObjectStore.prototype, 'put');
   const value = { ...snapshot(), iteration: 1 };
   const save = (id: string, current: unknown = value) => database.execute('putRecord', {
-    namespace: 'model-requests', id, ownerId: 'owner', value: current,
+    // 此直连端口也产生独立入站 DTO，保持真实 postMessage 的所有权边界。
+    namespace: 'model-requests', id, ownerId: 'owner', value: JSON.parse(JSON.stringify(current)),
   });
   try {
     save('first');

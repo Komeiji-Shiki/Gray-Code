@@ -3,11 +3,10 @@ import { isDeepStrictEqual } from 'node:util';
 const MAX_CACHE_ENTRIES = 2048;
 // 读缓存与当前写入暂存各有此上限；字符串按 UTF16 持有体积估算，不能只数编码后的短引用。
 const MAX_CACHE_BYTES = 32 * 1024 * 1024;
-const TOO_LARGE = Symbol('request-value-too-large');
 
 interface CachedRequestValue { value: unknown; hash: Buffer; bytes: number }
 
-/** 只保存已通过存储校验的条目副本；完整内容相等才复用原来的值引用。 */
+/** 条目来自 Worker 私有消息；完整内容相等才复用已成功提交的值引用。 */
 export class RequestValueCache {
   private readonly entries = new Map<string, CachedRequestValue>();
   private bytes = 0;
@@ -23,30 +22,33 @@ export class RequestValueCache {
 
   remember(key: string, value: unknown, hash: Buffer): void {
     let bytes = 0;
-    const account = (size: number) => {
-      bytes += size;
-      if (bytes > MAX_CACHE_BYTES) throw TOO_LARGE;
-    };
-    const copy = (input: unknown): unknown => {
-      if (typeof input === 'string') { account(input.length * 2 + 16); return input; }
-      if (!input || typeof input !== 'object') { account(8); return input; }
+    const account = (input: unknown): void => {
+      if (bytes > MAX_CACHE_BYTES) return;
+      if (typeof input === 'string') {
+        bytes += input.length * 2 + 16;
+        return;
+      }
+      if (!input || typeof input !== 'object') {
+        bytes += 8;
+        return;
+      }
       if (input instanceof Uint8Array) {
-        account(input.byteLength + 32);
-        return Buffer.isBuffer(input) ? Buffer.from(input) : new Uint8Array(input);
+        bytes += input.byteLength + 32;
+        return;
       }
       if (Array.isArray(input)) {
-        account(32 + input.length * 8);
-        return input.map(copy);
+        bytes += 32 + input.length * 8;
+        for (const item of input) account(item);
+        return;
       }
-      account(64);
-      const cloned = Object.fromEntries(Object.entries(input).map(([name, item]) => {
-        account(name.length * 2 + 16);
-        return [name, copy(item)];
-      }));
-      return Object.getPrototypeOf(input) === null ? Object.setPrototypeOf(cloned, null) : cloned;
+      bytes += 64;
+      for (const [name, item] of Object.entries(input)) {
+        bytes += name.length * 2 + 16;
+        account(item);
+      }
     };
-    try { this.stage(key, { value: copy(value), hash, bytes }); }
-    catch (error) { if (error !== TOO_LARGE) throw error; }
+    account(value);
+    if (bytes <= MAX_CACHE_BYTES) this.stage(key, { value, hash, bytes });
   }
 
   private stage(key: string, cached: CachedRequestValue): void {
@@ -62,7 +64,7 @@ export class RequestValueCache {
   }
 
   commit(): void {
-    // 一次请求读完后才淘汰旧条目；超出容量的顺序扫描仍能命中上次保留的尾部。
+    // 外层存储操作提交后才淘汰旧条目；超出容量的顺序扫描仍能命中上次保留的尾部。
     for (const [key, cached] of this.staged) {
       this.bytes -= this.entries.get(key)?.bytes ?? 0;
       this.entries.delete(key);
@@ -77,6 +79,14 @@ export class RequestValueCache {
     this.discard();
   }
 
-  discard(): void { this.staged.clear(); this.stagedBytes = 0; }
-  clear(): void { this.entries.clear(); this.bytes = 0; this.discard(); }
+  discard(): void {
+    this.staged.clear();
+    this.stagedBytes = 0;
+  }
+
+  clear(): void {
+    this.entries.clear();
+    this.bytes = 0;
+    this.discard();
+  }
 }

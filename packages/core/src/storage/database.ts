@@ -49,6 +49,7 @@ export class PlatformDatabase {
   private vectorRanker?: VectorRanker;
   private readonly vectorMatrices = new VectorMatrixCache(VECTOR_CACHE_BYTES);
   private readonly projections = new Map<string, SummaryProjection>();
+  private operationDepth = 0;
 
   constructor(directory: string) {
     if (!path.isAbsolute(directory)) invalid('Storage directory must be absolute.');
@@ -343,7 +344,18 @@ export class PlatformDatabase {
   execute<M extends StorageMethod>(method: M, input: StorageOperations[M]['input']): StorageOperations[M]['output'] {
     // RPC 只访问已登记的操作，不按传入名称调用其他数据库方法。
     if (!Object.hasOwn(this.operations, method)) invalid('Unknown storage operation.');
-    return this.operations[method].execute(input);
+    this.operationDepth++;
+    try {
+      const result = this.operations[method].execute(input);
+      // 内部读取也会递归 execute；只有外层 SQL 操作全部成功，缓存中的对象引用才已提交。
+      if (this.operationDepth === 1) this.objects.commitRequestCache();
+      return result;
+    } catch (error) {
+      if (this.operationDepth === 1) this.objects.discardRequestCache();
+      throw error;
+    } finally {
+      this.operationDepth--;
+    }
   }
 
   private commitConversation(value: ConversationCommit): ConversationCommitResult {
@@ -420,8 +432,10 @@ export class PlatformDatabase {
         const revision = (current?.revision ?? 0) + 1;
         this.db.prepare(`INSERT INTO records(namespace,id,owner_id,value_hash,revision) VALUES(?,?,?,?,?)
           ON CONFLICT(namespace,id) DO UPDATE SET owner_id=excluded.owner_id,value_hash=excluded.value_hash,revision=excluded.revision`)
-          .run(record.namespace, record.id, record.ownerId ?? null, this.objects.putValue(record.value,
-            record.namespace === 'model-requests', record.namespace === 'workspace-checkpoints', record.ownerId ?? record.id), revision);
+          .run(record.namespace, record.id, record.ownerId ?? null, this.objects.putValue(record.value, {
+            requestScope: record.namespace === 'model-requests' ? record.ownerId ?? record.id : undefined,
+            shareLargeMaps: record.namespace === 'workspace-checkpoints',
+          }), revision);
         return { namespace: record.namespace, id: record.id, revision };
       });
     })();

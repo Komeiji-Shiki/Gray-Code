@@ -506,9 +506,10 @@ export class HistoryStore {
       ORDER BY s.start_index,e.ordinal`).all(id, shared) as EntryRow[];
     const fields = ['runId', 'modelVersion', 'usageMetadata', 'usageMetadataPartial', 'candidatesTokenCount', 'thoughtsTokenCount'];
     const messages = rows.map(row => {
-      const body = this.objects.getValue<Record<string, unknown>>(row.body_hash, { fields, omitBinary: true },
-        header => header.usageMetadataPartial ? { fields: ['parts'] } : undefined);
-      const parts = body.usageMetadataPartial ? body.parts : [];
+      const body = this.objects.getValue<Record<string, unknown>>(row.body_hash, { fields, omitBinary: true });
+      const parts = body.usageMetadataPartial
+        ? this.objects.getValue<PlatformMessage>(row.body_hash, { fields: ['parts'], omitBinary: true }).parts
+        : [];
       return { ...body, parts: parts ?? [], role: row.role, ...(row.message_id ? { id: row.message_id } : {}),
         ...(row.timestamp !== null ? { timestamp: row.timestamp } : {}) } as PlatformMessage;
     });
