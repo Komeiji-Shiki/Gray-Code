@@ -149,6 +149,22 @@ afterEach(() => {
 })
 
 describe('SubAgentMonitor 历史上翻分页', () => {
+  test('已加载历史超过200行时，上一页返回后立即挂载新增首行', async () => {
+    const view = await mountMonitor({ initialWindow: makeWindow('a', 40, 260, 260) })
+    view.scrollTo(200)
+    await flushPromises()
+    expect(view.wrapper.find('.message-item').attributes('data-message-id')).toBe('a_40')
+
+    view.scrollTo(200)
+    expect(view.pages).toHaveLength(1)
+    expect(view.pages[0]).toMatchObject({ runId: 'a', options: { limit: 20, endIndex: 40 } })
+    view.pages[0].resolve({ window: makeWindow('a', 20, 40) })
+    await flushPromises()
+
+    expect(view.wrapper.find('.message-item').attributes('data-message-id')).toBe('a_20')
+    expect(view.wrapper.findAll('.message-item')).toHaveLength(200)
+  })
+
   test('历史删除导致索引重排时，阅读锚点仍定位到同一条持久消息', async () => {
     const original = makeWindow('a', 0, 260, 260)
     const view = await mountMonitor({ initialWindow: original })

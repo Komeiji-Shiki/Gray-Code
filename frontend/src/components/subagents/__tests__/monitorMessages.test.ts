@@ -1,6 +1,6 @@
 import { describe, expect, test, vi } from 'vitest'
 import type { Content } from '@/types'
-import { effectScope, nextTick, ref, shallowRef } from 'vue'
+import { effectScope, ref, shallowRef } from 'vue'
 import { applyStreamChunkToContents, applyStreamUpdatesToContents } from '@/stores/agentRun/contentDelta'
 import { useMonitorMessageProjection } from '../useMonitorMessageProjection'
 import { MonitorContentIndex } from '../monitorContentIndex'
@@ -19,11 +19,11 @@ function window(startIndex = 4, endIndex = 8): SubAgentRunContentWindowState {
 const floors = (value: SubAgentRunContentWindowState) => [...computeMonitorMessageFloorMap(value)]
 
 describe('Monitor 全局楼层和流式投影', () => {
-  test('200条挂载工作集在连续delta中复用历史消息及楼层，权威工具结果变更仍能更新卡片', async () => {
+  test('200条挂载工作集在连续delta中复用历史消息及楼层，权威工具结果变更仍能更新卡片', () => {
     const scope = effectScope()
     const synchronize = vi.spyOn(MonitorContentIndex.prototype, 'synchronize')
     try {
-      await scope.run(async () => {
+      scope.run(() => {
         const contents = Array.from({ length: 260 }, (_, index) => content(index))
         contents[240] = { ...content(240), parts: [{ functionCall: { id: 'tool', name: 'read_file', args: {} } }] }
         contents[241] = response(241)
@@ -45,7 +45,6 @@ describe('Monitor 全局楼层和流式投影', () => {
         expect(contents.at(-1)!.parts[0].text).toBe('message 259')
         value.value = { ...value.value, contents: next }
         run.value = { ...run.value, contents: next }
-        await nextTick()
         const after = projection.render(projection.rows.value.slice(-200))
         expect(projection.rows.value).toBe(rows)
         expect(projection.floorByMessageId.value).toBe(floors)
@@ -60,7 +59,6 @@ describe('Monitor 全局楼层和流式投影', () => {
         } }] }
         value.value = { ...value.value, contents: corrected, contentRevision: 2 }
         run.value = { ...run.value, contents: corrected }
-        await nextTick()
         const revised = projection.render(projection.rows.value.slice(-200))
         expect(revised.find(message => message.backendIndex === 240)!.tools![0]).toMatchObject({
           status: 'error', result: { success: false, error: '读取失败' },
