@@ -75,15 +75,22 @@ export class MemoryHistoryView {
     }
     const deletedRecords=new Set(tombstones.filter(tomb=>tomb.kind==='record').map(referenceKey));
     const sourceIds=new Set(tombstones.flatMap(tomb=>tomb.reference?.conversationId===conversationId&&tomb.reference.messageId?[tomb.reference.messageId]:[]));
+    const scopeVersions = new Map(scopes.map(scope => [scope.id, scope.invalidation]));
     const filter=(messages:PlatformMessage[],known:{blockedIds:Set<string>;evaluatedIds:Set<string>}={blockedIds:new Set(),evaluatedIds:new Set()})=>{
       const blockedIds=new Set([...sourceIds,...known.blockedIds]),calls=new Set<string>(),evaluatedIds=new Set(known.evaluatedIds);
       const invalidDirectory=(message:PlatformMessage)=>message.parts.some(part=>{
         const versions=(part.functionResponse as {response?:{memoryScopeVersions?:Array<{scopeId:string;invalidation:number}>}}|undefined)?.response?.memoryScopeVersions;
-        return Array.isArray(versions)&&versions.some(version=>scopes.find(scope=>scope.id===version.scopeId)?.invalidation!==version.invalidation);
+        return Array.isArray(versions)&&versions.some(version=>scopeVersions.get(version.scopeId)!==version.invalidation);
       });
-      for(const message of messages)if(memoryReferences(message).some(ref=>deletedRecords.has(referenceKey(ref)))||invalidDirectory(message)){
+      for (const message of messages) if ((deletedRecords.size > 0
+        && memoryReferences(message).some(ref => deletedRecords.has(referenceKey(ref)))) || invalidDirectory(message)) {
         if(message.id)blockedIds.add(message.id);
         for(const part of message.parts){const response=part.functionResponse as {id?:string}|undefined;if(response?.id)calls.add(response.id);}
+      }
+      // 即使没有删除记录，也先检查旧目录的 scope 版本；确认没有受影响来源后才跳过依赖传播和正文重建。
+      if (blockedIds.size === 0 && calls.size === 0) {
+        for (const message of messages) if (message.id) evaluatedIds.add(message.id);
+        return { messages, blockedIds, evaluatedIds };
       }
       for(const message of messages)if(message.parts.some(part=>calls.has(String((part.functionCall as {id?:string}|undefined)?.id))))if(message.id)blockedIds.add(message.id);
       let legacySourceBlocked=false;

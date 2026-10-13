@@ -15,6 +15,25 @@ import { formatBotSourceMessages } from '../../../../shared/botMessagePresentati
 
 // 清理附件展示字段时保留净化对象身份，图片尺寸只在首次预算中读取。
 const formattedInlineData = new WeakMap<NonNullable<ContentPart['inlineData']>, Map<boolean, NonNullable<ContentPart['inlineData']>>>();
+const formattedParts = new WeakMap<ContentPart, Map<string, { source: unknown; result: ContentPart }>>();
+
+/** 历史快照的未变片段复用净化结果；渠道与变换类型独立，保留 Token 估算按对象身份复用的前提。 */
+function reusePartProjection(part: ContentPart, variant: string, source: unknown, project: () => ContentPart): ContentPart {
+    let variants = formattedParts.get(part);
+    const cached = variants?.get(variant);
+    if (cached && cached.source === source) return cached.result;
+    const result = project();
+    if (!variants) { variants = new Map(); formattedParts.set(part, variants); }
+    variants.set(variant, { source, result });
+    return result;
+}
+
+function withoutThoughtSignatures(part: ContentPart): ContentPart {
+    return reusePartProjection(part, 'without-signatures', part.thoughtSignatures ?? part.thoughtSignature, () => {
+        const { thoughtSignatures, thoughtSignature, ...rest } = part;
+        return rest;
+    });
+}
 
 /** 把历史映射为返回给前端的显示消息：补绝对 index、过滤内部字段、深拷贝 */
 export function toDisplayMessages(history: ConversationHistory, startIndex = 0): Content[] {
@@ -96,8 +115,10 @@ export function formatHistoryForAPI(
         if (keepRedactedThinking || !part.redactedThinking) {
             return part;
         }
-        const { redactedThinking, ...rest } = part;
-        return rest;
+        return reusePartProjection(part, 'without-redacted-thinking', part.redactedThinking, () => {
+            const { redactedThinking, ...rest } = part;
+            return rest;
+        });
     };
     
     // 找到最后一个真实 user 消息的索引（H1-1：与回合识别同谓词；总结与内部回流
@@ -172,21 +193,18 @@ export function formatHistoryForAPI(
         // 1. 处理历史消息的签名
         if (isHistoryPart) {
             if (!sendHistoryThoughtSignatures) {
-                const { thoughtSignatures, thoughtSignature, ...rest } = part as any;
-                return rest;
+                return withoutThoughtSignatures(part);
             }
             // 检查是否在允许的历史思考回合范围内
             const isInHistoryThoughtRange = messageIndex >= historyThoughtMinIndex && messageIndex < historyThoughtMaxIndex;
             if (!isInHistoryThoughtRange) {
-                const { thoughtSignatures, thoughtSignature, ...rest } = part as any;
-                return rest;
+                return withoutThoughtSignatures(part);
             }
         } else {
             // 2. 处理当前轮次的签名
             // 当前轮次的签名发送由 sendCurrentThoughtSignatures 独立控制
             if (!sendCurrentThoughtSignatures) {
-                const { thoughtSignatures, thoughtSignature, ...rest } = part as any;
-                return rest;
+                return withoutThoughtSignatures(part);
             }
         }
 
@@ -196,12 +214,9 @@ export function formatHistoryForAPI(
         
         // 3. 如果指定了渠道类型，只保留对应格式的签名
         if (channelType && part.thoughtSignatures[channelType]) {
-            return {
-                ...part,
-                thoughtSignatures: {
-                    [channelType]: part.thoughtSignatures[channelType]
-                }
-            };
+            const signature = part.thoughtSignatures[channelType];
+            return reusePartProjection(part, `signatures:${channelType}`, signature,
+                () => ({ ...part, thoughtSignatures: { [channelType]: signature } }));
         }
         
         // 如果没有指定渠道类型或没有对应格式的签名，保留原样
@@ -285,7 +300,7 @@ export function formatHistoryForAPI(
             if (!variants) { variants = new Map(); formattedInlineData.set(part.inlineData, variants); }
             variants.set(keepDisplayName, inlineData);
         }
-        return { ...part, inlineData };
+        return reusePartProjection(part, 'inline-data', inlineData, () => ({ ...part, inlineData }));
     };
     
     // 首先收集所有被拒绝的工具调用 ID
@@ -358,7 +373,8 @@ export function formatHistoryForAPI(
         }
         if (part.functionCall.id && legacyAsyncCallIds.has(part.functionCall.id)) {
             const { functionCall, ...rest } = part;
-            return { ...rest, text: JSON.stringify({ tool_call: { id: functionCall.id, name: functionCall.name, arguments: functionCall.args } }) };
+            return reusePartProjection(part, 'legacy-async-call', functionCall, () => ({ ...rest,
+                text: JSON.stringify({ tool_call: { id: functionCall.id, name: functionCall.name, arguments: functionCall.args } }) }));
         }
         
         if (part.functionCall.id && droppedCallIds.has(part.functionCall.id)) {
@@ -367,11 +383,11 @@ export function formatHistoryForAPI(
         
         if (!('rejected' in part.functionCall)) return part;
         // 移除 rejected 字段
-        const { rejected, ...cleanedFunctionCall } = part.functionCall;
-        return {
-            ...part,
-            functionCall: cleanedFunctionCall
-        };
+        const functionCall = part.functionCall;
+        return reusePartProjection(part, 'function-call', functionCall, () => {
+            const { rejected, ...cleanedFunctionCall } = functionCall;
+            return { ...part, functionCall: cleanedFunctionCall };
+        });
     };
     
     /**
@@ -412,17 +428,19 @@ export function formatHistoryForAPI(
         );
         if (part.functionResponse.id && legacyAsyncCallIds.has(part.functionResponse.id)) {
             const { functionResponse, ...rest } = part;
-            return { ...rest, text: JSON.stringify({ tool_result: { id: functionResponse.id, name: functionResponse.name, response: cleanedResponse } }) };
+            return reusePartProjection(part, 'legacy-async-response', cleanedResponse, () => ({ ...rest,
+                text: JSON.stringify({ tool_result: { id: functionResponse.id, name: functionResponse.name, response: cleanedResponse } }) }));
         }
         
         if (cleanedResponse === part.functionResponse.response) return part;
-        return {
+        const functionResponse = part.functionResponse;
+        return reusePartProjection(part, 'function-response', cleanedResponse, () => ({
             ...part,
             functionResponse: {
-                ...part.functionResponse,
+                ...functionResponse,
                 response: cleanedResponse as Record<string, unknown>
             }
-        };
+        }));
     };
     
     /**
@@ -494,11 +512,12 @@ export function formatHistoryForAPI(
         // 注意：只有历史中的工具响应消息才会应用 supportsHistoryMultimodal 过滤
         // 当前轮次的工具响应始终保留多模态数据
         parts = parts
-            .map(part => processThoughtSignatures(part, isHistoryMessage, index))
-            .map(part => cleanRedactedThinking(part))
-            .map(part => cleanInlineData(part, isFunctionResponse, isHistoryMessage))
-            .map(part => part ? cleanFunctionCall(part) : part)
-            .map(part => part ? processFunctionResponse(part, isHistoryMessage) : part)
+            .map(part => {
+                const signed = cleanRedactedThinking(processThoughtSignatures(part, isHistoryMessage, index));
+                const media = cleanInlineData(signed, isFunctionResponse, isHistoryMessage);
+                const call = media ? cleanFunctionCall(media) : null;
+                return call ? processFunctionResponse(call, isHistoryMessage) : null;
+            })
             // 过滤空 part：
             // - null（被 cleanInlineData 等过滤）
             // - 空对象
