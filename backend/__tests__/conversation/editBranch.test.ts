@@ -332,35 +332,40 @@ describe('编辑用户消息分支（编排组合）', () => {
     });
 
     test('与 reroll 并存：编辑分支后可再 reroll 编辑出的回答；reroll 分支后也可再编辑', async () => {
-        const [u1, m1, u2, m2] = await seedConversation('c1');
+        // 候选按 createdAt 排序、同毫秒再按随机 id 排；时钟逐次递增，让断言只依赖创建先后。
+        let tick = Date.now();
+        const clock = jest.spyOn(Date, 'now').mockImplementation(() => ++tick);
+        try {
+            const [u1, m1, u2, m2] = await seedConversation('c1');
 
-        // 1) 先编辑 U2 → 新回答 A
-        const editResult = await runEditBranchFlow(service, manager, 'c1', 'edited q2', u2);
-        await manager.addContent('c1', { role: 'model', parts: [{ text: 'answer A' }] } as any);
-        const editFinished = await service.finishReroll('c1', editResult.modelCandidateNodeId);
-        const answerAId = editFinished.candidateNodeId;
+            // 1) 先编辑 U2 → 新回答 A
+            const editResult = await runEditBranchFlow(service, manager, 'c1', 'edited q2', u2);
+            await manager.addContent('c1', { role: 'model', parts: [{ text: 'answer A' }] } as any);
+            const editFinished = await service.finishReroll('c1', editResult.modelCandidateNodeId);
+            const answerAId = editFinished.candidateNodeId;
 
-        // 2) 再 reroll 编辑出的回答 A → 回答 B（旧 A 保留）
-        const rerollStarted = await service.startReroll('c1', answerAId);
-        await manager.addContent('c1', { role: 'model', parts: [{ text: 'answer B' }] } as any);
-        const rerollFinished = await service.finishReroll('c1', rerollStarted.candidateNodeId);
-        const answerBId = rerollFinished.candidateNodeId;
+            // 2) 再 reroll 编辑出的回答 A → 回答 B（旧 A 保留）
+            const rerollStarted = await service.startReroll('c1', answerAId);
+            await manager.addContent('c1', { role: 'model', parts: [{ text: 'answer B' }] } as any);
+            const rerollFinished = await service.finishReroll('c1', rerollStarted.candidateNodeId);
+            const answerBId = rerollFinished.candidateNodeId;
 
-        const graph = (await service.getBranchGraph('c1')).graph!;
-        expect(validate(graph).valid).toBe(true);
-        // M1 下：旧 U2（imported）、编辑节点（edit）；编辑节点下：A（reroll）、B（reroll）
-        expect(childrenIndex(graph).get(m1)).toEqual([u2, editResult.newUserNodeId]);
-        expect(childrenIndex(graph).get(editResult.newUserNodeId)).toEqual([answerAId, answerBId]);
-        // 旧编辑分支内容保留
-        expect(graph.nodes[u2]!.parts).toEqual([{ text: 'q2' }]);
-        expect(graph.nodes[m2]!.parts).toEqual([{ text: 'a2' }]);
-        expect(graph.nodes[answerAId]!.parts).toEqual([{ text: 'answer A' }]);
-        expect(graph.activeTailNodeId).toBe(answerBId);
+            const graph = (await service.getBranchGraph('c1')).graph!;
+            expect(validate(graph).valid).toBe(true);
+            // M1 下：旧 U2（imported）、编辑节点（edit）；编辑节点下：A（reroll）、B（reroll）
+            expect(childrenIndex(graph).get(m1)).toEqual([u2, editResult.newUserNodeId]);
+            expect(childrenIndex(graph).get(editResult.newUserNodeId)).toEqual([answerAId, answerBId]);
+            // 旧编辑分支内容保留
+            expect(graph.nodes[u2]!.parts).toEqual([{ text: 'q2' }]);
+            expect(graph.nodes[m2]!.parts).toEqual([{ text: 'a2' }]);
+            expect(graph.nodes[answerAId]!.parts).toEqual([{ text: 'answer A' }]);
+            expect(graph.activeTailNodeId).toBe(answerBId);
 
-        // 3) 主历史 == 活跃路径（BR-05）
-        const consistency = await service.validateActivePathMatchesHistory('c1');
-        expect(consistency.valid).toBe(true);
-        expect(consistency.historyIds).toEqual([u1, m1, editResult.newUserNodeId, answerBId]);
+            // 3) 主历史 == 活跃路径（BR-05）
+            const consistency = await service.validateActivePathMatchesHistory('c1');
+            expect(consistency.valid).toBe(true);
+            expect(consistency.historyIds).toEqual([u1, m1, editResult.newUserNodeId, answerBId]);
+        } finally { clock.mockRestore(); }
     });
 
     test('TREE-05：有分支图时 append 增量并入图（切回候选后继续对话不破坏图）', async () => {
