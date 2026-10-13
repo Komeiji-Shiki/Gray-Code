@@ -25,10 +25,9 @@ import { messageListUiStateByTab, MESSAGE_LIST_UI_STATE_CAP, type RestoreNoticeS
 import {
   advanceMessageWindowStart,
   computePaginatedMessageFloorMap,
-  computeCheckpointFloorMap,
-  getMessageInputGroupPositions,
-  type MessageInputGroupPosition
+  computeCheckpointFloorMap
 } from './messageListUtils'
+import { projectMessageWindow, projectMessageRows, type EnhancedMessage, type MessageRenderRow } from './messageWindowProjection'
 import { clearLineDiffCache } from '../../utils/lineDiff'
 import type { Message, CheckpointRecord } from '../../types'
 import type { MessageListUiState } from './messageListUiState'
@@ -259,16 +258,6 @@ export function useVirtualMessageWindow(options: UseVirtualMessageWindowOptions)
   // 顶部加载指示器：后端有更多历史 或 窗口起点之前还有已加载但未渲染的消息
   const hasMore = computed(() => hasMoreHistory.value || safeWindowStart.value > 0)
 
-  // 增强的消息对象接口
-  interface EnhancedMessage {
-    message: Message
-    backendIndex: number
-    beforeCheckpoints: CheckpointRecord[]
-    afterCheckpoints: CheckpointRecord[]
-    /** 楼层号（用户消息/模型回复各占一楼；tool 及内部消息不计） */
-    floor?: number
-  }
-
   // 楼层号映射：后端一次全局扫描提供绝对位置，分页窗口按 backendIndex 对齐。
   // 历史缩短后旧快照立即失效；新消息在快照末尾按连续索引顺延。
   const floorByMessageId = computed(() => computePaginatedMessageFloorMap(
@@ -279,87 +268,13 @@ export function useVirtualMessageWindow(options: UseVirtualMessageWindowOptions)
   // 存档序号：按创建时间升序编号（第 N 次存档）。
   const checkpointFloorByCheckpointId = computed(() => computeCheckpointFloorMap(chatStore.checkpoints))
 
-  const enhancedVisibleMessages = computed<EnhancedMessage[]>(() => {
-    const visibleMessages = props.messages.slice(safeWindowStart.value, windowEnd.value)
-
-    // 预先按消息索引对检查点进行分组
-    return visibleMessages.map(message => {
-      const backendIndex = typeof message.backendIndex === 'number' ? message.backendIndex : -1
-      const cpGroup = backendIndex !== -1 ? checkpointsByMsgIndex.value.get(backendIndex) : null
-
-      return {
-        message,
-        backendIndex,
-        beforeCheckpoints: cpGroup?.before || [],
-        afterCheckpoints: cpGroup?.after || [],
-        floor: floorByMessageId.value.get(message.id)
-      }
-    })
-  })
-
-  type RenderRow =
-    | { kind: 'build'; key: 'build-bar' }
-    | { kind: 'message'; key: string; item: EnhancedMessage; inputGroup?: MessageInputGroupPosition }
-    | { kind: 'todo'; key: 'todo-bar' }
-    | { kind: 'summarize-divider'; key: string }
-
-  function shouldInsertSticky(anchor: number | null, idx: number): boolean {
-    return anchor === null || (typeof idx === 'number' && idx >= 0 && idx >= anchor)
-  }
-
-  const messageRenderRows = computed<RenderRow[]>(() => {
-    const visible = enhancedVisibleMessages.value
-    const rows: RenderRow[] = []
-    const buildAnchor = buildAnchorBackendIndex.value
-    const todoAnchor = todoAnchorBackendIndex.value
-
-    let buildInserted = !showBuildBar.value
-    let todoInserted = !showTodoBar.value
-
-    // 逻辑截断：最后一个总结消息之后渲染横线，分隔「已总结区域」与「未总结区域」。
-    // 被总结消息（isSummarized）原文照常显示（不折叠），横线作为两者边界。
-    let lastSummaryBackendIndex: number | null = null
-    for (const item of visible) {
-      if (item.message.isSummary && typeof item.backendIndex === 'number') {
-        lastSummaryBackendIndex = item.backendIndex
-      }
-    }
-
-    for (const item of visible) {
-      const idx = item.backendIndex
-      if (!buildInserted && shouldInsertSticky(buildAnchor, idx)) {
-        rows.push({ kind: 'build', key: 'build-bar' })
-        buildInserted = true
-      }
-
-      if (!todoInserted && shouldInsertSticky(todoAnchor, idx)) {
-        rows.push({ kind: 'todo', key: 'todo-bar' })
-        todoInserted = true
-      }
-
-      rows.push({ kind: 'message', key: item.message.id, item })
-
-      // 在最后一个总结消息之后插入分隔线（已总结 / 未总结分界）
-      if (lastSummaryBackendIndex !== null && idx === lastSummaryBackendIndex) {
-        rows.push({ kind: 'summarize-divider', key: `summarize-divider:${idx}` })
-      }
-    }
-
-    if (!buildInserted && showBuildBar.value) {
-      rows.push({ kind: 'build', key: 'build-bar' })
-    }
-
-    if (!todoInserted && showTodoBar.value) {
-      rows.push({ kind: 'todo', key: 'todo-bar' })
-    }
-
-    const inputGroups = getMessageInputGroupPositions(rows)
-    for (let index = 0; index < rows.length; index++) {
-      const row = rows[index]
-      if (row.kind === 'message') row.inputGroup = inputGroups[index]
-    }
-    return rows
-  })
+  const enhancedVisibleMessages = computed<EnhancedMessage[]>(previous => projectMessageWindow(
+    props.messages, safeWindowStart.value, windowEnd.value, checkpointsByMsgIndex.value, floorByMessageId.value, previous
+  ))
+  const messageRenderRows = computed<MessageRenderRow[]>(previous => projectMessageRows(enhancedVisibleMessages.value, {
+    build: showBuildBar.value, buildAnchor: buildAnchorBackendIndex.value,
+    todo: showTodoBar.value, todoAnchor: todoAnchorBackendIndex.value
+  }, previous))
 
   // 将窗口长度约束在 [1, MAX_RENDERED_ROWS]
   function clampVisibleCount(value: number): number {
@@ -719,9 +634,10 @@ export function useVirtualMessageWindow(options: UseVirtualMessageWindowOptions)
   // props 在组件更新前已经指向新会话；离开时必须使用仍在 DOM 中的旧窗口元数据。
   let renderedWindow = { tabId: props.tabId, conversationId: chatStore.currentConversationId,
     start: 0, rows: [] as Message[] }
+  const renderedMessages = computed(() => enhancedVisibleMessages.value.map(item => item.message))
   function rememberRenderedWindow() {
     renderedWindow = { tabId: props.tabId, conversationId: chatStore.currentConversationId,
-      start: safeWindowStart.value, rows: enhancedVisibleMessages.value.map(item => item.message) }
+      start: safeWindowStart.value, rows: renderedMessages.value }
   }
   onMounted(rememberRenderedWindow)
   onUpdated(rememberRenderedWindow)

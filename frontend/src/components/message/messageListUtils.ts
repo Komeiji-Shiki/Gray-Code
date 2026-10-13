@@ -15,10 +15,12 @@ interface MessageInputGroupRow {
 function inputRowKind(row?: MessageInputGroupRow): 'user' | 'background' | null {
   const message = row?.kind === 'message' ? row.item?.message : undefined
   if (!message || message.isSummary || message.contextMethod || message.contextWindowId || message.isFunctionResponse) return null
+  const background = message.source === 'background_task' || message.source === 'agent_message'
+  if (!background && message.role !== 'user') return null
   const parts = message.parts ?? []
   const displayParts = message.characterDisplayParts ?? []
   if (hasContextBlocks(message.content) || parts.some(part => hasContextBlocks(part.text ?? '')) || displayParts.some(part => hasContextBlocks(part.text ?? ''))) return null
-  if (message.source === 'background_task' || message.source === 'agent_message') return 'background'
+  if (background) return 'background'
   return message.role === 'user' && (!message.source || message.source === 'user')
     && !message.tools?.length && !message.toolCalls?.length && !message.toolResults?.length
     && !parts.some(part => part.functionCall || part.functionResponse)
