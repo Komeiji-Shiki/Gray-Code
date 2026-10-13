@@ -41,7 +41,6 @@ export class ConversationService {
   async commit(change: PreparedConversationChange, preserveWindow = false) {
     const result = await this.app.storage.commitConversation({ conversationId: change.state.metadata.id,
       expectedRevision: change.state.history.revision, expectedMetadataToken: change.state.metadataToken, ...change.commit });
-
     this.app.publish({ type: 'conversation.changed', conversationId: change.state.metadata.id, revision: result.revision, ...(preserveWindow ? { preserveWindow: true } : {}) });
     return { success: true, revision: result.revision, historyLength: result.total, snapshotId: change.commit.snapshot?.id };
   }

@@ -54,7 +54,6 @@ export class ProductUi {
     this.chat = new ProductChat(app);
     this.checkpointUi = new CheckpointUi(app);
     this.conversations = new ConversationManager(new SqliteStorageAdapter(app.storage));
-
   }
   private client(id: string): Promise<UiSession> {
     let result = this.clients.get(id);
@@ -456,7 +455,6 @@ export class ProductUi {
             ...(workspace ? { workspaceId: workspace.id, workspaceUri: pathToFileURL(workspace.directory).toString() } : {}),
             custom: { ...state.metadata.custom as Record<string, unknown>, platformMode: mode, promptModeConfig: { modeId: preset } } };
           await this.app.storage.commitConversation({ conversationId: data.conversationId, expectedRevision: state.historyRevision, expectedMetadataToken: state.metadataToken, metadata });
-
         }
         ui.mode = mode;
         notify({ type: 'command', command: 'platform.modeSelected', data: { mode, promptModeId: preset } });

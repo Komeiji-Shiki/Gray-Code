@@ -159,7 +159,6 @@ export class CompanionService {
         },
         records,
       });
-
       this.app.publish({ type: 'conversation.changed', conversationId: state.metadata.id });
       if (syncing) return { success: true, view: await this.get(client, { conversationId: state.metadata.id }) };
       return { success: true, conversationId: state.metadata.id };

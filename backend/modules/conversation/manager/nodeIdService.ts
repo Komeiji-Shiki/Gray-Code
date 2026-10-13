@@ -212,10 +212,6 @@ export class ConversationNodeIdService {
         this.bumpNodeIdCacheEpoch(conversationId);
     }
 
-    clearCache(): void {
-        this.nodeIdCache.clear();
-    }
-
     forgetMigration(conversationId: string): void {
         this.nodeIdMigratedConversationIds.delete(conversationId);
     }

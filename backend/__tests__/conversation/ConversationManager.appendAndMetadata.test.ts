@@ -436,7 +436,7 @@ describe('getMetadataLight 元数据缓存（PERF）', () => {
         version++;
         expect((await manager.getMetadataLight('conv-version'))?.title).toBe('New');
 
-        manager.clearMetadataCache();
+        version++;
         let resolveOld!: (value: Awaited<ReturnType<typeof adapter.loadMetadataWithStatus>>) => void;
         jest.spyOn(adapter, 'loadMetadataWithStatus').mockImplementationOnce(() => new Promise(resolve => { resolveOld = resolve; }));
         const oldRead = manager.getMetadataLight('conv-version');

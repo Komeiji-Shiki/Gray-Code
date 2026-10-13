@@ -109,7 +109,6 @@ export class SubagentFeedback {
         ]) });
       expectedRevision = committed.revision; expectedMetadataToken = committed.metadataToken;
       progress.delivered ||= appended.some(message => batch.some(item => item.value.id === message.id && !item.value.displayOnly));
-
       if (activeRun) for (const content of appended) this.app.publish({ type: 'message.persisted', runId: activeRun.id, content });
       if (batch.some(item => item.value.message.source === 'user')) this.app.publish({ type: 'ui.message',
         message: { type: PUSH_MESSAGE_NAMES.command, command: PUSH_MESSAGE_NAMES['chat.pendingUserInputsChanged'], data: { conversationId } } });

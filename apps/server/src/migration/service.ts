@@ -611,7 +611,6 @@ export class MigrationService {
     update({ phase: 'finalizing', detail: '保存迁移报告' });
     await this.app.storage.commitRecords([{ namespace: 'migration-reports', id: operation.id, ownerId: actorId, value: result },
       { namespace: 'migration-latest', id: actorId, ownerId: actorId, value: { operationId: operation.id } }]);
-
     this.app.publish({ type: 'migration.completed', operationId: operation.id, report: result });
     operation.status.state = 'completed';
     return result;

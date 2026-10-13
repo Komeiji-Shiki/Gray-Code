@@ -154,12 +154,6 @@ export class ConversationManager {
         this.nodeIds.invalidateCache(conversationId);
     }
 
-    /** 供测试/诊断清理元数据缓存 */
-    clearMetadataCache(): void {
-        this.metadata.clearCache();
-        this.nodeIds.clearCache();
-    }
-
     /**
      * 同一会话的 read-modify-write 串行队列（历史 mutate、自定义元数据等）。
      * 无内存缓存、直接文件读改写：并发时后写覆盖先写，真实执行成功的工具结果

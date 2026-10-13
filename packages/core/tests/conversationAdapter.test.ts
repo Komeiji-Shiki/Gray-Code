@@ -36,7 +36,6 @@ describe('existing conversation manager on the independent storage service', () 
     await manager.createConversation('direct-core', '准确条数', 'file:///fixture');
     const original = (await f.store.getConversation('direct-core'))!;
     await f.store.appendHistory('direct-core', [{ id: 'pending-user', role: 'user', parts: [{ text: '尚未收到回复的请求' }] }]);
-    manager.clearMetadataCache();
     expect((await manager.getMetadata('direct-core'))?.custom?.messageCount).toBe(1);
     expect((await manager.getConversationMetadataBatch(['direct-core']))[0].messageCount).toBe(1);
     expect((await adapter.loadMetadata('direct-core'))?.title).toBe('准确条数');

@@ -79,7 +79,6 @@ export class PlatformSkills {
       const metadata = { ...state.metadata, custom: { ...(state.metadata.custom as Record<string, unknown> ?? {}), inputSkills: values } };
       await this.app.storage.commitConversation({ conversationId, expectedRevision: state.historyRevision,
         expectedMetadataToken: state.metadataToken, metadata, ...(active ? { activeRunId: active.id } : {}) });
-
     } else if (enabled === undefined) await draft.settings.removeSkillConfig(id);
     else await draft.settings.setSkillEnabled(id, enabled, target);
     return { success: true };

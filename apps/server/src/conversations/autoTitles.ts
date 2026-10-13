@@ -73,7 +73,6 @@ export async function backfillPlaceholderTitles(app: PlatformApplication): Promi
       console.warn('[autoTitles] Failed to backfill conversation title:', id, error);
     }
   }
-
   // 暂时读取失败或并发修改不能永久跳过补齐，成功改名的对话下次会自然被排除。
   if (!failed) await app.storage.putRecord({ namespace: MAINTENANCE_NAMESPACE, id: MAINTENANCE_ID, ownerId: MAINTENANCE_ID,
     value: { updated, at: Date.now() } });

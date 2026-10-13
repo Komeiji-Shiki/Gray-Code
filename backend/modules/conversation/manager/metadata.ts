@@ -526,8 +526,4 @@ export class ConversationMetadataService {
         this.metaCache.delete(conversationId);
     }
 
-    clearCache(): void {
-        this.cacheEpoch++;
-        this.metaCache.clear();
-    }
 }
