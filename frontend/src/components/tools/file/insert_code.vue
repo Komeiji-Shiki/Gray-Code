@@ -13,6 +13,7 @@
 import { computed, ref } from 'vue'
 import CustomScrollbar from '../../common/CustomScrollbar.vue'
 import ToolErrorMessage from '../common/ToolErrorMessage.vue'
+import ToolDiffPreview from '../common/ToolDiffPreview.vue'
 import { useOpenWorkspaceFile, useI18n } from '@/composables'
 import { useToolCopy } from '../common/useToolCopy'
 import { getFileExtension, getFileNameWithoutExt } from './filePath'
@@ -221,6 +222,8 @@ async function copyFileContent(file: MergedFile) {
         <div v-if="file.result && !file.result.success && file.result.error" class="file-error">
           <ToolErrorMessage :error="file.result.error" :code="file.result.displayErrorCode" :path="file.path" />
         </div>
+
+        <ToolDiffPreview v-if="file.result?.diffContentId" :diff-content-id="file.result.diffContentId" />
 
         <!-- 插入的代码内容 -->
         <div v-if="file.content" class="file-content" :class="{ expanded: isFileExpanded(file.path) }">

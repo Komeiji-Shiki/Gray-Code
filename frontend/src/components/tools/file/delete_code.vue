@@ -12,6 +12,7 @@
 import { computed } from 'vue'
 import { useI18n, useOpenWorkspaceFile } from '@/composables'
 import ToolErrorMessage from '../common/ToolErrorMessage.vue'
+import ToolDiffPreview from '../common/ToolDiffPreview.vue'
 import { getFileExtension, getFileNameWithoutExt } from './filePath'
 
 const props = defineProps<{
@@ -35,6 +36,7 @@ interface DeleteEntry {
 interface DeleteResult {
   path: string
   displayErrorCode?: string
+  diffContentId?: string
   success: boolean
   start_line?: number
   end_line?: number
@@ -161,6 +163,7 @@ const failCount = computed(() => {
           <span class="codicon codicon-info"></span>
           {{ t('components.message.tool.deleteCode.willDelete', { start: file.start_line, end: file.end_line, count: file.deletedCount }) }}
         </div>
+        <ToolDiffPreview v-if="file.result?.diffContentId" :diff-content-id="file.result.diffContentId" />
       </div>
     </div>
   </div>
