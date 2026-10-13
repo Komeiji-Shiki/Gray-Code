@@ -8,12 +8,12 @@
  * - 文件内容（后端已带行号，格式如 "   1 | content"）
  */
 
-import { computed, ref, onBeforeUnmount } from 'vue'
+import { computed, ref } from 'vue'
 import CustomScrollbar from '../../common/CustomScrollbar.vue'
 import ToolErrorMessage from '../common/ToolErrorMessage.vue'
 import { useI18n, useOpenWorkspaceFile } from '@/composables'
-import { copyToClipboard } from '@/utils/format'
-import { showNotification } from '@/utils/vscode'
+import { useToolCopy } from '../common/useToolCopy'
+import { getFileName } from './filePath'
 
 const props = defineProps<{
   args: Record<string, unknown>
@@ -28,8 +28,7 @@ const { openFileAt } = useOpenWorkspaceFile()
 const expandedFiles = ref<Set<string>>(new Set())
 
 // 同一文件的不同读取范围分别保存展开与复制状态。
-const copiedFiles = ref<Set<string>>(new Set())
-const copyTimeouts = new Map<string, ReturnType<typeof setTimeout>>()
+const { copyItem, isCopied } = useToolCopy()
 
 // 单个文件读取请求
 interface FileRequest {
@@ -152,12 +151,6 @@ const resultRows = computed((): ReadResultRow[] => readResults.value.map((result
     preview: lines.slice(0, previewLineCount).join('\n'), contentLineCount: lines.length }
 }))
 
-// 获取文件名
-function getFileName(filePath: string): string {
-  const parts = filePath.split(/[/\\]/)
-  return parts[parts.length - 1] || filePath
-}
-
 // 获取文件扩展名
 function getFileExtension(filePath: string): string {
   const fileName = getFileName(filePath)
@@ -189,11 +182,6 @@ function isFileExpanded(path: string): boolean {
   return expandedFiles.value.has(path)
 }
 
-// 检查是否已复制
-function isCopied(path: string): boolean {
-  return copiedFiles.value.has(path)
-}
-
 // 复制单个文件内容
 async function copyFileContent(result: ReadResultRow) {
   if (!result.content) return
@@ -206,36 +194,8 @@ async function copyFileContent(result: ReadResultRow) {
       return match ? match[1] : line
     })
     .join('\n')
-  const ok = await copyToClipboard(rawContent)
-  if (!ok) {
-    await showNotification(t('common.copyFailed'), 'error')
-    return
-  }
-
-  // 显示对钩状态
-  copiedFiles.value.add(result.key)
-
-  // 清除之前的定时器
-  const existingTimeout = copyTimeouts.get(result.key)
-  if (existingTimeout) {
-    clearTimeout(existingTimeout)
-  }
-
-  // 1秒后恢复
-  const timeout = setTimeout(() => {
-    copiedFiles.value.delete(result.key)
-    copyTimeouts.delete(result.key)
-  }, 1000)
-  copyTimeouts.set(result.key, timeout)
+  await copyItem(result.key, rawContent)
 }
-
-// 清理定时器
-onBeforeUnmount(() => {
-  for (const timeout of copyTimeouts.values()) {
-    clearTimeout(timeout)
-  }
-  copyTimeouts.clear()
-})
 </script>
 
 <template>

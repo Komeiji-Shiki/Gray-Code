@@ -674,6 +674,10 @@ const sharedEn = {
                 deleteFilePanel: {
                     failed: "Failure",
                 },
+                insertCodePanel: {
+                    insertBeforeLine: "Insert before line {line}",
+                    total: "Total {count} files",
+                },
             },
             fileErrors: {
                 EACCES: "Permission denied for this file or directory",

@@ -10,12 +10,12 @@
  * - 操作结果状态
  */
 
-import { computed, ref, onBeforeUnmount } from 'vue'
+import { computed, ref } from 'vue'
 import CustomScrollbar from '../../common/CustomScrollbar.vue'
 import ToolErrorMessage from '../common/ToolErrorMessage.vue'
 import { useOpenWorkspaceFile, useI18n } from '@/composables'
-import { copyToClipboard } from '@/utils/format'
-import { showNotification } from '@/utils/vscode'
+import { useToolCopy } from '../common/useToolCopy'
+import { getFileExtension, getFileNameWithoutExt } from './filePath'
 
 const props = defineProps<{
   args: Record<string, unknown>
@@ -29,9 +29,7 @@ const { t } = useI18n()
 // 每个文件的展开状态
 const expandedFiles = ref<Set<string>>(new Set())
 
-// 复制状态（按文件路径）
-const copiedFiles = ref<Set<string>>(new Set())
-const copyTimeouts = new Map<string, ReturnType<typeof setTimeout>>()
+const { copyItem, isCopied } = useToolCopy()
 
 // 单个插入条目
 interface InsertEntry {
@@ -108,24 +106,6 @@ const failCount = computed(() => {
 // 预览行数
 const previewLineCount = 15
 
-// 获取文件名
-function getFileName(fp: string): string {
-  const parts = fp.split(/[/\\]/)
-  return parts[parts.length - 1] || fp
-}
-
-function getFileExtension(fp: string): string {
-  const name = getFileName(fp)
-  const idx = name.lastIndexOf('.')
-  return idx > 0 ? name.substring(idx + 1) : ''
-}
-
-function getFileNameWithoutExt(fp: string): string {
-  const name = getFileName(fp)
-  const idx = name.lastIndexOf('.')
-  return idx > 0 ? name.substring(0, idx) : name
-}
-
 // 获取内容行数组
 function getContentLines(content: string | undefined): string[] {
   return content ? content.split('\n') : []
@@ -168,31 +148,8 @@ function getDisplayContent(file: MergedFile): string {
 // 复制单个文件内容
 async function copyFileContent(file: MergedFile) {
   if (!file.content) return
-  const ok = await copyToClipboard(file.content)
-  if (!ok) {
-    await showNotification(t('common.copyFailed'), 'error')
-    return
-  }
-  copiedFiles.value.add(file.path)
-  const existing = copyTimeouts.get(file.path)
-  if (existing) clearTimeout(existing)
-  const timeout = setTimeout(() => {
-    copiedFiles.value.delete(file.path)
-    copyTimeouts.delete(file.path)
-  }, 1000)
-  copyTimeouts.set(file.path, timeout)
+  await copyItem(file.path, file.content)
 }
-
-function isCopied(path: string): boolean {
-  return copiedFiles.value.has(path)
-}
-
-onBeforeUnmount(() => {
-  for (const timeout of copyTimeouts.values()) {
-    clearTimeout(timeout)
-  }
-  copyTimeouts.clear()
-})
 </script>
 
 <template>
@@ -201,7 +158,7 @@ onBeforeUnmount(() => {
     <div class="panel-header">
       <div class="header-info">
         <span class="codicon codicon-diff-added files-icon"></span>
-        <span class="title">插入代码</span>
+        <span class="title">{{ t('components.settings.toolsSettings.toolDisplayNames.insert_code') }}</span>
       </div>
       <div class="header-stats">
         <span v-if="successCount > 0" class="stat success">
@@ -212,7 +169,7 @@ onBeforeUnmount(() => {
           <span class="codicon codicon-error"></span>
           {{ failCount }}
         </span>
-        <span class="stat total">共 {{ mergedFiles.length }} 个文件</span>
+        <span class="stat total">{{ t('components.tools.file.insertCodePanel.total', { count: mergedFiles.length }) }}</span>
       </div>
     </div>
 
@@ -235,8 +192,8 @@ onBeforeUnmount(() => {
             <span class="codicon codicon-diff-added file-icon"></span>
             <button type="button" class="file-name clickable gc-link-button" :title="file.path" @click.stop="openFileAt(file.path, file.line)">{{ getFileNameWithoutExt(file.path) }}</button>
             <button v-if="getFileExtension(file.path)" type="button" class="file-ext clickable gc-link-button" :title="file.path" @click.stop="openFileAt(file.path, file.line)">.{{ getFileExtension(file.path) }}</button>
-            <span class="insert-badge">第 {{ file.line }} 行前插入</span>
-            <span class="line-count">{{ getContentLines(file.content).length }} 行</span>
+            <span class="insert-badge">{{ t('components.tools.file.insertCodePanel.insertBeforeLine', { line: file.line }) }}</span>
+            <span class="line-count">{{ t('components.tools.file.readFilePanel.lines', { count: getContentLines(file.content).length }) }}</span>
           </div>
           <div class="file-actions">
             <button
@@ -244,8 +201,12 @@ onBeforeUnmount(() => {
               type="button"
               class="action-btn"
               :class="{ copied: isCopied(file.path) }"
-              :title="isCopied(file.path) ? '已复制' : '复制内容'"
-              :aria-label="isCopied(file.path) ? '已复制' : '复制内容'"
+              :title="isCopied(file.path)
+                ? t('components.tools.file.readFilePanel.copied')
+                : t('components.tools.file.readFilePanel.copyContent')"
+              :aria-label="isCopied(file.path)
+                ? t('components.tools.file.readFilePanel.copied')
+                : t('components.tools.file.readFilePanel.copyContent')"
               @click.stop="copyFileContent(file)"
             >
               <span :class="['codicon', isCopied(file.path) ? 'codicon-check' : 'codicon-copy']"></span>
@@ -273,7 +234,11 @@ onBeforeUnmount(() => {
           <div v-if="needsExpand(file)" class="expand-section">
             <button class="expand-btn" @click="toggleFile(file.path)">
               <span :class="['codicon', isFileExpanded(file.path) ? 'codicon-chevron-up' : 'codicon-chevron-down']"></span>
-              {{ isFileExpanded(file.path) ? '收起' : `展开剩余 ${getContentLines(file.content).length - previewLineCount} 行` }}
+              {{ isFileExpanded(file.path)
+                ? t('components.tools.file.readFilePanel.collapse')
+                : t('components.tools.file.readFilePanel.expandRemaining', {
+                  count: getContentLines(file.content).length - previewLineCount
+                }) }}
             </button>
           </div>
         </div>

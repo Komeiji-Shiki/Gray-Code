@@ -674,6 +674,10 @@ const sharedJa = {
                 deleteFilePanel: {
                     failed: "失敗",
                 },
+                insertCodePanel: {
+                    insertBeforeLine: "{line} 行目の前に挿入",
+                    total: "合計 {count} ファイル",
+                },
             },
             fileErrors: {
                 EACCES: "このファイルまたはフォルダーにアクセスする権限がありません",

@@ -9,14 +9,14 @@ import { parseUnifiedPatchToDiffBlocks, type DiffBlock } from './diffBlocks'
  * - 每个 diff 块独立显示
  */
 
-import { computed, ref, watch, onBeforeUnmount } from 'vue'
+import { computed, ref, watch } from 'vue'
 import CustomScrollbar from '../../common/CustomScrollbar.vue'
 import ToolErrorMessage from '../common/ToolErrorMessage.vue'
 import VirtualDiffLines from '../../common/VirtualDiffLines.vue'
 import { useI18n, useOpenWorkspaceFile } from '@/composables'
 import { computeLineDiffCached, type LineDiffEntry, type LineDiffResult } from '@/utils/lineDiff'
-import { copyToClipboard } from '@/utils/format'
-import { showNotification } from '@/utils/vscode'
+import { useToolCopy } from '../common/useToolCopy'
+import { getFileExtension, getFileNameWithoutExt } from './filePath'
 
 const props = defineProps<{
   args: Record<string, unknown>
@@ -26,14 +26,12 @@ const props = defineProps<{
 }>()
 
 const { t } = useI18n()
-const { openFile } = useOpenWorkspaceFile()
+const { openFile, openFileAt } = useOpenWorkspaceFile()
 
 // 展开状态
 const expanded = ref<Set<number>>(new Set())
 
-// 复制状态
-const copiedDiffs = ref<Set<number>>(new Set())
-const copyTimeouts = new Map<number, ReturnType<typeof setTimeout>>()
+const { copyItem, isCopied } = useToolCopy()
 
 // 单个 diff 块
 // 获取文件路径
@@ -186,32 +184,6 @@ const isPartial = computed(() => {
   )
 })
 
-// 获取文件名
-function getFileName(filePath: string): string {
-  const parts = filePath.split(/[/\\]/)
-  return parts[parts.length - 1] || filePath
-}
-
-// 获取文件扩展名
-function getFileExtension(filePath: string): string {
-  const fileName = getFileName(filePath)
-  const lastDotIndex = fileName.lastIndexOf('.')
-  if (lastDotIndex > 0) {
-    return fileName.substring(lastDotIndex + 1)
-  }
-  return ''
-}
-
-// 获取不含扩展名的文件名
-function getFileNameWithoutExt(filePath: string): string {
-  const fileName = getFileName(filePath)
-  const lastDotIndex = fileName.lastIndexOf('.')
-  if (lastDotIndex > 0) {
-    return fileName.substring(0, lastDotIndex)
-  }
-  return fileName
-}
-
 interface RenderedDiffBlock extends DiffBlock {
   lineDiff: LineDiffResult
 }
@@ -291,40 +263,10 @@ function isExpanded(index: number): boolean {
   return expanded.value.has(index)
 }
 
-// 检查是否已复制
-function isCopied(index: number): boolean {
-  return copiedDiffs.value.has(index)
-}
-
 // 复制替换后的内容
 async function copyReplace(diff: DiffBlock, index: number) {
-  const ok = await copyToClipboard(diff.replace)
-  if (!ok) {
-    await showNotification(t('common.copyFailed'), 'error')
-    return
-  }
-
-  copiedDiffs.value.add(index)
-
-  const existingTimeout = copyTimeouts.get(index)
-  if (existingTimeout) {
-    clearTimeout(existingTimeout)
-  }
-
-  const timeout = setTimeout(() => {
-    copiedDiffs.value.delete(index)
-    copyTimeouts.delete(index)
-  }, 1000)
-  copyTimeouts.set(index, timeout)
+  await copyItem(index, diff.replace)
 }
-
-// 清理定时器
-onBeforeUnmount(() => {
-  for (const timeout of copyTimeouts.values()) {
-    clearTimeout(timeout)
-  }
-  copyTimeouts.clear()
-})
 </script>
 
 <template>
@@ -414,10 +356,15 @@ onBeforeUnmount(() => {
               <span class="error-msg">{{ diff.error || t('common.failed') }}</span>
             </span>
 
-            <span v-if="diff.start_line" class="start-line">
+            <button
+              v-if="diff.start_line"
+              type="button"
+              class="start-line clickable gc-link-button"
+              @click.stop="openFileAt(filePath, diff.start_line)"
+            >
               <span class="codicon codicon-location"></span>
               {{ t('components.tools.file.applyDiffPanel.line') }} {{ diff.start_line }}
-            </span>
+            </button>
             <!-- 统计信息 -->
             <span v-if="diff.success !== false && !diff.rejected" class="diff-stats">
               <span class="stat deleted">

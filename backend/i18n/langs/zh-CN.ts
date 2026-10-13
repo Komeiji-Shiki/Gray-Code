@@ -330,6 +330,10 @@ const zhCN = {
             noPresetResults: "没有匹配的预设",
             placeholderHint: "输入消息，Enter 发送，@ 添加文件",
             keyboardHint: "Enter 发送，Shift+Enter 换行。可粘贴附件；Shift+拖拽添加文件路径，Ctrl+Shift+拖拽插入 @path 文本。",
+            fileToolUi: {
+                totalFiles: "共 {count} 个文件",
+                insertBeforeLine: "第 {line} 行前插入",
+            },
             asyncQuestions: {
                 title: "需要补充的信息",
                 questionCount: "{count} 个问题",

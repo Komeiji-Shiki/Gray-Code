@@ -11,6 +11,7 @@
 import { computed } from 'vue'
 import { useI18n, useOpenWorkspaceFile } from '@/composables'
 import ToolErrorMessage from '../common/ToolErrorMessage.vue'
+import { getFileName } from './filePath'
 
 const props = defineProps<{
   args: Record<string, unknown>
@@ -75,11 +76,6 @@ const failCount = computed(() => {
   return deleteResults.value.filter(r => !r.success).length
 })
 
-// 获取文件名
-function getFileName(filePath: string): string {
-  const parts = filePath.split(/[/\\]/)
-  return parts[parts.length - 1] || filePath
-}
 </script>
 
 <template>

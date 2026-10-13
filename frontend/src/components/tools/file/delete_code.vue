@@ -12,6 +12,7 @@
 import { computed } from 'vue'
 import { useI18n, useOpenWorkspaceFile } from '@/composables'
 import ToolErrorMessage from '../common/ToolErrorMessage.vue'
+import { getFileExtension, getFileNameWithoutExt } from './filePath'
 
 const props = defineProps<{
   args: Record<string, unknown>
@@ -97,23 +98,6 @@ const failCount = computed(() => {
   return deleteResults.value.filter(r => !r.success).length
 })
 
-// 获取文件名
-function getFileName(fp: string): string {
-  const parts = fp.split(/[/\\]/)
-  return parts[parts.length - 1] || fp
-}
-
-function getFileExtension(fp: string): string {
-  const name = getFileName(fp)
-  const idx = name.lastIndexOf('.')
-  return idx > 0 ? name.substring(idx + 1) : ''
-}
-
-function getFileNameWithoutExt(fp: string): string {
-  const name = getFileName(fp)
-  const idx = name.lastIndexOf('.')
-  return idx > 0 ? name.substring(0, idx) : name
-}
 </script>
 
 <template>

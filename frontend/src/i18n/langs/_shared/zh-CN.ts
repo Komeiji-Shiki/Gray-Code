@@ -674,6 +674,10 @@ const sharedZhCN = {
                 deleteFilePanel: {
                     failed: "失败",
                 },
+                insertCodePanel: {
+                    insertBeforeLine: "第 {line} 行前插入",
+                    total: "共 {count} 个文件",
+                },
             },
             fileErrors: {
                 EACCES: "没有权限访问该文件或目录",

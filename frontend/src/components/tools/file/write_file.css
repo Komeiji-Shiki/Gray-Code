@@ -410,12 +410,7 @@
 }
 
 .content-wrapper {
-  height: 200px;
   position: relative;
-}
-
-.file-content.expanded .content-wrapper {
-  height: 400px;
 }
 
 .content-code {

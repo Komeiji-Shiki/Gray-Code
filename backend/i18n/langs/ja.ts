@@ -327,6 +327,10 @@ const ja: BackendLanguageMessages = {
             noPresetResults: "一致するプリセットがありません",
             placeholderHint: "メッセージを入力、Enter で送信、@ でファイルを追加",
             keyboardHint: "Enter で送信、Shift+Enter で改行。添付ファイルを貼り付け、Shift+ドラッグでファイルパスを追加、Ctrl+Shift+ドラッグで @path テキストを挿入できます。",
+            fileToolUi: {
+                totalFiles: "合計 {count} ファイル",
+                insertBeforeLine: "{line} 行目の前に挿入",
+            },
             asyncQuestions: {
                 title: "追加情報が必要です",
                 questionCount: "{count} 件の質問",

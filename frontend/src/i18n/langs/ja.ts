@@ -3546,6 +3546,10 @@ const ja: LanguageMessages = {
                     expandRemaining: '残り {count} 行を展開',
                     emptyFile: 'ファイルは空です'
                 },
+                insertCodePanel: {
+                    total: sharedJa.components.tools.file.insertCodePanel.total,
+                    insertBeforeLine: sharedJa.components.tools.file.insertCodePanel.insertBeforeLine,
+                },
                 writeFilePanel: {
                     title: 'ファイルを書き込み',
                     total: '合計 {count} 個',

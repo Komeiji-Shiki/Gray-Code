@@ -327,6 +327,10 @@ const en: BackendLanguageMessages = {
             noPresetResults: "No matching presets",
             placeholderHint: "Type a message, Enter to send, @ to add files",
             keyboardHint: "Enter to send; Shift+Enter for a new line. Paste attachments, Shift+drag to add file paths, or Ctrl+Shift+drag to insert @path text.",
+            fileToolUi: {
+                totalFiles: "Total {count} files",
+                insertBeforeLine: "Insert before line {line}",
+            },
             asyncQuestions: {
                 title: "More information needed",
                 questionCount: "{count} questions",

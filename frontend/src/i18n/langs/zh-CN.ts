@@ -3548,6 +3548,10 @@ const zhCN = {
                     expandRemaining: '展开剩余 {count} 行',
                     emptyFile: '文件为空'
                 },
+                insertCodePanel: {
+                    total: sharedZhCN.components.tools.file.insertCodePanel.total,
+                    insertBeforeLine: sharedZhCN.components.tools.file.insertCodePanel.insertBeforeLine,
+                },
                 writeFilePanel: {
                     title: '写入文件',
                     total: '共 {count} 个',

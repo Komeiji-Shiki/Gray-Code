@@ -4,23 +4,47 @@
  * 按独立 pending diff 渲染；倒计时/状态展示与 confirmDiff / rejectDiff 语义原样保留。
  */
 import { useI18n } from '../../../i18n'
+import { MESSAGE_NAMES } from '@shared/protocol'
+import { useMessageConversation } from '../../../composables/messageConversationContext'
+import { sendToExtension, showNotification } from '../../../utils/vscode'
 import { confirmDiff, rejectDiff, globalApplyDiffConfig } from '../diffReviewController'
 import type { PendingDiffView } from './types'
 
 const { t } = useI18n()
+const conversation = useMessageConversation()
 
 defineProps<{
   pendingDiffs: PendingDiffView[]
 }>()
+
+async function openPreview(diff: PendingDiffView) {
+  try {
+    // 使用该文件的提案 ID，避免多文件调用打开同一工具中另一份待审阅内容。
+    await sendToExtension(MESSAGE_NAMES['diff.openPreview'], {
+      id: diff.id,
+      toolId: diff.toolId,
+      path: diff.filePath,
+      ...(conversation?.value ? { conversationId: conversation.value } : {})
+    })
+  } catch (error) {
+    await showNotification(error instanceof Error ? error.message : t('common.error'), 'error')
+  }
+}
 </script>
 
 <template>
   <div class="diff-action-list">
     <div v-for="pendingDiff in pendingDiffs" :key="pendingDiff.id" class="diff-action-footer">
-      <div class="diff-action-file">
-        <span class="codicon codicon-file-code"></span>
+      <button
+        type="button"
+        class="diff-action-file gc-link-button"
+        :title="pendingDiff.filePath"
+        :aria-label="`${t('components.message.tool.viewDiff')}: ${pendingDiff.filePath}`"
+        @click.stop="openPreview(pendingDiff)"
+      >
+        <span class="codicon codicon-file-code" aria-hidden="true"></span>
         <span class="diff-action-file-path">{{ pendingDiff.filePath }}</span>
-      </div>
+      </button>
       <div class="footer-top" v-if="globalApplyDiffConfig.autoSave">
         <template v-if="pendingDiff.autoSaveAt !== undefined">
           <div class="timer-container">

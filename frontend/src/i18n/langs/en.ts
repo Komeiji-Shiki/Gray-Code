@@ -3546,6 +3546,10 @@ const en: LanguageMessages = {
                     expandRemaining: 'Expand remaining {count} lines',
                     emptyFile: 'File is empty'
                 },
+                insertCodePanel: {
+                    total: sharedEn.components.tools.file.insertCodePanel.total,
+                    insertBeforeLine: sharedEn.components.tools.file.insertCodePanel.insertBeforeLine,
+                },
                 writeFilePanel: {
                     title: 'Write File',
                     total: 'Total {count}',
