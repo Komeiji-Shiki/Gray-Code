@@ -300,8 +300,9 @@ export class HistoryStore {
       if (rows.length !== info.message_count - startIndex) throw new PlatformStorageError('CORRUPT_DATA', 'History sequence contains missing entries.');
       rows.forEach((row, offset) => {
         if (row.role !== 'user' && row.role !== 'model') return;
-        // 楼层只依赖工具结果标记，历史正文、工具载荷和附件继续留在请求页之外。
-        const body = this.objects.getValue<Pick<PlatformMessage, 'isFunctionResponse'>>(row.body_hash, { fields: ['isFunctionResponse'] });
+        // 已缓存正文只读取标记；未命中仍轻量投影，不为楼层恢复工具载荷和附件。
+        const body = this.bodies.get(row.body_hash.toString('hex'))?.body
+          ?? this.objects.getValue<Pick<PlatformMessage, 'isFunctionResponse'>>(row.body_hash, { fields: ['isFunctionResponse'] });
         if (!body.isFunctionResponse) floorIndices.push(startIndex + offset);
       });
       this.floorSnapshot = { historyId: id, revision: info.revision, spans, floorIndices };
@@ -341,8 +342,12 @@ export class HistoryStore {
     if (!Array.isArray(messages)) invalid('Messages must be an array.');
     if (!messages.length) return;
     const info = this.info(id);
+    this.appendEncoded(id, info, messages, messages.map(message => this.encode(message)));
+  }
+
+  /** 正文编码与序列写入分开，替换时可复用已经精确比较过的条目。 */
+  private appendEncoded(id: string, info: HistoryRow, messages: PlatformMessage[], entries: EntryRow[]): void {
     const indexed = info.search_revision === info.revision;
-    const entries = messages.map(message => this.encode(message));
     let tail = this.db.prepare('SELECT * FROM history_spans WHERE history_id=? ORDER BY start_index DESC LIMIT 1').get(id) as SpanRow | undefined;
     let length = tail ? Number((this.db.prepare('SELECT count(*) AS n FROM segment_entries WHERE segment_id=?').get(tail.segment_id) as { n: number }).n) : 0;
     let total = info.message_count;
@@ -383,14 +388,22 @@ export class HistoryStore {
     const old = this.rows(id, 0, info.message_count);
     if (old.length !== info.message_count) throw new PlatformStorageError('CORRUPT_DATA', 'Cannot replace corrupt history.');
     let prefix = 0;
+    let firstChanged: EntryRow | undefined;
     for (; prefix < Math.min(old.length, messages.length); prefix++) {
       const next = this.encode(messages[prefix]);
       const previous = old[prefix];
-      if (!this.sameEntry(next, previous)) break;
+      if (!this.sameEntry(next, previous)) {
+        firstChanged = next;
+        break;
+      }
     }
     if (prefix === old.length && prefix === messages.length) return;
     this.truncate(id, prefix);
-    if (prefix < messages.length) this.append(id, messages.slice(prefix));
+    if (prefix < messages.length) {
+      const remaining = messages.slice(prefix);
+      const entries = remaining.map((message, index) => index === 0 && firstChanged ? firstChanged : this.encode(message));
+      this.appendEncoded(id, this.info(id), remaining, entries);
+    }
     // A replacement is one externally visible mutation, regardless of internal truncate/append.
     this.db.prepare('UPDATE histories SET revision=?,search_revision=? WHERE id=?')
       .run(info.revision + 1, info.search_revision === info.revision ? info.revision + 1 : -1, id);
@@ -493,9 +506,9 @@ export class HistoryStore {
       ORDER BY s.start_index,e.ordinal`).all(id, shared) as EntryRow[];
     const fields = ['runId', 'modelVersion', 'usageMetadata', 'usageMetadataPartial', 'candidatesTokenCount', 'thoughtsTokenCount'];
     const messages = rows.map(row => {
-      const body = this.objects.getValue<Record<string, unknown>>(row.body_hash, { fields, omitBinary: true });
-      const parts = body.usageMetadataPartial
-        ? this.objects.getValue<Pick<PlatformMessage, 'parts'>>(row.body_hash, { fields: ['parts'], omitBinary: true }).parts : [];
+      const body = this.objects.getValue<Record<string, unknown>>(row.body_hash, { fields, omitBinary: true },
+        header => header.usageMetadataPartial ? { fields: ['parts'] } : undefined);
+      const parts = body.usageMetadataPartial ? body.parts : [];
       return { ...body, parts: parts ?? [], role: row.role, ...(row.message_id ? { id: row.message_id } : {}),
         ...(row.timestamp !== null ? { timestamp: row.timestamp } : {}) } as PlatformMessage;
     });

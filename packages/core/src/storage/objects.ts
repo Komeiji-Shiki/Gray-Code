@@ -84,8 +84,10 @@ export class ObjectStore {
     const chunks = this.db.prepare(`SELECT c.* FROM object_chunks oc JOIN chunks c ON c.hash=oc.chunk_hash
       WHERE oc.object_hash=? ORDER BY oc.ordinal`).all(hash) as ChunkRow[];
     if (chunks.length !== object.chunk_count) throw new PlatformStorageError('CORRUPT_DATA', 'Content chunks are missing.');
-    const bytes = Buffer.concat(chunks.map(chunk => this.readChunk(chunk)));
-    if (bytes.length !== object.raw_bytes || !digest(bytes).equals(hash)) {
+    const singleChunk = chunks.length === 1 ? chunks[0] : undefined;
+    const bytes = singleChunk ? this.readChunk(singleChunk) : Buffer.concat(chunks.map(chunk => this.readChunk(chunk)));
+    // 单块已在读取时校验正文，只需再核对对象与块的哈希关系；多块仍校验拼接后的整体哈希。
+    if (bytes.length !== object.raw_bytes || !(singleChunk ? singleChunk.hash.equals(hash) : digest(bytes).equals(hash))) {
       throw new PlatformStorageError('CORRUPT_DATA', 'Content checksum does not match.');
     }
     return bytes;
@@ -177,7 +179,8 @@ export class ObjectStore {
     return writeValue(transform(value, '', 0), children);
   }
 
-  getValue<T = unknown>(hash: Buffer, projection?: ValueProjection): T {
+  getValue<T = unknown>(hash: Buffer, projection?: ValueProjection,
+    additionalSelection?: (projected: T) => ValueSelection | undefined): T {
     const restore = (value: unknown, depth = 0, selection?: ValueSelection): unknown => {
       if (depth > 128) throw new PlatformStorageError('CORRUPT_DATA', 'Stored value nesting exceeds 128 levels.');
       if (value instanceof Uint8Array) return projection?.omitBinary ? new Uint8Array() : value;
@@ -215,7 +218,15 @@ export class ObjectStore {
       });
     try {
       const stored = unpack(this.get(hash));
-      const projected = restore(stored, 0, projection);
+      let projected = restore(stored, 0, projection);
+      // 用量先读标记，只有部分输出才恢复正文；补充字段复用同一次解码及 omitBinary 规则。
+      const additional = additionalSelection?.(projected as T);
+      if (additional) {
+        projected = {
+          ...(projected as Record<string, unknown>),
+          ...(restore(stored, 0, additional) as Record<string, unknown>),
+        };
+      }
       if (!projection?.paths && !projection?.mapStats) return projected as T;
       // 在存储线程内聚合旧记录的大型字典，列表只接收统计值，不复制整份文件清单。
       const expandStoredValue = (input: unknown): unknown => {
