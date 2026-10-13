@@ -1,6 +1,6 @@
 export interface DesktopBridge {
   kind?: 'desktop' | 'web';
-  call(method: string, params?: Record<string, unknown>): Promise<any>;
+  call(method: string, params?: object): Promise<any>;
   subscribe(listener: (event: Record<string, any>) => void): () => void;
 }
 
@@ -18,7 +18,7 @@ export async function desktopRpcReply<T>(operation: () => Promise<T>): Promise<D
 }
 
 /** 在页面自己的上下文中恢复异常，工具与聊天才能按原错误码处理。 */
-export async function callDesktopBridge<T = any>(bridge: DesktopBridge, method: string, params: Record<string, unknown> = {}): Promise<T> {
+export async function callDesktopBridge<T = any>(bridge: DesktopBridge, method: string, params: object = {}): Promise<T> {
   let result: DesktopRpcReply<T>;
   try {
     const value = await bridge.call(method, params);

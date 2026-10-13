@@ -10,7 +10,7 @@ ipcRenderer.on('graycode:event', (_event: Electron.IpcRendererEvent, value: Reco
 });
 contextBridge.exposeInMainWorld("graycode", {
   kind: 'desktop',
-  call: async (method: string, params: Record<string, unknown> = {}) => {
+  call: async (method: string, params: object = {}) => {
     validateRpcParams(method, params);
     // 原样传递结构化回执，不能在隔离桥内重新抛出带自定义字段的异常。
     return ipcRenderer.invoke('graycode:rpc', method, params);

@@ -2,6 +2,8 @@ import type { CharacterChatConfig } from './characters';
 
 export interface ConversationModelConfig {
   configId?: string;
+  /** 旧记录的渠道字段，分支复制保留原值，当前选择使用 configId。 */
+  channelId?: string;
   modelId?: string;
   reasoningEffort?: string;
 }

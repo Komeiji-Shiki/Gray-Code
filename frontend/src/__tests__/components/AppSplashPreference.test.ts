@@ -234,6 +234,7 @@ describe('App 开屏动画启动偏好', () => {
     runtime.sendToExtension.mockReset()
     runtime.sendToExtension.mockImplementation((type: string) => {
       if (type === 'getSettings') return settingsRequest.promise
+      if (type === 'subagents.pendingRequests') return Promise.resolve({ approvals: [], questions: [] })
       return Promise.resolve({ success: true })
     })
     runtime.onMessageFromExtension.mockReset()
@@ -256,8 +257,12 @@ describe('App 开屏动画启动偏好', () => {
     const previousHost = window.__GRAYCODE_HOST
     const focus = deferred<{ mode: string }>()
     window.__GRAYCODE_HOST = { kind: 'desktop', postMessage: vi.fn(), getState: () => ({}), setState: vi.fn() }
-    runtime.sendToExtension.mockImplementation((type: string) => type === 'ui.conversation.focus' ? focus.promise
-      : type === 'getSettings' ? settingsRequest.promise : Promise.resolve({ success: true }))
+    runtime.sendToExtension.mockImplementation((type: string) => {
+      if (type === 'ui.conversation.focus') return focus.promise
+      if (type === 'getSettings') return settingsRequest.promise
+      if (type === 'subagents.pendingRequests') return Promise.resolve({ approvals: [], questions: [] })
+      return Promise.resolve({ success: true })
+    })
     characterPresentation.mode = 'code'
     try {
       wrapper = mount(App)

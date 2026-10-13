@@ -9,14 +9,9 @@ declare global {
     graycode: DesktopBridge;
   }
 }
-export function call<T = any>(method: string, params: Record<string, unknown> = {}): Promise<T> {
+export function call<T = any>(method: string, params: object = {}): Promise<T> {
   if (!window.graycode) return Promise.reject(new Error(t('uiapiDesktopAppRequired')));
   // 代理只复制相关分支；普通文档和附件参数继续直接传输。
-  if (method === 'files.upload' && 'bytes' in params && params.bytes instanceof Uint8Array) {
-    const { bytes, ...fields } = params;
-    const prepared = prepareHostPayload(fields, toRaw);
-    return callDesktopBridge<T>(window.graycode, method, { ...prepared, bytes });
-  }
   const payload = prepareHostPayload(params, toRaw);
   return callDesktopBridge<T>(window.graycode, method, payload);
 }

@@ -13,7 +13,11 @@
  * 不依赖任何服务实例，便于单测与复用（SummarizeService、SubAgent 也直接引用）。
  */
 
-import type { BaseChannelConfig, ModelInfo } from '../../../../config/configs/base';
+import type { ChannelConfigDTO } from '../../../../../../packages/contracts/src/channels';
+import type { ModelInfo } from '../../../../config/configs/base';
+
+/** 预算计算只消费模型与额度字段，界面草稿无需补齐持久化时间戳。 */
+type ContextWindowConfig = Pick<ChannelConfigDTO, 'type' | 'maxContextTokens' | 'model' | 'models' | 'options' | 'optionsEnabled'>;
 
 export const DEFAULT_MAX_CONTEXT_TOKENS = 256000;
 
@@ -44,50 +48,44 @@ function normalizePositiveTokenValue(value: unknown): number | undefined {
     return Math.floor(numericValue);
 }
 
-function resolveCandidateModelId(config: BaseChannelConfig, modelOverride?: string): string {
+function resolveCandidateModelId(config: ContextWindowConfig, modelOverride?: string): string {
     if (typeof modelOverride === 'string' && modelOverride.trim()) return modelOverride.trim();
-    const configModel = (config as { model?: unknown }).model;
+    const configModel = config.model;
     return typeof configModel === 'string' && configModel.trim() ? configModel.trim() : '';
 }
 
-function resolveModelInfo(config: BaseChannelConfig, modelOverride?: string): ModelInfo | undefined {
+function resolveModelInfo(config: ContextWindowConfig, modelOverride?: string): ModelInfo | undefined {
     const candidateModelId = resolveCandidateModelId(config, modelOverride);
     if (!candidateModelId) return undefined;
-    const modelList = Array.isArray((config as { models?: unknown }).models)
-        ? ((config as { models?: ModelInfo[] }).models as ModelInfo[])
-        : [];
+    const modelList = config.models ?? [];
     return modelList.find(model => model?.id === candidateModelId);
 }
 
 /** 读取当前渠道真正会发送的显式最大输出 token 配置。 */
-function resolveConfiguredOutputTokens(config: BaseChannelConfig): number | undefined {
-    const options = (config as { options?: Record<string, unknown> }).options;
-    const optionsEnabled = (config as { optionsEnabled?: Record<string, unknown> }).optionsEnabled;
+function resolveConfiguredOutputTokens(config: ContextWindowConfig): number | undefined {
+    const options = config.options;
+    const optionsEnabled = config.optionsEnabled;
     if (!options || !optionsEnabled) return undefined;
 
-    let enabledKey: string;
-    let valueKey: string;
+    let key: 'maxOutputTokens' | 'max_tokens' | 'max_output_tokens';
     switch (config.type) {
         case 'gemini':
         case 'gemini-interactions':
-            enabledKey = 'maxOutputTokens';
-            valueKey = 'maxOutputTokens';
+            key = 'maxOutputTokens';
             break;
         case 'openai':
         case 'anthropic':
-            enabledKey = 'max_tokens';
-            valueKey = 'max_tokens';
+            key = 'max_tokens';
             break;
         case 'openai-responses':
-            enabledKey = 'max_output_tokens';
-            valueKey = 'max_output_tokens';
+            key = 'max_output_tokens';
             break;
         default:
             return undefined;
     }
 
-    if (optionsEnabled[enabledKey] !== true) return undefined;
-    return normalizePositiveTokenValue(options[valueKey]);
+    if (optionsEnabled[key] !== true) return undefined;
+    return normalizePositiveTokenValue(options[key]);
 }
 
 /**
@@ -95,7 +93,7 @@ function resolveConfiguredOutputTokens(config: BaseChannelConfig): number | unde
  * OpenAI-compatible/OpenAI Responses/Anthropic 的 context window 通常是输入+输出组合窗口。
  * 模型条目可以显式覆盖该判断，供第三方模型列表适配。
  */
-function resolveContextWindowIncludesOutput(config: BaseChannelConfig, modelInfo?: ModelInfo): boolean {
+function resolveContextWindowIncludesOutput(config: ContextWindowConfig, modelInfo?: ModelInfo): boolean {
     if (typeof modelInfo?.contextWindowIncludesOutput === 'boolean') {
         return modelInfo.contextWindowIncludesOutput;
     }
@@ -105,7 +103,7 @@ function resolveContextWindowIncludesOutput(config: BaseChannelConfig, modelInfo
 }
 
 function buildResolution(
-    config: BaseChannelConfig,
+    config: ContextWindowConfig,
     maxContextTokens: number,
     source: ContextWindowSource,
     modelInfo?: ModelInfo,
@@ -137,7 +135,7 @@ function buildResolution(
 
 /** 返回当前实际选择模型声明的窗口；未能识别模型时不把渠道显示上限伪装成模型硬边界。 */
 export function resolveModelContextWindowForConfig(
-    config: BaseChannelConfig,
+    config: ContextWindowConfig,
     modelOverride?: string
 ): MaxContextResolution | undefined {
     const candidateModelId = resolveCandidateModelId(config, modelOverride);
@@ -150,7 +148,7 @@ export function resolveModelContextWindowForConfig(
 
 /** 解析上下文管理的窗口与输入预算：显式渠道上限优先，模型窗口和默认值依次回退。 */
 export function resolveMaxContextTokensForConfig(
-    config: BaseChannelConfig,
+    config: ContextWindowConfig,
     modelOverride?: string
 ): MaxContextResolution {
     const configuredMax = normalizePositiveTokenValue(config.maxContextTokens);
@@ -168,7 +166,7 @@ export function resolveMaxContextTokensForConfig(
 
 /** 仅解析当前渠道/模型可用的最大输出预留，供需要单独展示预算的调用方使用。 */
 export function resolveMaxOutputTokensForConfig(
-    config: BaseChannelConfig,
+    config: ContextWindowConfig,
     modelOverride?: string
 ): number | undefined {
     return resolveMaxContextTokensForConfig(config, modelOverride).maxOutputTokens;

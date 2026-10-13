@@ -75,10 +75,10 @@ describe('主对话中的子代理待处理请求', () => {
     expect(mock.send).toHaveBeenLastCalledWith('subagents.pendingRequests', { conversationId: 'other' })
   })
 
-  test('宿主返回不完整的结果时不显示面板，也不抛出错误', async () => {
-    mock.send.mockResolvedValue(undefined)
+  test('列表读取失败保留错误供用户处理', async () => {
+    mock.send.mockRejectedValue(new Error('连接已断开'))
     wrapper = mount(SubAgentPendingRequests, { props: { conversationId: 'main' } })
     await flushPromises()
-    expect(wrapper.find('.subagent-pending').exists()).toBe(false)
+    expect(wrapper.get('[role="alert"]').text()).toBe('连接已断开')
   })
 })

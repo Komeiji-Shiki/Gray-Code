@@ -21,20 +21,6 @@ export function shouldShowToolArgumentPreview(tool: ToolUsage): boolean {
 
 /** 预览只保留最近的参数片段；完整参数仍由工具状态保存，避免长文件逐批解码和布局累计全文。 */
 export function toolArgumentPreviewText(text: string): string {
-  let start = Math.max(0, text.length - 4096)
-  if (start === 0) return decodeUnicodeEscapes(text)
-
-  // 裁剪点越过被截断的 Unicode 转义及反斜杠串，避免把字面量转义误当成新转义。
-  const beforeStart = text.slice(Math.max(0, start - 5), start)
-  const slash = beforeStart.lastIndexOf('\\')
-  if (slash >= 0) {
-    const escapeStart = start - beforeStart.length + slash
-    if (/^\\u[0-9a-fA-F]{4}$/.test(text.slice(escapeStart, escapeStart + 6))) start = escapeStart + 6
-  }
-  while (text[start] === '\\') start++
-  if (text[start - 1] === '\\' && /^u[0-9a-fA-F]{4}/.test(text.slice(start, start + 5))) start += 5
-  if (text.charCodeAt(start) >= 0xdc00 && text.charCodeAt(start) <= 0xdfff) start++
-  const tail = decodeUnicodeEscapes(text.slice(start))
-  // 转义代理对也可能跨过裁剪点，只丢弃孤立的低代理位。
-  return '…\n' + (tail.charCodeAt(0) >= 0xdc00 && tail.charCodeAt(0) <= 0xdfff ? tail.slice(1) : tail)
+  const truncated = text.length > 4096
+  return (truncated ? '…\n' : '') + decodeUnicodeEscapes(truncated ? text.slice(-4096) : text)
 }
