@@ -111,11 +111,11 @@ const tabGroups = computed<TabGroup[]>(() => [
     { id: 'checkpoint', label: t('components.settings.tabs.checkpoint'), icon: 'codicon-history' },
   ] },
   ...(isDesktopHost ? [{ id: 'connections', label: t('components.settings.settingsPanel.groups.connections'), tabs: [
-    { id: 'workspaces' as const, label: '工作区', icon: 'codicon-folder' },
-    { id: 'remote' as const, label: '远程连接', icon: 'codicon-remote' },
+    { id: 'workspaces' as const, label: t('desktop.settingsSearch.workspaces'), icon: 'codicon-folder' },
+    { id: 'remote' as const, label: t('desktop.settingsSearch.remote'), icon: 'codicon-remote' },
     { id: 'discord' as const, label: 'Discord Bot', icon: 'codicon-comment-discussion' },
     { id: 'onebot' as const, label: 'NapCat / OneBot', icon: 'codicon-radio-tower' },
-    { id: 'accounts' as const, label: '账号与授权', icon: 'codicon-account' },
+    { id: 'accounts' as const, label: t('desktop.settingsSearch.accounts'), icon: 'codicon-account' },
     { id: 'clawd' as const, label: 'Clawd', icon: 'codicon-link' },
   ] }] : []),
   { id: 'application', label: t('components.settings.settingsPanel.groups.application'), tabs: [

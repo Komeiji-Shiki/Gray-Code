@@ -1,0 +1,38 @@
+export default {
+    "title": "Code completion and diagnostics",
+    "description": "Services start for the file language when you open a file. Completion, navigation and diagnostics use unsaved " +
+        "edits. Bundled services are included; other services must be installed on the computer running the project.",
+    "services": "Language services",
+    "checking": "Checking…",
+    "recheck": "Check again",
+    "customConfig": "Using custom configuration",
+    "disabled": "Disabled",
+    "bundled": "Available in bundle",
+    "detected": "Detected",
+    "requiresInstall": "Installation required",
+    "documentation": "Installation and configuration",
+    "configure": "Customize paths and arguments",
+    "customTitle": "Custom language service",
+    "addService": "Add service",
+    "customDescription": "Add configuration here to use another program or launch arguments. Use standard language identifiers, such as " +
+        "python, go and vue. Services for the same language follow this list's order; a matching ID replaces the " +
+        "default service.",
+    "removeService": "Remove service",
+    "namePlaceholder": "For example: Project Python service",
+    "id": "Unique ID",
+    "idPlaceholder": "For example: project-python",
+    "languages": "Language identifiers",
+    "languagesPlaceholder": "Comma separated, for example python",
+    "commandPlaceholder": "Program name or full path",
+    "arguments": "Launch arguments",
+    "argumentLabel": "{name} argument {index}",
+    "argumentPlaceholder": "One argument per item, for example --stdio",
+    "removeArgument": "Remove argument",
+    "addArgument": "Add argument",
+    "initializationOptions": "Initialization options (JSON object)",
+    "settings": "Service settings (JSON object)",
+    "invalidJson": "{field} contains invalid JSON. Check double quotes and commas.",
+    "expectedObject": "{field} must be a JSON object.",
+    "initializationField": "{name} initialization options",
+    "settingsField": "{name} service settings"
+};

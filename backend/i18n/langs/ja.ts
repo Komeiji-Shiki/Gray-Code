@@ -1,5 +1,6 @@
 import desktopWorkspaceUi from './ja/desktopWorkspaceUi';
 import inputUi from './ja/inputUi';
+import developmentUi from './ja/developmentUi';
 import desktopAutomationUi from './ja/desktopAutomationUi';
 import desktopBrowserUi from './ja/desktopBrowserUi';
 import desktopEditorUi from './ja/desktopEditorUi';
@@ -29,6 +30,7 @@ import desktopMaintenance from './ja/desktopMaintenance';
 const ja: BackendLanguageMessages = {
     desktop: {
         inputUi,
+        developmentUi,
         settingsSearch: {
             languageServices: 'コード補完と言語サービス',
             desktopEditor: '既定のコードエディターとファイルの関連付け',

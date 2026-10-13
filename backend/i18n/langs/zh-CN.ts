@@ -1,5 +1,6 @@
 import desktopWorkspaceUi from './zh-CN/desktopWorkspaceUi';
 import inputUi from './zh-CN/inputUi';
+import developmentUi from './zh-CN/developmentUi';
 import desktopAutomationUi from './zh-CN/desktopAutomationUi';
 import desktopBrowserUi from './zh-CN/desktopBrowserUi';
 import desktopEditorUi from './zh-CN/desktopEditorUi';
@@ -32,6 +33,7 @@ import desktopMaintenance from './zh-CN/desktopMaintenance';
 const zhCN = {
     desktop: {
         inputUi,
+        developmentUi,
         settingsSearch: {
             languageServices: '代码补全与语言服务',
             desktopEditor: '默认代码编辑器与文件关联',

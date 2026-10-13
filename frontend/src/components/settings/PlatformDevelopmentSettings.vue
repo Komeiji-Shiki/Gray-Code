@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { nextTick, onMounted, ref } from 'vue';
+import { t } from '../../i18n';
 import type { DevelopmentSettings, LanguageServerDefinition, LanguageServiceInfo } from '@graycode/contracts';
 import { sendToExtension } from '../../utils/vscode';
 import { markDesktopSettingsDirty, useDesktopSettingsDraft } from '../../platform/settingsDraft';
@@ -30,7 +31,7 @@ function draft(server: LanguageServerDefinition): ServerDraft {
 function addServer() {
   let number = 1;
   while (disabled.value.includes('custom-' + number) || custom.value.some(server => server.id === 'custom-' + number || server.key === 'custom-' + number)) number++;
-  const server = draft({ id: 'custom-' + number, name: '自定义语言服务', languages: [], command: '', args: [] });
+  const server = draft({ id: 'custom-' + number, name: t('desktop.developmentUi.customTitle'), languages: [], command: '', args: [] });
   custom.value.push(server); void focusServer(server.key);
   markDesktopSettingsDirty();
 }
@@ -58,8 +59,8 @@ function object(text: string, name: string): Record<string, unknown> | undefined
   if (!text.trim()) return undefined;
   let value: unknown;
   try { value = JSON.parse(text); }
-  catch { throw new Error(name + '的 JSON 格式不正确，请检查双引号和逗号。'); }
-  if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error(name + '必须是 JSON 对象。');
+  catch { throw new Error(t('desktop.developmentUi.invalidJson', { field: name })); }
+  if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error(t('desktop.developmentUi.expectedObject', { field: name }));
   return value as Record<string, unknown>;
 }
 async function save() {
@@ -67,7 +68,8 @@ async function save() {
   for (const server of custom.value) server.enabled ? disabledIds.delete(server.id) : disabledIds.add(server.id);
   const languageServers = custom.value.map(({ key, enabled, languageText, optionsText, settingsText, ...server }) => ({ ...server,
     languages: [...new Set(languageText.split(',').map(value => value.trim()).filter(Boolean))],
-    initializationOptions: object(optionsText, server.name + '的初始化选项'), settings: object(settingsText, server.name + '的服务设置'),
+    initializationOptions: object(optionsText, t('desktop.developmentUi.initializationField', { name: server.name })),
+    settings: object(settingsText, t('desktop.developmentUi.settingsField', { name: server.name })),
   }));
   await sendToExtension('platform.development.update', { settings: { ...settings.value, languageServers, disabledLanguageServers: [...disabledIds] } });
 }
@@ -76,6 +78,12 @@ async function refreshServices(refresh = true) {
   try { services.value = await sendToExtension<LanguageServiceInfo[]>('platform.development.list', { refresh }); error.value = ''; }
   catch (failure) { error.value = String(failure); }
   finally { refreshing.value = false; }
+}
+function serviceStatus(service: LanguageServiceInfo): string {
+  if (custom.value.some(item => item.id === service.id)) return t('desktop.developmentUi.customConfig');
+  if (!isEnabled(service.id)) return t('desktop.developmentUi.disabled');
+  if (!service.available) return t('desktop.developmentUi.requiresInstall');
+  return t(service.source === 'bundled' ? 'desktop.developmentUi.bundled' : 'desktop.developmentUi.detected');
 }
 useDesktopSettingsDraft(save, () => ready.value);
 onMounted(async () => {
@@ -91,39 +99,91 @@ onMounted(async () => {
 </script>
 <template>
   <section ref="section" class="development-settings" data-search-anchor="language-services" :aria-busy="loading">
-    <h4>代码补全与报错提示</h4>
-    <p>打开文件时按语言启动服务，补全、跳转与报错提示会使用尚未保存的编辑内容。内置服务随程序提供，其他服务需要安装在执行项目的电脑上。</p>
-    <div class="service-toolbar"><span>语言服务</span><button type="button" :disabled="loading || refreshing" @click="refreshServices()">{{ refreshing ? '正在检测…' : '重新检测' }}</button></div>
+    <h4>{{ t('desktop.developmentUi.title') }}</h4>
+    <p>{{ t('desktop.developmentUi.description') }}</p>
+    <div class="service-toolbar">
+      <span>{{ t('desktop.developmentUi.services') }}</span>
+      <button type="button" :disabled="loading || refreshing" @click="refreshServices()">
+        {{ t(refreshing ? 'desktop.developmentUi.checking' : 'desktop.developmentUi.recheck') }}
+      </button>
+    </div>
     <div class="service-list">
       <article v-for="service in services" :key="service.id" class="service-row">
         <div class="service-heading">
           <label><input type="checkbox" :checked="isEnabled(service.id)" :disabled="loading || custom.some(item => item.id === service.id)" @change="toggle(service.id, $event)" /><strong>{{ service.name }}</strong></label>
-          <span class="service-status" :class="{ available: service.available && isEnabled(service.id) }">{{ custom.some(item => item.id === service.id) ? '使用自定义配置' : !isEnabled(service.id) ? '已停用' : service.available ? service.source === 'bundled' ? '内置可用' : '已检测到' : '需要安装' }}</span>
+          <span class="service-status" :class="{ available: service.available && isEnabled(service.id) }">{{ serviceStatus(service) }}</span>
         </div>
         <p>{{ service.languages.join(' · ') }}</p>
         <p v-if="service.requirement">{{ service.requirement }}</p>
         <p v-if="service.source === 'system' && service.available" class="service-command">{{ service.command }}</p>
-        <a v-if="service.documentationUrl" :href="service.documentationUrl" target="_blank" rel="noopener noreferrer">安装与配置说明</a>
-        <button v-if="service.configurationTemplate" type="button" class="configure-service" :disabled="loading || custom.some(item => item.id === service.id)" @click="configureService(service)">自定义路径与参数</button>
+        <a v-if="service.documentationUrl" :href="service.documentationUrl" target="_blank" rel="noopener noreferrer">
+          {{ t('desktop.developmentUi.documentation') }}
+        </a>
+        <button
+          v-if="service.configurationTemplate" type="button" class="configure-service"
+          :disabled="loading || custom.some(item => item.id === service.id)" @click="configureService(service)"
+        >{{ t('desktop.developmentUi.configure') }}</button>
       </article>
     </div>
-    <div class="service-toolbar"><span>自定义语言服务</span><button type="button" :disabled="loading" @click="addServer">添加服务</button></div>
-    <p>需要指定其他程序或启动参数时，在这里添加配置。语言使用标准标识，例如 python、go、vue；相同标识的服务按此列表优先匹配，同名 id 会替换默认服务。</p>
+    <div class="service-toolbar">
+      <span>{{ t('desktop.developmentUi.customTitle') }}</span>
+      <button type="button" :disabled="loading" @click="addServer">{{ t('desktop.developmentUi.addService') }}</button>
+    </div>
+    <p>{{ t('desktop.developmentUi.customDescription') }}</p>
     <article v-for="(server, index) in custom" :key="server.key" :data-server-key="server.key" class="custom-server">
-      <div class="service-heading"><label><input v-model="server.enabled" type="checkbox" />启用</label><div class="custom-controls"><button type="button" :disabled="index === 0" @click="moveServer(index, -1)">上移</button><button type="button" :disabled="index === custom.length - 1" @click="moveServer(index, 1)">下移</button><button type="button" @click="removeServer(index)">移除服务</button></div></div>
+      <div class="service-heading">
+        <label><input v-model="server.enabled" type="checkbox" />{{ t('common.enable') }}</label>
+        <div class="custom-controls">
+          <button type="button" :disabled="index === 0" @click="moveServer(index, -1)">
+            {{ t('components.settings.promptSettings.entriesEditor.moveUp') }}
+          </button>
+          <button type="button" :disabled="index === custom.length - 1" @click="moveServer(index, 1)">
+            {{ t('components.settings.promptSettings.entriesEditor.moveDown') }}
+          </button>
+          <button type="button" @click="removeServer(index)">{{ t('desktop.developmentUi.removeService') }}</button>
+        </div>
+      </div>
       <p v-if="services.find(item => item.id === server.key)?.requirement">{{ services.find(item => item.id === server.key)?.requirement }}</p>
       <div class="custom-fields">
-        <label>名称<input v-model="server.name" placeholder="例如：项目 Python 服务" /></label>
-        <label>唯一标识<input v-model="server.id" placeholder="例如：project-python" spellcheck="false" /></label>
-        <label>语言标识<input v-model="server.languageText" placeholder="使用逗号分隔，例如 python" spellcheck="false" /></label>
-        <label>启动程序<input v-model="server.command" data-language-command placeholder="程序名称或完整路径" spellcheck="false" /></label>
+        <label>{{ t('common.name') }}<input v-model="server.name" :placeholder="t('desktop.developmentUi.namePlaceholder')" /></label>
+        <label>
+          {{ t('desktop.developmentUi.id') }}
+          <input v-model="server.id" :placeholder="t('desktop.developmentUi.idPlaceholder')" spellcheck="false" />
+        </label>
+        <label>
+          {{ t('desktop.developmentUi.languages') }}
+          <input v-model="server.languageText" :placeholder="t('desktop.developmentUi.languagesPlaceholder')" spellcheck="false" />
+        </label>
+        <label>
+          {{ t('desktop.developmentUi.command') }}
+          <input v-model="server.command" data-language-command :placeholder="t('desktop.developmentUi.commandPlaceholder')" spellcheck="false" />
+        </label>
       </div>
       <div class="argument-list">
-        <span>启动参数</span>
-        <div v-for="(_, argumentIndex) in server.args" :key="argumentIndex" class="argument-row"><input v-model="server.args[argumentIndex]" :aria-label="server.name + ' 参数 ' + (argumentIndex + 1)" placeholder="每项填写一个参数，例如 --stdio" spellcheck="false" /><button type="button" @click="removeArgument(server, argumentIndex)" aria-label="移除参数">移除</button></div>
-        <button type="button" @click="addArgument(server)">添加参数</button>
+        <span>{{ t('desktop.developmentUi.arguments') }}</span>
+        <div v-for="(_, argumentIndex) in server.args" :key="argumentIndex" class="argument-row">
+          <input
+            v-model="server.args[argumentIndex]"
+            :aria-label="t('desktop.developmentUi.argumentLabel', { name: server.name, index: argumentIndex + 1 })"
+            :placeholder="t('desktop.developmentUi.argumentPlaceholder')" spellcheck="false"
+          />
+          <button type="button" @click="removeArgument(server, argumentIndex)" :aria-label="t('desktop.developmentUi.removeArgument')">
+            {{ t('common.remove') }}
+          </button>
+        </div>
+        <button type="button" @click="addArgument(server)">{{ t('desktop.developmentUi.addArgument') }}</button>
       </div>
-      <details><summary>高级选项</summary><label>初始化选项（JSON 对象）<textarea v-model="server.optionsText" spellcheck="false" rows="4"></textarea></label><label>服务设置（JSON 对象）<textarea v-model="server.settingsText" spellcheck="false" rows="4"></textarea></label></details>
+      <details>
+        <summary>{{ t('components.settings.channelSettings.form.advancedOptions.title') }}</summary>
+        <label>
+          {{ t('desktop.developmentUi.initializationOptions') }}
+          <textarea v-model="server.optionsText" spellcheck="false" rows="4"></textarea>
+        </label>
+        <label>
+          {{ t('desktop.developmentUi.settings') }}
+          <textarea v-model="server.settingsText" spellcheck="false" rows="4"></textarea>
+        </label>
+      </details>
     </article>
     <p v-if="error" class="development-error" role="alert">{{ error }}</p>
     <DebugAdapterSettings v-model="settings.debugAdapters" :disabled="loading || !ready" />

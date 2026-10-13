@@ -1,5 +1,6 @@
 import desktopWorkspaceUi from './en/desktopWorkspaceUi';
 import inputUi from './en/inputUi';
+import developmentUi from './en/developmentUi';
 import desktopAutomationUi from './en/desktopAutomationUi';
 import desktopBrowserUi from './en/desktopBrowserUi';
 import desktopEditorUi from './en/desktopEditorUi';
@@ -29,6 +30,7 @@ import desktopMaintenance from './en/desktopMaintenance';
 const en: BackendLanguageMessages = {
     desktop: {
         inputUi,
+        developmentUi,
         settingsSearch: {
             languageServices: 'Code completion and language services',
             desktopEditor: 'Default code editor and file associations',

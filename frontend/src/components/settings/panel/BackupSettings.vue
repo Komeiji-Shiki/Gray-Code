@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { sendToExtension, onExtensionCommand } from '@/utils/vscode'
+import { t } from '@/i18n'
 import BackupRestorePreview from './BackupRestorePreview.vue'
 import type { BackupProgress, PendingBackupRestore, BackupRestoreSelection } from '@graycode/contracts'
 
@@ -40,7 +41,7 @@ async function revealPrevious() {
 
 <template>
   <section class="backup-settings form-group" data-search-anchor="backup" data-preference-transient>
-    <label class="group-label"><i class="codicon codicon-database"></i>程序数据备份</label>
+    <label class="group-label"><i class="codicon codicon-database"></i>{{ t('desktop.settingsSearch.backup') }}</label>
     <p class="field-description">备份对话、附件、分支与检查点、任务记录、设置、角色、记忆、本地技能、设备配置和桌宠资源。项目源码保留在项目目录，不随备份复制。</p>
     <div class="backup-controls">
       <label for="backup-password">备份密码 <span>可选</span></label>

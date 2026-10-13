@@ -912,7 +912,9 @@ useDesktopSettingsDraft(saveConfig, () => !isLoading.value)
       />
 
       <div class="template-section entries-section" data-search-anchor="prompt-entries">
-        <div class="section-header"><label class="section-label"><i class="codicon codicon-list-tree"></i>预设提示词条目</label></div>
+        <div class="section-header">
+          <label class="section-label"><i class="codicon codicon-list-tree"></i>{{ t('desktop.settingsSearch.promptEntries') }}</label>
+        </div>
         <p class="section-description">按条目顺序装配提示词。Chat History 表示历史记录插入点；它后面的条目位于当前用户消息之前。旧回合的动态上下文保留在原位置。</p>
         <PromptEntriesEditor v-model="promptEntries" :static-modules="STATIC_PROMPT_MODULES" :dynamic-modules="DYNAMIC_CONTEXT_MODULES" />
       </div>
