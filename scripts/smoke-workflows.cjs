@@ -141,6 +141,7 @@ async function runCompanionWorkflow({ window, rpc, evaluate, chat, until, output
   } });
   const conversationId = created.conversationId;
   const pictures = [];
+  const closeStates = [];
   const steps = ['character', 'pet', 'screen', 'greeting'];
   await evaluate(`window.__workflowConversationId = '';
     window.graycode.subscribe(event => {
@@ -165,8 +166,27 @@ async function runCompanionWorkflow({ window, rpc, evaluate, chat, until, output
     document.querySelector('.companion-step[data-step="${step}"]').scrollIntoView({ block: 'start' });`);
   }
   async function closeSetup() {
+    const closeState = () => evaluate(`(() => {
+      const panel = document.querySelector('.companion-setup');
+      return { open: !!panel, unsaved: panel?.dataset.unsaved === 'true',
+        busy: panel?.querySelector('header button')?.disabled === true,
+        leaveConfirmation: !!document.querySelector('.companion-leave') };
+    })()`);
+    const before = await closeState();
+    let ready = before;
+    // 后端提交与界面回执各有完成时点，必须等所有分段都已保存且按钮可用。
+    await until(async () => {
+      ready = await closeState();
+      assert(!ready.leaveConfirmation, 'Companion unexpectedly requested confirmation before closing.');
+      return ready.open && !ready.unsaved && !ready.busy;
+    }, 'companion saved and close ready');
     await evaluate('document.querySelector(".companion-setup > header button").click()');
-    await until(() => evaluate('!document.querySelector(".companion-setup")'), 'companion closed');
+    await until(async () => {
+      const current = await closeState();
+      assert(!current.leaveConfirmation, `Companion opened an unsaved-changes confirmation: ${JSON.stringify(current)}`);
+      return !current.open;
+    }, 'companion closed');
+    closeStates.push({ before, ready, leaveConfirmation: false });
   }
   async function sendVocabularyMessage(label) {
     const before = getRequests().length;
@@ -226,7 +246,6 @@ async function runCompanionWorkflow({ window, rpc, evaluate, chat, until, output
     await until(async () => (await rpc('companion.get', { conversationId })).metadataToken !== view.metadataToken,
       'save current companion through UI');
     assert(await evaluate('!!document.querySelector(".companion-setup")'), 'Saving must retain the companion workflow.');
-    await until(() => evaluate('!document.querySelector(".companion-setup > header button").disabled'), 'companion save completed');
     await closeSetup();
     const unsynced = await sendVocabularyMessage('unsynced');
     assert.equal(companionPrefix(unsynced), previousPrefix);
@@ -294,7 +313,7 @@ async function runCompanionWorkflow({ window, rpc, evaluate, chat, until, output
       'stopped screen state rendered');
     pictures.push(await screenshot(window, output, 'companion-screen-stopped.png'));
     await closeSetup();
-    return { conversationId, initialStatuses, screenshots: pictures, modelRequests: 3,
+    return { conversationId, initialStatuses, screenshots: pictures, closeStates, modelRequests: 3,
       vocabularyPreservedUntilExplicitSync: true, messageHistoryRetained: true, toolCatalogRetained: true, companionSaveStaysOpen: true,
       automaticScreenStartDefault: false, automaticScreenStartAndStop: true, screenCaptures: 0 };
   } finally {

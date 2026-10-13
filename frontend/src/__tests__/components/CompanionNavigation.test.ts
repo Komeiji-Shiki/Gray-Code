@@ -42,6 +42,7 @@ async function open(component: typeof CompanionSetup | typeof CharacterSetup) { 
 
 test('陪伴配置打开记忆前先关闭原模态窗口', async () => {
   const wrapper = await open(CompanionSetup);
+  expect(wrapper.find('.companion-setup').attributes('data-unsaved')).toBe('false');
   expect(wrapper.findAll('.companion-step').map(step => step.attributes('data-step')))
     .toEqual(['character', 'pet', 'screen', 'greeting']);
   expect(wrapper.findAll('.companion-step-status').map(status => status.text()))
@@ -51,6 +52,7 @@ test('陪伴配置打开记忆前先关闭原模态窗口', async () => {
 });
 test('陪伴配置跳转时保护草稿，并记住原来的跳转目标', async () => {
   const wrapper = await open(CompanionSetup); await wrapper.find('textarea').setValue('新的交流偏好');
+  expect(wrapper.find('.companion-setup').attributes('data-unsaved')).toBe('true');
   await button(wrapper, '定时提醒与自动任务').trigger('click'); expect(wrapper.emitted('reminders')).toBeUndefined();
   await button(wrapper, '保留编辑').trigger('click'); expect(wrapper.find('textarea').element.value).toBe('新的交流偏好');
   await button(wrapper, '定时提醒与自动任务').trigger('click'); await button(wrapper, '放弃更改并继续').trigger('click');

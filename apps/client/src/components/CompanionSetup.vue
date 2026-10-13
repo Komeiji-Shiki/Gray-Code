@@ -173,7 +173,7 @@ onBeforeUnmount(() => { disposed = true; });
 </script>
 
 <template>
-  <dialog ref="dialog" class="companion-setup" aria-labelledby="companion-title" @cancel.prevent="requestClose()">
+  <dialog ref="dialog" class="companion-setup" :data-unsaved="dirty" aria-labelledby="companion-title" @cancel.prevent="requestClose()">
     <header>
       <div>
         <h2 id="companion-title">{{ t('companionTitle') }}</h2>
