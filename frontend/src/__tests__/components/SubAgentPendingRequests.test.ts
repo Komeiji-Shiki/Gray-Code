@@ -16,6 +16,31 @@ describe('主对话中的子代理待处理请求', () => {
   beforeEach(() => { vi.useFakeTimers(); mock.send.mockReset() })
   afterEach(() => { wrapper?.unmount(); wrapper = undefined; vi.useRealTimers() })
 
+  test('每条请求独立提交，切换对话后忽略旧请求失败', async () => {
+    let rejectFirst!: (error: Error) => void
+    let resolveSecond!: (value: unknown) => void
+    mock.send.mockImplementation((type: string, data: any) => {
+      if (type === 'subagents.pendingRequests') {
+        return Promise.resolve({ approvals: data.conversationId === 'main' ? [approval('a'), approval('b')] : [], questions: [] })
+      }
+      return data.id === 'a' ? new Promise((_, reject) => { rejectFirst = reject })
+        : new Promise(resolve => { resolveSecond = resolve })
+    })
+    wrapper = mount(SubAgentPendingRequests, { props: { conversationId: 'main' } })
+    await flushPromises()
+    const buttons = wrapper.findAll('button').filter(button => button.text() === '允许执行')
+    await buttons[0].trigger('click')
+    expect(buttons[0].attributes('disabled')).toBeDefined()
+    expect(buttons[1].attributes('disabled')).toBeUndefined()
+    await buttons[1].trigger('click')
+    expect(mock.send.mock.calls.filter(([type]) => type === 'subagents.resolveApproval')).toHaveLength(2)
+    await wrapper.setProps({ conversationId: 'other' })
+    rejectFirst(new Error('旧请求错误'))
+    resolveSecond({ success: true })
+    await flushPromises()
+    expect(wrapper.find('.subagent-pending').exists()).toBe(false)
+  })
+
   test('显示等待确认的删除文件请求，点击允许后提交审批并刷新列表', async () => {
     let pending = [approval('a')]
     mock.send.mockImplementation(async (type: string) => type === 'subagents.pendingRequests' ? { approvals: pending, questions: [] } : { success: true })

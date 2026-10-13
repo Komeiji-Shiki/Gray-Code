@@ -15,7 +15,8 @@ const props = defineProps<{ conversationId: string | null }>();
 const approvals = ref<Approval[]>([]);
 const questions = ref<Question[]>([]);
 const answers = ref<Record<string, string[]>>({});
-const busy = ref('');
+const busy = ref(new Set<string>());
+const requestErrors = ref(new Map<string, string>());
 const error = ref('');
 let epoch = 0;
 let disposed = false;
@@ -55,22 +56,26 @@ function summary(approval: Approval): string {
 }
 
 async function submit(request: Approval | Question, accepted?: boolean, choiceId?: string) {
-  if (busy.value) return;
-  busy.value = request.id; error.value = '';
+  if (busy.value.has(request.id)) return;
+  const conversationId = props.conversationId;
+  busy.value.add(request.id);
+  requestErrors.value.delete(request.id);
   try {
     if (accepted === undefined) {
       await sendToExtension('subagents.answerQuestion', { runId: request.subagentRunId, id: request.id, answers: answers.value[request.id] });
     } else {
       await sendToExtension('subagents.resolveApproval', { runId: request.subagentRunId, id: request.id, accepted, choiceId });
     }
-    await refresh();
-  } catch (cause) { if (!disposed) error.value = (cause as Error).message; }
-  finally { busy.value = ''; }
+    if (!disposed && props.conversationId === conversationId) await refresh();
+  } catch (cause) {
+    if (!disposed && props.conversationId === conversationId) requestErrors.value.set(request.id, (cause as Error).message);
+  } finally { busy.value.delete(request.id); }
 }
 
 watch(() => props.conversationId, () => {
   // 等待新对话的列表期间不能继续展示或提交旧对话的请求。
   approvals.value = []; questions.value = []; error.value = '';
+  answers.value = {}; requestErrors.value.clear();
   void refresh();
 }, { immediate: true });
 
@@ -92,13 +97,14 @@ onBeforeUnmount(() => { disposed = true; epoch++; if (timer) clearTimeout(timer)
       </header>
       <pre>{{ summary(approval) }}</pre>
       <footer v-if="approval.choices?.length">
-        <button v-for="choice in approval.choices" :key="choice.id" type="button" :disabled="!!busy"
+        <button v-for="choice in approval.choices" :key="choice.id" type="button" :disabled="busy.has(approval.id)"
           :class="{ primary: choice.kind === 'allow_once' }" @click="submit(approval, choice.kind.startsWith('allow'), choice.id)">{{ choice.label }}</button>
       </footer>
       <footer v-else>
-        <button type="button" :disabled="!!busy" @click="submit(approval, false)">拒绝</button>
-        <button type="button" class="primary" :disabled="!!busy" :aria-busy="busy === approval.id" @click="submit(approval, true)">允许执行</button>
+        <button type="button" :disabled="busy.has(approval.id)" @click="submit(approval, false)">拒绝</button>
+        <button type="button" class="primary" :disabled="busy.has(approval.id)" :aria-busy="busy.has(approval.id)" @click="submit(approval, true)">允许执行</button>
       </footer>
+      <p v-if="requestErrors.has(approval.id)" class="pending-error" role="alert">{{ requestErrors.get(approval.id) }}</p>
     </article>
     <article v-for="request in questions" :key="request.id" class="pending-item" role="group" :aria-label="`${request.agentName} 的问题`">
       <header>
@@ -115,9 +121,10 @@ onBeforeUnmount(() => { disposed = true; epoch++; if (timer) clearTimeout(timer)
         <input v-model="answers[request.id][index]" placeholder="填写你的回答…" :aria-label="question.title" />
       </label>
       <footer>
-        <button type="button" class="primary" :disabled="!!busy || answers[request.id]?.some(answer => !answer.trim())"
-          :aria-busy="busy === request.id" @click="submit(request)">提交回答</button>
+        <button type="button" class="primary" :disabled="busy.has(request.id) || answers[request.id]?.some(answer => !answer.trim())"
+          :aria-busy="busy.has(request.id)" @click="submit(request)">提交回答</button>
       </footer>
+      <p v-if="requestErrors.has(request.id)" class="pending-error" role="alert">{{ requestErrors.get(request.id) }}</p>
     </article>
     <p v-if="error" class="pending-error" role="alert">{{ error }}</p>
   </section>
