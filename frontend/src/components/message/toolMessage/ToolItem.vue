@@ -42,13 +42,16 @@ const emit = defineEmits<{
 const instanceId = getCurrentInstance()?.uid ?? 0
 const contentId = `gc-tool-content-${instanceId}`
 const streamingPreviewId = `gc-tool-streaming-${instanceId}`
+const awaitingApproval = computed(() => props.tool.status === 'awaiting_approval')
+const awaitingConfirmation = computed(() => props.tool.awaitingConfirmation || awaitingApproval.value)
+const showApprovalActions = computed(() => awaitingApproval.value && !props.isProcessing && !props.tool.approvalChoices?.length)
 
 function activateTool() {
   if (props.isExpandable) emit('toggle')
 }
 
 function getToolStatusLabel(tool: ToolUsage): string {
-  if (tool.awaitingConfirmation || tool.status === 'awaiting_approval' || props.pendingDiffs.length > 0) {
+  if (awaitingConfirmation.value || props.pendingDiffs.length > 0) {
     return t('components.message.responseViewer.toolStatuses.awaitingApproval')
   }
 
@@ -117,9 +120,9 @@ function getToolDescription(tool: ToolUsage): string {
 const toolDescription = computed(() => getToolDescription(props.tool))
 
 // 获取状态图标
-function getStatusIcon(status?: string, awaitingConfirmation?: boolean): string {
+function getStatusIcon(status?: string): string {
   // 向后兼容：awaitingConfirmation 逐步迁移到 status = awaiting_approval
-  if (awaitingConfirmation || status === 'awaiting_approval') {
+  if (awaitingConfirmation.value) {
     return 'codicon-shield'
   }
 
@@ -146,8 +149,8 @@ function getStatusIcon(status?: string, awaitingConfirmation?: boolean): string 
 }
 
 // 获取状态类名
-function getStatusClass(status?: string, awaitingConfirmation?: boolean): string {
-  if (awaitingConfirmation || status === 'awaiting_approval') {
+function getStatusClass(status?: string): string {
+  if (awaitingConfirmation.value) {
     return 'status-warning'
   }
 
@@ -231,7 +234,7 @@ async function runToolAction(action: ToolActionConfig, tool: ToolUsage) {
 </script>
 
 <template>
-  <div class="tool-item" :class="getStatusClass(tool.status, tool.awaitingConfirmation)">
+  <div class="tool-item" :class="getStatusClass(tool.status)">
     <div class="tool-header">
       <component
         :is="isExpandable ? 'button' : 'div'"
@@ -255,7 +258,7 @@ async function runToolAction(action: ToolActionConfig, tool: ToolUsage) {
           <span :class="['tool-icon', 'codicon', getToolIcon(tool)]" aria-hidden="true"></span>
           <span class="tool-name">{{ getToolLabel(tool) }}</span>
           <span
-            v-if="tool.status === 'awaiting_approval' || pendingDiffs.length > 0"
+            v-if="awaitingApproval || pendingDiffs.length > 0"
             class="gc-badge gc-badge--warning tool-approval-badge"
           >{{ t('components.message.responseViewer.toolStatuses.awaitingApproval') }}</span>
 
@@ -269,8 +272,8 @@ async function runToolAction(action: ToolActionConfig, tool: ToolUsage) {
               :class="[
                 'status-icon',
                 'codicon',
-                getStatusIcon(tool.status, tool.awaitingConfirmation),
-                getStatusClass(tool.status, tool.awaitingConfirmation)
+                getStatusIcon(tool.status),
+                getStatusClass(tool.status)
               ]"
               aria-hidden="true"
             ></span>
@@ -288,7 +291,7 @@ async function runToolAction(action: ToolActionConfig, tool: ToolUsage) {
 
       <div class="tool-action-buttons">
         <button
-          v-if="tool.status === 'awaiting_approval' && !isProcessing && !tool.approvalChoices?.length"
+          v-if="showApprovalActions"
           type="button"
           class="gc-button gc-button--primary confirm-btn"
           :title="t('components.message.tool.confirmExecution')"
@@ -300,7 +303,7 @@ async function runToolAction(action: ToolActionConfig, tool: ToolUsage) {
         </button>
 
         <button
-          v-if="tool.status === 'awaiting_approval' && !isProcessing && !tool.approvalChoices?.length"
+          v-if="showApprovalActions"
           type="button"
           class="gc-button gc-button--ghost reject-btn"
           :title="t('components.message.tool.reject')"
@@ -345,7 +348,7 @@ async function runToolAction(action: ToolActionConfig, tool: ToolUsage) {
       <component :is="contentHost" :tool="tool" />
     </div>
 
-    <div v-if="tool.status === 'awaiting_approval'" class="permission-request">
+    <div v-if="awaitingApproval" class="permission-request">
       <p v-if="tool.approvalReason">{{ tool.approvalReason }}</p>
       <div v-if="tool.approvalChoices?.length" class="permission-options">
         <button v-for="choice in tool.approvalChoices" :key="choice.id" type="button" class="gc-button"

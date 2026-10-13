@@ -6,7 +6,6 @@ import { useI18n } from '../../i18n';
 import { toolQuestionTitle } from '../../utils/toolPresentation';
 
 const props = defineProps<{ conversationId: string | null }>();
-const emit = defineEmits<{ 'pending-change': [pending: boolean] }>();
 const { t } = useI18n();
 const questions = ref<QuestionRequest[]>([]);
 const answers = ref<Record<string, string[]>>({});
@@ -60,7 +59,6 @@ watch(() => props.conversationId, () => {
   questions.value = []; answers.value = {}; selectedOptions.value = {}; error.value = '';
   void refresh();
 }, { immediate: true });
-watch(() => questions.value.length > 0, pending => emit('pending-change', pending), { immediate: true, flush: 'sync' });
 const dispose = onMessageFromExtension(message => { if (message.type === 'platformQuestionsChanged') void refresh(); });
 onBeforeUnmount(() => { disposed = true; refreshEpoch++; dispose(); });
 </script>

@@ -12,6 +12,7 @@ export async function synchronizeRemoteConversation(state: ChatStoreState, conve
   resetTurnBaseTokenEstimate(state, conversationId);
   state.isLoading.value = true; state.isStreaming.value = false; state.isWaitingForResponse.value = false;
   state.streamingMessageId.value = null; state.activeStreamId.value = null; state._lastCancelledStreamId.value = null;
+  state.activeRunStatus.value = null;
   state.toolResponseCache.value = new Map();
   state.backgroundStreamBuffers.value.delete(conversationId);
   const tab = state.openTabs.value.find(tab => tab.conversationId === conversationId); if (tab) tab.isStreaming = false;

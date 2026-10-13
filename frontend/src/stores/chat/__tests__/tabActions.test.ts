@@ -9,11 +9,14 @@ import {
 } from '../tabActions'
 import type { ChatStoreState, BranchGraphData, BranchNodeData } from '../types'
 
-test('思考强度随当前对话快照恢复，新对话回到渠道设置', () => {
+test('思考强度和运行状态随当前对话快照恢复，新对话清除运行状态', () => {
   const state = mockState(); state.selectedReasoningEffort.value = 'high';
+  state.activeRunStatus.value = 'awaiting_input';
   const snapshot = snapshotCurrentSession(state);
   resetConversationState(state); expect(state.selectedReasoningEffort.value).toBe('');
+  expect(state.activeRunStatus.value).toBeNull();
   restoreSessionFromSnapshot(state, snapshot); expect(state.selectedReasoningEffort.value).toBe('high');
+  expect(state.activeRunStatus.value).toBe('awaiting_input');
 });
 
 /** 构造标签页操作所需的最小会话状态。 */
@@ -43,6 +46,7 @@ function mockState(): ChatStoreState {
     error: ref(null),
     streamingMessageId: ref(null),
     activeStreamId: ref(null),
+    activeRunStatus: ref(null),
     isWaitingForResponse: ref(false),
     retryStatus: ref(null),
     autoSummaryStatus: ref(null),

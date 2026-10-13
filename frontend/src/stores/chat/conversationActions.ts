@@ -858,6 +858,7 @@ export async function switchConversation(
   state.isStreaming.value = false
   state.streamingMessageId.value = null
   state.activeStreamId.value = null
+  state.activeRunStatus.value = null
   state._lastCancelledStreamId.value = null
   state._pendingBranchRefreshAfterStream.value = null
   state._pendingBranchReplayContext.value = null

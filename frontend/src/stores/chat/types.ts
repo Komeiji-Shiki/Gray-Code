@@ -7,6 +7,7 @@ import type { Message, ErrorInfo, CheckpointSummary, Attachment, BranchStreamRep
 import type { EditorNode } from '../../types/editorNode'
 import type { SmoothMode } from '../../utils/smoothStream'
 import type { ForegroundWorkTransition } from '@shared/protocol'
+import type { RunStatus } from '@graycode/contracts'
 
 // 重新导出类型以供其他模块使用
 // CPF-03: 新代码使用 CheckpointSummary；CheckpointRecord 保留导出（结构同构，兼容旧消费方）
@@ -244,6 +245,7 @@ export interface ChatStoreState {
   streamingMessageId: Ref<string | null>
   /** 当前流式请求 ID（用于过滤迟到/过期 chunk） */
   activeStreamId: Ref<string | null>
+  activeRunStatus: Ref<RunStatus | null>
   /**
    * 平滑流式显示层：messageId -> 当前正在输出的段落（最后一个 text/thought part）的平滑文本。
    * 真实内容（parts/content）由流式累加，此 Map 只驱动显示节奏；
@@ -442,6 +444,7 @@ export interface ConversationSessionSnapshot {
   streamingMessageId: string | null
   /** 当前流式请求 ID */
   activeStreamId: string | null
+  activeRunStatus?: RunStatus | null
   /** 后台增量不再完整，切回时从已保存历史与运行快照接续。 */
   needsStreamResync?: boolean
   /** 是否等待响应 */

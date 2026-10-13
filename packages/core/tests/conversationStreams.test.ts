@@ -71,8 +71,41 @@ describe('跨入口的对话实时输出', () => {
     const snapshot = (await received(observer)).find(item => item.resumeSnapshot);
     expect(snapshot.chunk.contentSnapshot.parts).toEqual([{ text: '已经生成的内容' }]);
     expect(snapshot.streamId).toBe(`background:${run.id}`);
+    expect(snapshot.runStatus).toBe('running');
     await app.productUi.chat.cancel(observer, conversation.id); expect((await app.runtime.wait(run.id))?.status).toBe('cancelled');
     expect((await received(observer)).filter(item => item.type === 'cancelled')).toHaveLength(1);
+  });
+
+  test('等待回答先广播真实运行状态，重新接入保留等待状态并在回答后恢复', async () => {
+    completedMessages = [
+      { role: 'model', parts: [{ functionCall: { id: 'question', name: 'ask_user', args: {
+        questions: [{ title: '选择颜色', options: ['蓝色', '红色'] }],
+      } } }] },
+      { role: 'model', parts: [{ text: '独立工作已完成，等待选择。' }] },
+      { role: 'model', parts: [{ text: '已收到选择。' }] },
+    ];
+    const waiting = deferred<void>();
+    const unsubscribe = app.subscribe(event => {
+      if (event.type !== 'ui.message') return;
+      const message = event.message as { data?: { runStatus?: RunRecord['status'] } };
+      if (message.data?.runStatus === 'awaiting_input') waiting.resolve();
+    });
+    const conversation = await app.createConversation('owner', '等待回答');
+    const result = await app.productUi.chat.start(owner, {
+      conversationId: conversation.id, streamId: 'question-stream', configId: 'fixture', message: '开始',
+    }, await app.product.draft()) as { runId: string };
+    await inputReady.promise; finish.resolve();
+    await waiting.promise;
+    expect(await app.productUi.chat.resumeConversationStream(observer, conversation.id)).toEqual({ active: true });
+    const chunks = await received(observer);
+    const waitingIndex = chunks.findIndex(item => item.type === 'runStatus' && item.runStatus === 'awaiting_input');
+    expect(chunks.findLastIndex(item => item.type === 'toolIteration')).toBeGreaterThan(waitingIndex);
+    expect(chunks.find(item => item.resumeSnapshot)?.runStatus).toBe('awaiting_input');
+    await app.runtime.answerQuestion(app.runtime.pendingQuestions()[0].id, 'owner', ['蓝色']);
+    expect((await app.runtime.wait(result.runId))?.status).toBe('completed');
+    expect((await received(observer)).filter(item => item.type === 'runStatus').map(item => item.runStatus))
+      .toEqual(['running', 'awaiting_input', 'running', 'completed']);
+    unsubscribe();
   });
 
   test('桌面发起的输出对每个客户端只投递一次，刷新后的客户端从快照接续至完成', async () => {

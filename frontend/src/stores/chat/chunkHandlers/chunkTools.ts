@@ -420,7 +420,10 @@ export function handleAwaitingConfirmation(
   // 注意：不结束 streaming 状态的等待标志，因为需要等用户确认
   // 但 isStreaming 设为 false 允许用户操作
   state.isStreaming.value = false
-  if (!chunk.keepStreamOpen) state.activeStreamId.value = null
+  if (!chunk.keepStreamOpen) {
+    state.activeStreamId.value = null
+    state.activeRunStatus.value = null
+  }
   state._lastApprovalGatedStreamId.value = null
   // isWaitingForResponse 保持 true 或设为特殊状态
 }
@@ -605,6 +608,7 @@ export function handleToolIteration(
     finishSmoothStreamForState(state, placeholderId)
     state.streamingMessageId.value = null
     state.activeStreamId.value = null
+    state.activeRunStatus.value = null
     state.isStreaming.value = false
     state.isWaitingForResponse.value = false
     state._lastApprovalGatedStreamId.value = hasApprovalStop && chunk.streamId
@@ -619,7 +623,17 @@ export function handleToolIteration(
   // 新占位消息的后续 delta 会创建新条目。
   finishSmoothStreamForState(state, placeholderId)
   
-  // 创建新的占位消息用于接收后续 AI 响应
+  if (state.activeRunStatus.value === 'awaiting_input') {
+    state.streamingMessageId.value = null
+    state.isStreaming.value = true
+    state.isWaitingForResponse.value = true
+    return
+  }
+  createAssistantPlaceholder(state, state.pendingModelOverride.value || currentModelName())
+}
+
+/** 工具迭代与回答后的恢复共用创建入口，等待用户时不产生下一段助手消息。 */
+export function createAssistantPlaceholder(state: ChatStoreState, modelVersion: string): void {
   const newAssistantMessageId = generateId()
   const newAssistantMessage: Message = {
     id: newAssistantMessageId,
@@ -630,7 +644,7 @@ export function handleToolIteration(
     streaming: true,
     localOnly: true,
     metadata: {
-      modelVersion: state.pendingModelOverride.value || currentModelName()
+      modelVersion
     }
   }
   appendMessage(state, newAssistantMessage)

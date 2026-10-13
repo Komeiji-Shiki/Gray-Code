@@ -8,7 +8,6 @@ export function toolIcon(name: string): string {
   if (name.startsWith('team_') || name === 'agent_send_message') return 'codicon-organization'
   if (name.startsWith('memory_')) return 'codicon-book'
   if (name.startsWith('context_') || name === 'new_context') return 'codicon-note'
-  if (name === 'ask_user') return 'codicon-comment-discussion'
   if (name === 'search_files') return 'codicon-search'
   if (name === 'workspace_files') return 'codicon-files'
   if (name === 'run_command' || name === 'process_session') return 'codicon-terminal'
@@ -19,7 +18,6 @@ export function toolIcon(name: string): string {
 }
 
 export function toolSummary(name: string, args: Record<string, unknown>): string {
-  if (name === 'ask_user') return ''
   const target = ['query', 'url', 'path', 'command', 'title', 'name', 'text'].map(key => args?.[key])
     .find(value => typeof value === 'string' && value.trim()) as string | undefined
   return target?.replace(/\s+/g, ' ').slice(0, 180)

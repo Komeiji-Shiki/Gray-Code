@@ -42,6 +42,7 @@ export function snapshotCurrentSession(state: ChatStoreState): ConversationSessi
     isLoading: state.isLoading.value,
     streamingMessageId: state.streamingMessageId.value,
     activeStreamId: state.activeStreamId.value,
+    activeRunStatus: state.activeRunStatus.value,
     isWaitingForResponse: state.isWaitingForResponse.value,
     checkpoints: [...state.checkpoints.value],
     activeBuild: state.activeBuild.value ? { ...state.activeBuild.value } : null,
@@ -88,6 +89,7 @@ export function restoreSessionFromSnapshot(
   state.isLoading.value = snapshot.isLoading
   state.streamingMessageId.value = snapshot.streamingMessageId
   state.activeStreamId.value = snapshot.activeStreamId ?? null
+  state.activeRunStatus.value = snapshot.activeRunStatus ?? null
   state.isWaitingForResponse.value = snapshot.isWaitingForResponse
   state.checkpoints.value = [...snapshot.checkpoints]
   state.activeBuild.value = snapshot.activeBuild ? { ...snapshot.activeBuild } : null
@@ -132,6 +134,7 @@ export function resetConversationState(state: ChatStoreState): void {
   state.isLoading.value = false
   state.streamingMessageId.value = null
   state.activeStreamId.value = null
+  state.activeRunStatus.value = null
   state._lastCancelledStreamId.value = null
   state._pendingBranchRefreshAfterStream.value = null
   state._pendingBranchReplayContext.value = null
@@ -434,7 +437,12 @@ export function bufferBackgroundChunk(
   if (snapshot?.needsStreamResync && buffer.length) buffer.length = 0
 
   if (snapshot) {
+    if (chunk.runStatus) snapshot.activeRunStatus = chunk.runStatus
     switch (chunk.type) {
+      case 'runStatus':
+        snapshot.isWaitingForResponse = chunk.runStatus === 'queued' || chunk.runStatus === 'running'
+          || chunk.runStatus === 'awaiting_input' || chunk.runStatus === 'awaiting_approval'
+        break
       case 'complete':
       case 'error':
       case 'cancelled':

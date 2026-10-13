@@ -20,6 +20,7 @@ import {
   handleToolStatusBatch,
   handleAwaitingConfirmation,
   handleToolIteration,
+  createAssistantPlaceholder,
   handleComplete,
   handleCheckpoints,
   handleAutoSummaryStatus,
@@ -70,6 +71,7 @@ function resetTerminalStreamState(state: ChatStoreState): void {
   resetTurnBaseTokenEstimate(state)
   state.streamingMessageId.value = null
   state.activeStreamId.value = null
+  state.activeRunStatus.value = null
   state.isStreaming.value = false
   state.isWaitingForResponse.value = false
   state.autoSummaryStatus.value = null
@@ -201,12 +203,15 @@ export function handleStreamChunk(
     const snapshotId = chunk.resumeSnapshot ? chunk.chunk?.contentSnapshot?.id : undefined
     const existing = snapshotId ? state.allMessages.value.find(message => message.id === snapshotId) : undefined
     const id = existing?.id ?? `placeholder:${chunk.streamId}`
+    const hasSnapshotContent = !!chunk.chunk?.contentSnapshot?.parts.length
+    const needsMessage = chunk.type !== 'runStatus' && (chunk.runStatus !== 'awaiting_input' || hasSnapshotContent)
     state.error.value = null
     state.activeStreamId.value = chunk.streamId
+    state.activeRunStatus.value = chunk.runStatus ?? null
     state.isStreaming.value = true
     state.isWaitingForResponse.value = true
-    state.streamingMessageId.value = id
-    if (!state.allMessages.value.some(message => message.id === id)) appendMessage(state, { id, role: 'assistant', content: '',
+    state.streamingMessageId.value = needsMessage ? id : null
+    if (needsMessage && !state.allMessages.value.some(message => message.id === id)) appendMessage(state, { id, role: 'assistant', content: '',
       timestamp: Date.now(), backendIndex: state.windowStartIndex.value + state.allMessages.value.length,
       streaming: true, localOnly: true, metadata: { modelVersion: currentModelName() } })
     syncTotalMessagesFromWindow(state)
@@ -230,6 +235,8 @@ export function handleStreamChunk(
     warnLateApprovalGatedChunk(chunk, state)
     return
   }
+  const previousRunStatus = state.activeRunStatus.value
+  if (chunk.runStatus) state.activeRunStatus.value = chunk.runStatus
 
   // 更新当前活跃标签页的流式状态
   updateTabStreamingStatus(state, chunk)
@@ -241,6 +248,13 @@ export function handleStreamChunk(
   }
   
   switch (chunk.type) {
+    case 'runStatus':
+      state.isWaitingForResponse.value = chunk.runStatus === 'queued' || chunk.runStatus === 'running'
+        || chunk.runStatus === 'awaiting_input' || chunk.runStatus === 'awaiting_approval'
+      if (chunk.runStatus === 'running' && (previousRunStatus === 'awaiting_input' || !state.streamingMessageId.value)) {
+        createAssistantPlaceholder(state, state.pendingModelOverride.value || currentModelName())
+      }
+      break
     case 'userFeedback':
       if (chunk.feedbackContent) insertUserFeedback(chunk.feedbackContent, state)
       break

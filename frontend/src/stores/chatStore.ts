@@ -799,6 +799,7 @@ export const useChatStore = defineStore('chat', () => {
    */
   function abortToolConfirmationRound(): void {
     state.activeStreamId.value = null
+    state.activeRunStatus.value = null
     state.isWaitingForResponse.value = false
   }
 
@@ -827,6 +828,7 @@ export const useChatStore = defineStore('chat', () => {
     isLoadingMoreConversations: state.isLoadingMoreConversations,
     hasMoreConversations,
     activeStreamId: state.activeStreamId,
+    activeRunStatus: state.activeRunStatus,
     isWaitingForResponse: state.isWaitingForResponse,
     isCancellingStream,
     retryStatus: state.retryStatus,

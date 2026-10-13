@@ -38,7 +38,7 @@ function handleCancel() {
       type="button"
       class="send-button"
       :disabled="disabled"
-      :title="t('components.input.sendWhileBusy')"
+      :title="`${t('components.input.sendWhileBusy')}\n${t('components.input.keyboardHint')}`"
       :aria-label="t('components.input.sendWhileBusy')"
       @click="handleClick"
     >
@@ -64,7 +64,7 @@ function handleCancel() {
       type="button"
       class="send-button"
       :disabled="disabled"
-      :title="t('components.input.send')"
+      :title="`${t('components.input.send')}\n${t('components.input.keyboardHint')}`"
       :aria-label="t('components.input.send')"
       @click="handleClick"
     >

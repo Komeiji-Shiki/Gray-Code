@@ -401,6 +401,7 @@ export async function switchBranchCandidate(
     state.error.value = null
     state.streamingMessageId.value = null
     state.activeStreamId.value = null
+    state.activeRunStatus.value = null
     state._lastCancelledStreamId.value = null
     state._failedStreamMessageId.value = null
     state.isStreaming.value = false

@@ -12,7 +12,7 @@ import type { Ref } from 'vue'
 import { describe, expect, vi, afterEach } from 'vitest'
 import type { Message } from '../../types'
 import type { ChatStoreState, CheckpointRecord } from '../../stores/chat/types'
-import { handleStreamChunk, type StreamHandlerContext } from '../../stores/chat/streamHandler'
+import { handleStreamChunk, handleStreamChunkBatch, type StreamHandlerContext } from '../../stores/chat/streamHandler'
 import { handleToolsExecuting, handleChunkType } from '../../stores/chat/streamChunkHandlers'
 import {
   disposeAllSmoothStreams,
@@ -132,6 +132,7 @@ function createState(overrides: Partial<ChatStoreState> = {}): ChatStoreState {
     error: ref(null),
     streamingMessageId: ref<string | null>(null),
     activeStreamId: ref<string | null>(null),
+    activeRunStatus: ref(null),
     checkpoints: ref<CheckpointRecord[]>([]),
     mergeUnchangedCheckpoints: ref(true),
     retryStatus: ref(null),
@@ -194,14 +195,75 @@ test.each(['cancelled', 'error'] as const)('持久化的部分回复替换临时
 })
 
 describe('streamHandler 终结事件状态复位', () => {
+  test('等待用户回答只保留已完成消息，恢复运行后再创建下一条助手消息', () => {
+    const state = createState({ activeStreamId: ref('run'), streamingMessageId: ref('waiting'), isStreaming: ref(true),
+      allMessages: ref([{ id: 'waiting', role: 'assistant', content: '请选择', parts: [{ text: '请选择' }],
+        timestamp: 1, backendIndex: 0, streaming: true, localOnly: true }] as Message[]) })
+    const ctx = createCtx(state)
+    handleStreamChunk({ type: 'runStatus', conversationId: 'conv_1', streamId: 'run', runStatus: 'awaiting_input' }, ctx)
+    handleStreamChunk({ type: 'toolIteration', conversationId: 'conv_1', streamId: 'run',
+      content: { id: 'waiting', role: 'model', parts: [{ text: '请选择' }] }, toolResults: [] }, ctx)
+    expect(state.activeRunStatus.value).toBe('awaiting_input')
+    expect(state.activeStreamId.value).toBe('run')
+    expect(state.streamingMessageId.value).toBeNull()
+    expect(state.isStreaming.value).toBe(true)
+    expect(state.isWaitingForResponse.value).toBe(true)
+    expect(state.allMessages.value.map(message => [message.id, message.backendIndex])).toEqual([['waiting', 0]])
+
+    handleStreamChunk({ type: 'runStatus', conversationId: 'conv_1', streamId: 'old-run', runStatus: 'running' }, ctx)
+    expect(state.activeRunStatus.value).toBe('awaiting_input')
+    handleStreamChunk({ type: 'runStatus', conversationId: 'conv_1', streamId: 'run', runStatus: 'running' }, ctx)
+    expect(state.allMessages.value).toHaveLength(2)
+    expect(state.allMessages.value[1]).toMatchObject({ backendIndex: 1, streaming: true, localOnly: true })
+    handleStreamChunk({ type: 'complete', conversationId: 'conv_1', streamId: 'run',
+      content: { id: 'answer', role: 'model', parts: [{ text: '已收到回答' }] } }, ctx)
+    expect(state.allMessages.value.map(message => message.id)).toEqual(['waiting', 'answer'])
+    expect(state.activeRunStatus.value).toBeNull()
+  })
+
+  test('恢复等待回答快照及紧随的 toolsExecuting 后，不追加空助手或改写等待状态', () => {
+    const content = { id: 'waiting', role: 'model' as const, parts: [{ text: '请选择' }] }
+    const state = createState({ allMessages: ref([{ id: 'waiting', role: 'assistant', content: '请选择',
+      parts: content.parts, timestamp: 1, backendIndex: 0, localOnly: false }] as Message[]) })
+    const ctx = createCtx(state)
+    handleStreamChunkBatch([
+      { type: 'chunk', conversationId: 'conv_1', streamId: 'background:run', backgroundRun: true,
+        resumeSnapshot: true, runStatus: 'awaiting_input', chunk: { delta: [], done: false, contentSnapshot: content } },
+      { type: 'toolsExecuting', conversationId: 'conv_1', streamId: 'background:run', backgroundRun: true, content }
+    ], ctx)
+    expect(state.activeRunStatus.value).toBe('awaiting_input')
+    expect(state.isWaitingForResponse.value).toBe(true)
+    expect(state.allMessages.value).toHaveLength(1)
+    expect(state.allMessages.value[0]).toMatchObject({ id: 'waiting', content: '请选择', localOnly: false, streaming: false })
+    handleStreamChunk({ type: 'runStatus', conversationId: 'conv_1', streamId: 'background:run',
+      backgroundRun: true, runStatus: 'running' }, ctx)
+    expect(state.allMessages.value).toHaveLength(2)
+    expect(state.streamingMessageId.value).not.toBe('waiting')
+  })
+
+  test('空的等待回答恢复快照不生成占位消息', () => {
+    const state = createState()
+    handleStreamChunk({ type: 'chunk', conversationId: 'conv_1', streamId: 'background:run', backgroundRun: true,
+      resumeSnapshot: true, runStatus: 'awaiting_input',
+      chunk: { delta: [], done: false, contentSnapshot: { role: 'model', parts: [] } } }, createCtx(state))
+    expect(state.allMessages.value).toHaveLength(0)
+    expect(state.streamingMessageId.value).toBeNull()
+    expect(state.activeRunStatus.value).toBe('awaiting_input')
+    expect(state.isWaitingForResponse.value).toBe(true)
+  })
+
   test('独立宿主保留审批期间的运行流，其他入口完成审批后仍接收最终结果', () => {
     const state = createState({ allMessages: ref([{ id: 'msg_1', role: 'assistant', content: '', timestamp: 1, streaming: true, backendIndex: 0 } as Message]),
       streamingMessageId: ref('msg_1'), activeStreamId: ref('stream_1'), isWaitingForResponse: ref(true) });
     const ctx = createCtx(state);
+    handleStreamChunk({ type: 'runStatus', conversationId: 'conv_1', streamId: 'stream_1', runStatus: 'awaiting_approval' }, ctx);
+    expect(state.isWaitingForResponse.value).toBe(true);
     handleStreamChunk({ type: 'awaitingConfirmation', conversationId: 'conv_1', streamId: 'stream_1', keepStreamOpen: true,
       content: { id: 'stored-model', role: 'model', parts: [{ functionCall: { id: 'call_1', name: 'delete_file', args: { path: 'fixture.txt' } } }] },
       pendingToolCalls: [{ id: 'call_1', name: 'delete_file', args: { path: 'fixture.txt' } }] }, ctx);
     expect(state.activeStreamId.value).toBe('stream_1');
+    expect(state.activeRunStatus.value).toBe('awaiting_approval');
+    expect(state.isWaitingForResponse.value).toBe(true);
     handleStreamChunk({ type: 'complete', conversationId: 'conv_1', streamId: 'stream_1', content: { id: 'done', role: 'model', parts: [{ text: 'Done' }] } }, ctx);
     expect(state.isWaitingForResponse.value).toBe(false);
     expect(state.activeStreamId.value).toBeNull();

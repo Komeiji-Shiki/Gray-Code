@@ -101,6 +101,7 @@ async function recoverAfterStreamStartFailure(
     // 请求已明确退出；切走时保存空闲快照，切回会按既有路径重载权威历史。
     state.streamingMessageId.value = null
     state.activeStreamId.value = null
+    state.activeRunStatus.value = null
     state.isStreaming.value = false
     state.isWaitingForResponse.value = false
     stopWatching = watch([state.currentConversationId, state.activeStreamId], () => { invalidated = true }, { flush: 'sync' })
@@ -137,6 +138,7 @@ async function recoverAfterStreamStartFailure(
     state.streamingMessageId.value = null
     state.isStreaming.value = false
     state.activeStreamId.value = null
+    state.activeRunStatus.value = null
     state.isWaitingForResponse.value = false
     state.isLoading.value = false
   } finally { stopWatching?.() }
@@ -272,6 +274,7 @@ export async function retryFromMessage(
         state.streamingMessageId.value = null
         state.isStreaming.value = false
         state.activeStreamId.value = null
+        state.activeRunStatus.value = null
         state.isWaitingForResponse.value = false
       }
     } finally {
@@ -667,6 +670,7 @@ export async function retryAfterError(
       state.streamingMessageId.value = null
       state.isStreaming.value = false
       state.activeStreamId.value = null
+      state.activeRunStatus.value = null
       state.isWaitingForResponse.value = false
     }
   } finally {

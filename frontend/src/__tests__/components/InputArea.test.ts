@@ -200,6 +200,18 @@ describe('InputArea 发送失败恢复', () => {
     vi.restoreAllMocks()
   })
 
+  test.each(['awaiting_input', 'awaiting_approval'])('%s 保持忙碌状态，真实停止按钮仍可取消运行', async status => {
+    runtime.chatStore.activeRunStatus = status
+    runtime.chatStore.isWaitingForResponse = true
+    runtime.chatStore.isStreaming = status === 'awaiting_input'
+    wrapper = mount(InputArea, { global: { stubs: { ...stubs, SendButton: false } } })
+    await flushPromises()
+    const stop = wrapper.get('button:has(.stop-icon)')
+    expect(stop.attributes('disabled')).toBeUndefined()
+    await stop.trigger('click')
+    expect(wrapper.emitted('cancel')).toHaveLength(1)
+  })
+
   test('空渠道给出配置入口，打开设置保留已输入的草稿', async () => {
     runtime.chatStore.configId = ''
     runtime.chatStore.selectedModelId = ''

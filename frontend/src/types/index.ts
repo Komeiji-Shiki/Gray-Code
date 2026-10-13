@@ -4,7 +4,7 @@
 
 // B1/T16：跨端共享类型迁入 shared/protocol.ts 单一来源；此处 re-export 保持既有导出路径
 import type { CheckpointSummary, ContentPart, SummaryTokenStats, UsageMetadata } from '@shared/protocol'
-import type { ApprovalChoice } from '../../../packages/contracts/src/runtime'
+import type { ApprovalChoice, RunStatus } from '../../../packages/contracts/src/runtime'
 export type { CheckpointSummary, CheckpointSummaryWithSize, ContentPart, OpenAIResponsesReasoningMetadata, SummaryTokenStats, ThoughtSignatures, TokenDetailsEntry, UsageMetadata } from '@shared/protocol'
 
 // ============ 消息相关类型 ============
@@ -529,12 +529,15 @@ export interface PendingToolCall extends ToolApprovalInfo {
  * 前端接收的流式消息格式
  */
 export interface StreamChunk {
+  /** 当前运行的真实状态，由宿主随同一条会话流下发。 */
+  runStatus?: RunStatus
   /** 核心服务自动启动的后台后续任务，客户端只订阅结果。 */
   backgroundRun?: boolean
   /** 重新接入现有任务时的当前输出快照，不创建新的模型请求。 */
   resumeSnapshot?: boolean
   previousStreamId?: string
   type:
+    | 'runStatus'
     | 'chunk'
     | 'complete'
     | 'error'

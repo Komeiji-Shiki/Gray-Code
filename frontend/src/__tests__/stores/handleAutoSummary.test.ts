@@ -26,6 +26,7 @@ function createState(overrides: Partial<ChatStoreState> = {}): ChatStoreState {
     error: ref(null),
     streamingMessageId: ref<string | null>(null),
     activeStreamId: ref<string | null>(null),
+    activeRunStatus: ref(null),
     checkpoints: ref<CheckpointRecord[]>([]),
     mergeUnchangedCheckpoints: ref(true),
     retryStatus: ref(null),

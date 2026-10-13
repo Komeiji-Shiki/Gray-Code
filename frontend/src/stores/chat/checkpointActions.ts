@@ -484,6 +484,7 @@ export async function restoreAndRetry(
       state.streamingMessageId.value = null
       state.isStreaming.value = false
       state.activeStreamId.value = null
+      state.activeRunStatus.value = null
       state.isWaitingForResponse.value = false
     }
   } finally {
@@ -854,6 +855,7 @@ export async function restoreAndEdit(
       state.streamingMessageId.value = null
       state.isStreaming.value = false
       state.activeStreamId.value = null
+      state.activeRunStatus.value = null
       state.isWaitingForResponse.value = false
     }
   } finally {

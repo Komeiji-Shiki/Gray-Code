@@ -57,7 +57,7 @@ export interface ModelRequestContext {
   /** 原始只读快照；上下文修改应通过独立副本和会话事务发布。 */
   history: ConversationState;
 }
-export type RuntimeNotification = { type: 'event'; event: RunEvent }
+export type RuntimeNotification = { type: 'event'; event: RunEvent; status?: RunRecord['status'] }
   | { type: 'runtime.preparation.changed' }
   | { type: 'run.created'; runId: string; run: RunRecord; message?: PlatformMessage }
   | { type: 'message.persisted'; runId: string; content: PlatformMessage }
@@ -146,7 +146,7 @@ export class PlatformRuntime {
   }
   private async event(runId: string, type: RunEvent['type'], payload: Record<string, unknown>, update?: { status?: RunRecord['status']; iteration?: number; error?: string }): Promise<void> {
     const event = await this.services.storage.appendRunEvent({ runId, type, payload, update });
-    this.notify({ type: 'event', event });
+    this.notify({ type: 'event', event, ...(update?.status ? { status: update.status } : {}) });
   }
 
   async initialize(): Promise<void> {
@@ -559,8 +559,9 @@ export class PlatformRuntime {
           if (await this.services.deliverFeedback?.(run)) { this.notify({ type: 'model.continued', runId: run.id }); continue; }
           if (this.questions.hasFeedback(run.id)) { this.notify({ type: 'model.continued', runId: run.id }); await this.drainFeedback(run); continue; }
           if (this.questions.pendingCount(run.id)) {
-            this.notify({ type: 'model.continued', runId: run.id });
+            // 先保存并通知等待状态，聊天订阅方结算本轮时据此决定是否创建下一条助手占位。
             await this.event(run.id, 'run.waiting_input', {}, { status: 'awaiting_input' });
+            this.notify({ type: 'model.continued', runId: run.id });
             await this.questions.wait(run.id, signal);
             await this.event(run.id, 'run.started', { resumedAfterQuestion: true }, { status: 'running' });
             await this.drainFeedback(run); continue;

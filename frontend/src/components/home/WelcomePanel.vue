@@ -20,6 +20,11 @@ const { t } = useI18n()
 const chatStore = useChatStore()
 const settingsStore = useSettingsStore()
 const props = withDefaults(defineProps<{ mode?: 'chat' | 'code' | 'character' }>(), { mode: 'chat' })
+const modeDescription = computed(() => {
+  if (props.mode === 'code') return t('desktop.shell.codeDetail')
+  if (props.mode === 'character') return t('desktop.shell.characterDetail')
+  return t('desktop.shell.chatDetail')
+})
 const recentConversations = computed(() => chatStore.filteredConversations.filter(conversation =>
   conversation.id !== chatStore.currentConversationId || conversation.messageCount > 0).slice(0, 8))
 
@@ -73,7 +78,7 @@ async function handleDelete(id: string) {
         </div>
         <h1 class="welcome-title">{{ t('components.home.welcome') }}</h1>
         <p class="welcome-subtitle">
-          {{ t(`desktop.shell.${props.mode}Detail`) }}
+          {{ modeDescription }}
         </p>
       </div>
     </div>

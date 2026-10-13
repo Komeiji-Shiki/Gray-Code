@@ -71,6 +71,7 @@ export async function deleteMessage(
       state.streamingMessageId.value = null
     }
     state.activeStreamId.value = null
+    state.activeRunStatus.value = null
     state.isStreaming.value = false
     state.isWaitingForResponse.value = false
 

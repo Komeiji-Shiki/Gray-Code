@@ -402,6 +402,7 @@ export async function cancelStreamAndRejectTools(
   // 新建/切换会话同样立即结束本地等待；后端拒绝工具与取消流仍按下方顺序完成。
   state.streamingMessageId.value = null
   state.activeStreamId.value = null
+  state.activeRunStatus.value = null
   state.isLoading.value = false
   state.isStreaming.value = false
   state.isWaitingForResponse.value = false
@@ -501,6 +502,7 @@ async function cancelDesktopStream(
       ensureFunctionResponseMessageForRejectedTools(state, info, options.preserveSubAgents === true)
       state.streamingMessageId.value = null
       state.activeStreamId.value = null
+      state.activeRunStatus.value = null
       state.isLoading.value = false
       state.isStreaming.value = false
       state.isWaitingForResponse.value = false
@@ -579,6 +581,7 @@ export async function cancelStream(
   )
   state.streamingMessageId.value = null
   state.activeStreamId.value = null
+  state.activeRunStatus.value = null
   state.isLoading.value = false
   state.isStreaming.value = false
   state.isWaitingForResponse.value = false

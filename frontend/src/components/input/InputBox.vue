@@ -847,7 +847,6 @@ defineExpose({
       aria-multiline="true"
       :aria-label="props.placeholder || t('components.input.placeholder')"
       :aria-placeholder="placeholderText"
-      :title="props.submitOnEnter ? t('components.input.keyboardHint') : undefined"
       :aria-disabled="disabled || undefined"
       :aria-haspopup="popupControls ? 'listbox' : undefined"
       :aria-expanded="popupControls ? !!popupExpanded : undefined"

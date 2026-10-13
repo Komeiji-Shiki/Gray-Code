@@ -21,7 +21,8 @@ export {
   handleToolStatus,
   handleToolStatusBatch,
   handleAwaitingConfirmation,
-  handleToolIteration
+  handleToolIteration,
+  createAssistantPlaceholder
 } from './chunkHandlers/chunkTools'
 export {
   handleComplete,

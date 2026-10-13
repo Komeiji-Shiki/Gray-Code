@@ -5,7 +5,7 @@
 
 import { defineAsyncComponent, type Component } from 'vue'
 import type { ToolUsage } from '../types'
-import { toolIcon, toolSummary, toolQuestionTitle } from './toolPresentation'
+import { toolIcon, toolSummary } from './toolPresentation'
 
 export interface ToolActionContext {
   /** 当前主聊天对话 ID，历史 SubAgent 卡片打开 Monitor 时需要用它恢复 metadata 快照 */
@@ -144,7 +144,6 @@ export function getToolConfig(name: string): ToolConfig | undefined {
   return toolRegistry.get(name) ?? {
     name,
     icon: toolIcon(name),
-    labelFormatter: name === 'ask_user' ? toolQuestionTitle : undefined,
     descriptionFormatter: args => toolSummary(name, args),
     contentComponent: DefaultToolResult,
   }

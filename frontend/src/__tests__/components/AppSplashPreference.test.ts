@@ -1,6 +1,7 @@
 import { flushPromises, mount, type VueWrapper } from '@vue/test-utils'
 import { nextTick, reactive, ref, shallowReactive } from 'vue'
 import { afterEach, beforeEach, describe, expect, vi } from 'vitest'
+import { characterPresentation } from '../../platform/characterPresentation'
 
 interface Deferred<T> {
   promise: Promise<T>
@@ -53,7 +54,7 @@ vi.mock('../../components/input', () => ({
   InputArea: { name: 'InputArea', template: '<div />' }
 }))
 vi.mock('../../components/home', () => ({
-  WelcomePanel: { name: 'WelcomePanel', template: '<div />' }
+  WelcomePanel: { name: 'WelcomePanel', props: ['mode'], template: '<div />' }
 }))
 vi.mock('../../components/history', () => ({
   HistoryPage: { name: 'HistoryPage', template: '<div />' }
@@ -249,6 +250,30 @@ describe('App 开屏动画启动偏好', () => {
     wrapper?.unmount()
     wrapper = undefined
     delete window.__GRAYCODE_STARTUP_SPLASH_ENABLED
+  })
+
+  test('欢迎页直接跟随外壳模式，迟到的会话聚焦响应不会改回旧模式', async () => {
+    const previousHost = window.__GRAYCODE_HOST
+    const focus = deferred<{ mode: string }>()
+    window.__GRAYCODE_HOST = { kind: 'desktop', postMessage: vi.fn(), getState: () => ({}), setState: vi.fn() }
+    runtime.sendToExtension.mockImplementation((type: string) => type === 'ui.conversation.focus' ? focus.promise
+      : type === 'getSettings' ? settingsRequest.promise : Promise.resolve({ success: true }))
+    characterPresentation.mode = 'code'
+    try {
+      wrapper = mount(App)
+      settingsRequest.resolve(makeSettingsResponse(false))
+      await flushPromises()
+      expect(wrapper.getComponent({ name: 'WelcomePanel' }).props('mode')).toBe('code')
+      characterPresentation.mode = 'character'
+      await nextTick()
+      focus.resolve({ mode: 'chat' })
+      await flushPromises()
+      expect(wrapper.getComponent({ name: 'WelcomePanel' }).props('mode')).toBe('character')
+      expect(characterPresentation.active).toBe(true)
+    } finally {
+      wrapper?.unmount(); wrapper = undefined; window.__GRAYCODE_HOST = previousHost
+      characterPresentation.mode = 'chat'; characterPresentation.conversationId = null
+    }
   })
 
   test('打开会话期间进入设置，迟到的打开完成不能把视图拉回聊天', async () => {

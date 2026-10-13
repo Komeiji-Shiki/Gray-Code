@@ -14,6 +14,7 @@ import '@vscode/codicons/dist/codicon.css';
 import { applyDesktopAppearance } from './appearance';
 import { invalidateWorkspaceAssets } from '../components/common/markdown/markdownItCore';
 import { trackPreferenceRequest, desktopSettingsDraft, saveDesktopSettings } from './settingsDraft';
+import { characterPresentation } from './characterPresentation';
 
 const bridge = (window.parent as unknown as { graycode: DesktopBridge }).graycode;
 if (!bridge) throw new Error('The desktop host is unavailable.');
@@ -29,9 +30,13 @@ if (isMonitorView) {
 const subscribers = new Set<(message: unknown) => void>();
 const lifetime = new AbortController();
 let shellShortcutBindings: ShellShortcutBinding[] = [];
-function receiveShellShortcuts(event: MessageEvent) {
-  if (event.source !== window.parent || event.origin !== window.location.origin || event.data?.type !== SHELL_SHORTCUTS_MESSAGE) return;
-  if (Array.isArray(event.data.bindings)) shellShortcutBindings = event.data.bindings;
+function receiveShellMessage(event: MessageEvent) {
+  if (event.source !== window.parent || event.origin !== window.location.origin) return;
+  if (event.data?.type === SHELL_SHORTCUTS_MESSAGE && Array.isArray(event.data.bindings)) shellShortcutBindings = event.data.bindings;
+  if (event.data?.type === 'command' && event.data.command === 'platform.modeSelected') {
+    const mode = event.data.data?.mode;
+    if (mode === 'chat' || mode === 'code' || mode === 'character') characterPresentation.mode = mode;
+  }
 }
 function forwardShellShortcut(event: KeyboardEvent) {
   if (event.defaultPrevented || event.isComposing || event.repeat || (event.target as Element | null)?.closest?.('.monaco-editor')) return;
@@ -41,7 +46,7 @@ function forwardShellShortcut(event: KeyboardEvent) {
   window.parent.postMessage({ type: SHELL_SHORTCUT_MESSAGE, command: binding.command }, window.location.origin === 'null' ? '*' : window.location.origin);
 }
 if (!isMonitorView) {
-  window.addEventListener('message', receiveShellShortcuts, { signal: lifetime.signal });
+  window.addEventListener('message', receiveShellMessage, { signal: lifetime.signal });
   window.addEventListener('keydown', forwardShellShortcut, { signal: lifetime.signal });
   window.parent.postMessage({ type: SHELL_SHORTCUTS_MESSAGE }, window.location.origin === 'null' ? '*' : window.location.origin);
 }

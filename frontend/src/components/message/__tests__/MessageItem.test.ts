@@ -79,6 +79,15 @@ function mountItem(message: Message) {
 }
 
 describe('普通消息操作与只读限制', () => {
+  test('助手头部只读取消息的 modelVersion，缺失时使用助手角色名称', async () => {
+    const message: Message = { id: 'model-label', role: 'assistant', content: '完成', timestamp: 1,
+      metadata: { modelVersion: 'request-model', model: 'unrelated-model' } }
+    const wrapper = mountItem(message)
+    expect(wrapper.get('.role-label').text()).toBe('request-model')
+    await wrapper.setProps({ message: { ...message, metadata: { model: 'unrelated-model' } } })
+    expect(wrapper.get('.role-label').text()).toBe('助手')
+    wrapper.unmount()
+  })
   function mountMessage(role: Message['role'], restricted = false) {
     return mount(MessageItem, {
       props: {

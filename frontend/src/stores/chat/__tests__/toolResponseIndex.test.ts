@@ -66,6 +66,7 @@ function mockState(messages: Message[] = []): ChatStoreState {
     error: ref(null),
     streamingMessageId: ref(null),
     activeStreamId: ref(null),
+    activeRunStatus: ref(null),
     isWaitingForResponse: ref(false),
     retryStatus: ref(null),
     autoSummaryStatus: ref(null),

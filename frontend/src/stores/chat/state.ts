@@ -448,6 +448,7 @@ export function createChatState(): ChatStoreState {
 
   /** 当前流式请求 ID（用于过滤迟到/过期 chunk） */
   const activeStreamId = ref<string | null>(null)
+  const activeRunStatus = ref<ChatStoreState['activeRunStatus']['value']>(null)
   
   /** 等待AI响应状态 - 用于显示等待动画 */
   const isWaitingForResponse = ref(false)
@@ -586,6 +587,7 @@ export function createChatState(): ChatStoreState {
     error,
     streamingMessageId,
     activeStreamId,
+    activeRunStatus,
     smoothTexts,
     smoothMode,
     isWaitingForResponse,

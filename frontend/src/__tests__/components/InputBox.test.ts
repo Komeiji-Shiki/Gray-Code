@@ -2,10 +2,22 @@ import { mount, type VueWrapper } from '@vue/test-utils'
 import { afterEach, beforeEach, describe, expect, vi } from 'vitest'
 import { nextTick, ref } from 'vue'
 import InputBox from '../../components/input/InputBox.vue'
+import SendButton from '../../components/input/SendButton.vue'
 import type { EditorNode } from '../../types/editorNode'
 
 // 输入框会订阅宿主焦点事件，组件测试提供该接口，不依赖真实 VS Code 全局。
 vi.mock('../../utils/vscode', () => ({ onExtensionCommand: vi.fn(() => () => {}), sendToExtension: vi.fn() }))
+
+test('编辑器不挂键盘说明悬浮提示，发送按钮沿用现有说明位置', async () => {
+  const input = mount(InputBox, { props: { nodes: [] } })
+  const send = mount(SendButton)
+  try {
+    expect(input.get('.input-editor').attributes('title')).toBeUndefined()
+    expect(send.get('.send-button').attributes('title')).toContain('Shift+Enter')
+    await send.setProps({ loading: true })
+    expect(send.findAll('.send-button')[0].attributes('title')).toContain('Shift+Enter')
+  } finally { input.unmount(); send.unmount() }
+})
 
 function createClipboardItem(kind: 'string' | 'file', file: File | null = null): DataTransferItem {
   return {

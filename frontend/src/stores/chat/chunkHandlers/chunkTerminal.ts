@@ -130,6 +130,7 @@ export function handleComplete(
   
   state.streamingMessageId.value = null
   state.activeStreamId.value = null
+  state.activeRunStatus.value = null
   state.isStreaming.value = false
   state.isWaitingForResponse.value = false  // 结束等待
   state.autoSummaryStatus.value = null
@@ -315,6 +316,7 @@ export function handleCancelled(chunk: StreamChunk, state: ChatStoreState): void
   finishSmoothStreamForState(state, streamMessageIdAtStart)
   state.streamingMessageId.value = null
   state.activeStreamId.value = null
+  state.activeRunStatus.value = null
   state.isStreaming.value = false
   state.isWaitingForResponse.value = false
   // 本轮 base 估算不参与下轮校准：被中止的流累计的字符混入下一次流的 realTokens 会拉偏因子
@@ -423,6 +425,7 @@ export function handleError(chunk: StreamChunk, state: ChatStoreState): void {
   }
   
   state.activeStreamId.value = null
+  state.activeRunStatus.value = null
   state.isStreaming.value = false
   state.isWaitingForResponse.value = false  // 结束等待
   state.autoSummaryStatus.value = null

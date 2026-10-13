@@ -1,12 +1,20 @@
-import { lazyToolComponent, registerTool } from '../../toolRegistry'
+import { DefaultToolResult, lazyToolComponent, registerTool } from '../../toolRegistry'
 import { getToolDisplayName } from '../../toolLocalization'
-import { toolIcon, toolSummary } from '../../toolPresentation'
+import { toolIcon, toolQuestionTitle, toolSummary } from '../../toolPresentation'
 
 const WorkspaceToolResult = lazyToolComponent(() => import('../../../components/tools/platform/WorkspaceToolResult.vue'))
 const ProcessToolResult = lazyToolComponent(() => import('../../../components/tools/platform/ProcessToolResult.vue'))
 const TerminalTaskResult = lazyToolComponent(() => import('../../../components/tools/platform/TerminalTaskResult.vue'))
 const TeamToolResult = lazyToolComponent(() => import('../../../components/tools/platform/TeamToolResult.vue'))
 const LongMemoryToolResult = lazyToolComponent(() => import('../../../components/tools/platform/LongMemoryToolResult.vue'))
+
+registerTool('ask_user', {
+  name: 'ask_user',
+  icon: 'codicon-comment-discussion',
+  labelFormatter: toolQuestionTitle,
+  descriptionFormatter: () => '',
+  contentComponent: DefaultToolResult,
+})
 
 // 只注册独立平台的新协议；旧 memory_wake/note/recall 等工程日志面板保持不变。
 for (const [names, component] of [

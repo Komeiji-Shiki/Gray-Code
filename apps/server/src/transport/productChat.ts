@@ -171,7 +171,8 @@ export class ProductChat {
     const content = stream.phase === 'tools' && stream.content ? stream.content : {
       ...stream.accumulator.getStreamingContent(), id: `live:${run.id}:${run.iteration}`, role: 'model', runId: run.id,
     };
-    this.emitClient(stream, client.clientId, { type: 'chunk', resumeSnapshot: true, chunk: { delta: [], done: false, contentSnapshot: content } });
+    this.emitClient(stream, client.clientId, { type: 'chunk', resumeSnapshot: true, runStatus: run.status,
+      chunk: { delta: [], done: false, contentSnapshot: content } });
     if (stream.phase === 'tools' && stream.content) {
       this.emitClient(stream, client.clientId, { type: 'toolsExecuting', toolsExecuting: true, content: stream.content });
       for (const result of stream.results) this.emitClient(stream, client.clientId, { type: 'toolStatus', toolStatus: true,
@@ -383,6 +384,7 @@ export class ProductChat {
     }
     if (notification.type !== 'event') return;
     const event = notification.event;
+    if (notification.status) this.emit(stream, { type: 'runStatus', runStatus: notification.status });
     if (event.type === 'model.started') {
       stream.phase = 'model'; stream.content = undefined; stream.accumulator.reset();
     } else if (event.type === 'context.summary.started' || event.type === 'context.summary.failed') {
