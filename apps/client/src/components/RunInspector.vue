@@ -6,6 +6,7 @@ import { rpc as call, subscribe } from '../api';
 import { state } from '../state';
 import JsonDetails from './JsonDetails.vue';
 import NavigationIcon from './navigation/NavigationIcon.vue';
+import '../../../../frontend/src/styles/disclosure.css';
 import { webUi } from '../webBridge';
 import { eventLabels, eventLane, eventLaneLabel, type EventLane, mergeRunEvents, requestGroups, runActivity, type RequestSnapshot } from '../runInspector';
 
@@ -136,10 +137,7 @@ async function showRequest(iteration: number, automatic = false) {
   request.value = null;
   requestLoading.value = true;
   try {
-    let result = await call('runs.request', { id, iteration });
-    if (epoch !== previewEpoch) return;
-    // 运行轮次在准备上下文时就会前进，此时最近已经发出的请求仍是上一轮。
-    if (!result && automatic && iteration > 1) result = await call('runs.request', { id, iteration: iteration - 1 });
+    const result = await call('runs.request', { id, iteration });
     if (epoch !== previewEpoch) return;
     request.value = result;
     if (!result && !automatic) error.value = t('uiRunInspectorRequestBodyNotSaved');
@@ -150,9 +148,8 @@ async function showRequest(iteration: number, automatic = false) {
   }
 }
 function previewLatestRequest() {
-  if (!open.value || !followLatestRequest) return;
-  const iteration = Math.max(selected.value?.iteration ?? 0, Number(latestRequest.value?.payload.iteration ?? 0));
-  if (iteration > 0) void showRequest(iteration, true);
+  if (!open.value || !followLatestRequest || !latestRequest.value) return;
+  void showRequest(Number(latestRequest.value.payload.iteration), true);
 }
 function refreshSoon() {
   if (refreshTimer) return;
@@ -184,7 +181,7 @@ watch(selectedId, () => {
   more.value = false;
   void loadEvents();
 });
-watch([open, selectedId, () => selected.value?.iteration, () => latestRequest.value?.sequence], previewLatestRequest);
+watch([open, selectedId, () => latestRequest.value?.sequence], previewLatestRequest);
 const unsubscribe = subscribe((notification) => {
   if (notification.type === 'transport.connected') {
     void loadRuns();
@@ -240,9 +237,9 @@ onUnmounted(() => {
       {{ error }}
       <button @click="error = ''">{{ t('uiComputerPaneCollapse') }}</button>
     </p>
-    <details v-if="diagnostics" class="inspector-diagnostics">
-      <summary class="inspector-disclosure">
-        <NavigationIcon name="chevron" class="disclosure-chevron" />
+    <details v-if="diagnostics" class="inspector-diagnostics gc-disclosure">
+      <summary>
+        <NavigationIcon name="chevron" class="gc-disclosure-chevron" />
         {{ t('uiRunInspectorDiagnostics') }}
       </summary>
       <div class="inspector-metrics" :aria-label="t('uiRunInspectorResourceDiagnosticsSnapshot')">
@@ -308,14 +305,14 @@ onUnmounted(() => {
             :label="t('uiRunInspectorTurnResourceActivation')"
             :value="request.turnContext.characterTurn"
           />
-          <pre v-if="view === 'plain'">{{ plainRequestBody }}</pre>
+          <pre v-if="view === 'plain'" class="gc-disclosure-content">{{ plainRequestBody }}</pre>
           <template v-else>
-            <details v-for="(group, index) in groups" :key="index" class="request-group" open>
-              <summary class="inspector-disclosure">
-                <NavigationIcon name="chevron" class="disclosure-chevron" />
+            <details v-for="(group, index) in groups" :key="index" class="request-group gc-disclosure" open>
+              <summary>
+                <NavigationIcon name="chevron" class="gc-disclosure-chevron" />
                 {{ group.title }}
               </summary>
-              <pre>{{ group.text }}</pre>
+              <pre class="gc-disclosure-content">{{ group.text }}</pre>
             </details>
           </template>
         </template>
@@ -329,33 +326,13 @@ onUnmounted(() => {
   border-bottom: 1px solid var(--gc-border-subtle);
   color: var(--gc-text-muted);
 }
-.inspector-disclosure {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  font-size: 12px;
-  line-height: 1.65;
-  list-style: none;
-  cursor: pointer;
-}
-.inspector-disclosure::-webkit-details-marker {
-  display: none;
-}
-.disclosure-chevron {
-  width: 14px;
-  height: 14px;
-  flex-shrink: 0;
-}
-details[open] > .inspector-disclosure .disclosure-chevron {
-  transform: rotate(90deg);
-}
 .inspector-metrics {
   display: flex;
   gap: 8px 20px;
   flex-wrap: wrap;
   padding-top: 8px;
   color: var(--gc-text-muted);
-  font-size: 12px;
+  font-size: var(--gc-font-size-body);
 }
 .run-status-strip {
   display: flex;
@@ -364,11 +341,11 @@ details[open] > .inspector-disclosure .disclosure-chevron {
   min-height: 30px;
   padding: 0 14px;
   color: var(--gc-text-muted);
-  font-size: 12px;
+  font-size: var(--gc-font-size-body);
 }
 .run-status-strip button {
   margin-left: auto;
-  font-size: 12px;
+  font-size: var(--gc-font-size-body);
 }
 .run-status-dot {
   width: 6px;
@@ -453,18 +430,15 @@ details[open] > .inspector-disclosure .disclosure-chevron {
 .timeline-event time,
 .timeline-event span {
   color: var(--gc-text-muted);
-  font-size: 11px;
+  font-size: var(--gc-font-size-caption);
 }
 .timeline-event strong {
-  font-size: 12px;
+  font-size: var(--gc-font-size-body);
 }
 .timeline-event details {
   margin-top: 6px;
 }
 .run-inspector pre {
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
-  font: 12px/1.65 var(--gc-font-code);
   margin: 10px 0;
 }
 .request-preview > header {
@@ -476,7 +450,7 @@ details[open] > .inspector-disclosure .disclosure-chevron {
 .preview-note,
 .inspector-empty {
   color: var(--gc-text-muted);
-  font-size: 12px;
+  font-size: var(--gc-font-size-body);
   line-height: 1.7;
 }
 .request-group {

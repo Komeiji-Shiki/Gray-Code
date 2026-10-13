@@ -1,0 +1,36 @@
+/* 外壳与聊天共用折叠外观，组件只保留各自的间距和颜色。 */
+.gc-disclosure > summary {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: var(--gc-font-size-body);
+  line-height: var(--gc-line-height-relaxed);
+  list-style: none;
+  cursor: pointer;
+}
+
+.gc-disclosure > summary::-webkit-details-marker {
+  display: none;
+}
+
+.gc-disclosure > summary:focus-visible {
+  outline: 1px solid var(--gc-focus-border);
+  outline-offset: 2px;
+}
+
+.gc-disclosure-chevron {
+  width: var(--gc-icon-size-sm);
+  height: var(--gc-icon-size-sm);
+  flex-shrink: 0;
+  font-size: var(--gc-font-size-title);
+}
+
+.gc-disclosure[open] > summary .gc-disclosure-chevron {
+  transform: rotate(90deg);
+}
+
+.gc-disclosure-content {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font: var(--gc-font-size-code)/var(--gc-line-height-relaxed) var(--gc-font-code);
+}
