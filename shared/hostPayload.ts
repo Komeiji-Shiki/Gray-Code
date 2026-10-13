@@ -1,28 +1,55 @@
 /** 解除宿主请求中的 Vue 代理；值的支持范围与序列化语义由正式传输决定。 */
 export function prepareHostPayload<T>(value: T, toRaw: (value: object) => object): T {
-  const visited = new WeakMap<object, object>();
-  const visit = (input: unknown): unknown => {
+  interface PayloadNode {
+    raw: object;
+    parents: Set<PayloadNode>;
+    copy?: object;
+  }
+  const visited = new WeakMap<object, PayloadNode>();
+  const changed: PayloadNode[] = [];
+  const copyNode = (node: PayloadNode): void => {
+    if (node.copy) return;
+    node.copy = Array.isArray(node.raw) ? new Array(node.raw.length) : Object.create(Object.getPrototypeOf(node.raw));
+    changed.push(node);
+  };
+  const visit = (input: unknown, parent?: PayloadNode): unknown => {
     if (input === null || typeof input !== 'object') return input;
     const raw = toRaw(input);
-    const previous = visited.get(raw);
-    if (previous) return previous;
-    const array = Array.isArray(raw);
     const prototype = Object.getPrototypeOf(raw);
-    if (!array && prototype !== Object.prototype && prototype !== null) return raw;
-
-    const copy: object = array ? new Array((raw as unknown[]).length) : Object.create(prototype);
-    // 提前登记，保持共享引用和结构化克隆支持的循环关系。
-    visited.set(raw, copy);
-    let changed = raw !== input;
-    for (const key of Object.keys(raw)) {
-      const original = (raw as Record<string, unknown>)[key];
-      const item = visit(original);
-      Object.defineProperty(copy, key, { value: item, enumerable: true, writable: true, configurable: true });
-      changed ||= !Object.is(item, original);
+    if (!Array.isArray(raw) && prototype !== Object.prototype && prototype !== null) {
+      if (parent && raw !== input) copyNode(parent);
+      return raw;
     }
-    const result = changed ? copy : raw;
-    visited.set(raw, result);
-    return result;
+
+    let node = visited.get(raw);
+    const known = node !== undefined;
+    if (!node) {
+      node = { raw, parents: new Set() };
+      visited.set(raw, node);
+    }
+    if (parent) node.parents.add(parent);
+    if (raw !== input) copyNode(node);
+    if (!known) {
+      for (const key of Object.keys(raw)) visit((raw as Record<string, unknown>)[key], node);
+    }
+    return raw;
   };
-  return visit(value) as T;
+  const raw = visit(value);
+  // 先收集完整父引用，再传播变化；循环中的代理即使较晚出现，也能更新所有引用它的分支。
+  for (let index = 0; index < changed.length; index++) {
+    for (const parent of changed[index].parents) copyNode(parent);
+  }
+  const resolve = (input: unknown): unknown => {
+    if (input === null || typeof input !== 'object') return input;
+    const original = toRaw(input);
+    return visited.get(original)?.copy ?? original;
+  };
+  // 所有需要的副本已经分配，直接连接共享引用和循环；未变化的对象从未创建数据副本。
+  for (const node of changed) {
+    for (const key of Object.keys(node.raw)) {
+      const item = resolve((node.raw as Record<string, unknown>)[key]);
+      Object.defineProperty(node.copy, key, { value: item, enumerable: true, writable: true, configurable: true });
+    }
+  }
+  return resolve(raw) as T;
 }

@@ -77,6 +77,44 @@ test('解除代理不改写值，正式传输保留特殊值和循环关系', ()
   expect(copied.self).toBe(copied)
 })
 
+test('没有代理的对象图和循环直接复用，不创建后丢弃数据副本', () => {
+  const value = { fields: { enabled: true }, items: [1, , 3], self: undefined as unknown }
+  value.self = value
+  const create = vi.spyOn(Object, 'create')
+  const define = vi.spyOn(Object, 'defineProperty')
+  let prepared: typeof value
+  let created: number
+  let defined: number
+  try {
+    prepared = prepareHostPayload(value, toRaw)
+    created = create.mock.calls.length
+    defined = define.mock.calls.length
+  } finally {
+    create.mockRestore()
+    define.mockRestore()
+  }
+  expect(prepared).toBe(value)
+  expect(prepared.self).toBe(prepared)
+  expect(created).toBe(0)
+  expect(defined).toBe(0)
+})
+
+test.each([false, true])('代理先出现=%s时，共享节点和循环仍指向同一副本', proxyFirst => {
+  const node = { owner: undefined as unknown, enabled: true }
+  const proxy = reactive(node)
+  const attachment = { data: 'unchanged' }
+  const value = proxyFirst ? { proxy, node, attachment } : { node, proxy, attachment }
+  node.owner = value
+  const prepared = prepareHostPayload(value, toRaw)
+  expect(prepared).not.toBe(value)
+  expect(prepared.node).not.toBe(node)
+  expect(prepared.proxy).toBe(prepared.node)
+  expect(prepared.node.owner).toBe(prepared)
+  expect(prepared.attachment).toBe(attachment)
+  expect(isProxy(prepared.proxy)).toBe(false)
+  expect(node.owner).toBe(value)
+})
+
 test('不可克隆的参数由正式发送拒绝，不用JSON改写后重试', async () => {
   post.mockImplementationOnce((message: unknown) => structuredClone(message))
   await expect(sendToExtension('settings.fixture', { callback: () => {} })).rejects.toThrow()
