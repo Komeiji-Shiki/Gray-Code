@@ -5,6 +5,7 @@ import { constants, zstdCompressSync, zstdDecompressSync } from 'node:zlib';
 import { decode, encode, ExtData } from '@msgpack/msgpack';
 import type { SqliteConnection } from './schema';
 import { PlatformStorageError, invalid } from '../errors';
+import { RequestValueCache } from './requestValues';
 
 const CHUNK_BYTES = 256 * 1024;
 const EXTERNAL_OBJECT_BYTES = 1024 * 1024;
@@ -40,6 +41,7 @@ interface ChunkRow { hash: Buffer; raw_bytes: number; codec: number; data: Buffe
 
 /** Immutable, chunked content. SQL references commit only after external bytes are durable. */
 export class ObjectStore {
+  private readonly requestValues = new RequestValueCache();
   constructor(private readonly db: SqliteConnection, private readonly root: string) {
     fs.mkdirSync(root, { recursive: true });
   }
@@ -94,16 +96,19 @@ export class ObjectStore {
   }
 
   /** Only objects referenced by the selected message are decoded; attachments remain lossless. */
-  putValue(value: unknown, deduplicateRequestArrays = false, shareLargeMaps = false): Buffer {
+  putValue(value: unknown, deduplicateRequestArrays = false, shareLargeMaps = false, requestCacheScope?: string): Buffer {
     const children: Buffer[] = [];
     const ancestors = new Set<object>();
+    const cacheRequest = deduplicateRequestArrays && requestCacheScope !== undefined;
+    const objectExists = cacheRequest ? this.db.prepare('SELECT 1 FROM objects WHERE hash=?') : undefined;
+    const childPath = (path: string, name: string | number) => cacheRequest ? `${path}/${JSON.stringify(name)}` : '';
     const edge = this.db.prepare('INSERT OR IGNORE INTO object_edges(parent_hash,child_hash) VALUES(?,?)');
     const writeValue = (transformed: unknown, references: Buffer[]) => {
       const hash = this.put(encode(transformed, { sortKeys: true }));
       references.forEach(child => edge.run(hash, child));
       return hash;
     };
-    const transform = (input: unknown, key: string, depth: number): unknown => {
+    const transform = (input: unknown, key: string, depth: number, path: string): unknown => {
       if (depth > 128) invalid('Stored value nesting exceeds 128 levels.');
       if (input === null || typeof input === 'boolean') return input;
       if (input instanceof Uint8Array) {
@@ -135,12 +140,22 @@ export class ObjectStore {
       if (!Array.isArray(input) && proto !== Object.prototype && proto !== null) invalid('Stored values must use plain objects.');
       ancestors.add(input);
       try {
-        if (Array.isArray(input)) return input.map(item => {
+        if (Array.isArray(input)) return input.map((item, index) => {
+          const shared = deduplicateRequestArrays && REQUEST_ARRAY_FIELDS.has(key) && item && typeof item === 'object' && !Array.isArray(item);
+          const itemPath = childPath(path, index);
+          const cacheKey = cacheRequest && shared ? JSON.stringify([requestCacheScope, itemPath]) : undefined;
+          const cached = cacheKey === undefined ? undefined : this.requestValues.find(cacheKey, item);
+          // 回滚或 GC 可能移除已缓存的对象，只复用数据库中仍然存在的引用。
+          if (cached && objectExists!.get(cached.hash)) {
+            children.push(cached.hash);
+            return new ExtData(VALUE_REFERENCE, cached.hash);
+          }
           const start = children.length;
-          const transformed = transform(item === undefined ? null : item, '', depth + 1);
-          if (!deduplicateRequestArrays || !REQUEST_ARRAY_FIELDS.has(key) || !item || typeof item !== 'object' || Array.isArray(item)) return transformed;
+          const transformed = transform(item === undefined ? null : item, '', depth + 1, itemPath);
+          if (!shared) return transformed;
           // 请求中的旧消息和工具定义按内容共享；每个引用保留自己的附件边，备份与回收沿原对象图处理。
           const child = writeValue(transformed, children.splice(start));
+          if (cacheKey !== undefined) this.requestValues.remember(cacheKey, item, child);
           children.push(child);
           return new ExtData(VALUE_REFERENCE, child);
         });
@@ -148,7 +163,7 @@ export class ObjectStore {
         if (Object.keys(record).some(name => name === '__proto__' || INVALID_UTF16.test(name))) {
           // MessagePack's safe map decoder rejects __proto__; encode such dictionaries as entry data.
           const entries = Object.entries(record).filter(([, item]) => item !== undefined)
-            .map(([name, item]) => [transform(name, '', depth + 1), transform(item, name, depth + 1)]);
+            .map(([name, item]) => [transform(name, '', depth + 1, ''), transform(item, name, depth + 1, childPath(path, name))]);
           return new ExtData(DICTIONARY_VALUE, encode(entries));
         }
         if (key === 'inlineData' && typeof record.mimeType === 'string' && typeof record.data === 'string') {
@@ -158,14 +173,14 @@ export class ObjectStore {
             const child = this.put(binary);
             children.push(child);
             return Object.fromEntries(Object.entries(record).map(([name, item]) => [name,
-              name === 'data' ? new ExtData(ATTACHMENT_REFERENCE, child) : transform(item, name, depth + 1),
+              name === 'data' ? new ExtData(ATTACHMENT_REFERENCE, child) : transform(item, name, depth + 1, childPath(path, name)),
             ]));
           }
         }
         const start = children.length;
         const entries = Object.entries(record)
           .filter(([, item]) => item !== undefined)
-          .map(([name, item]) => [name, transform(item, name, depth + 1)]);
+          .map(([name, item]) => [name, transform(item, name, depth + 1, childPath(path, name))]);
         const transformed = Object.fromEntries(entries);
         if (depth > 0 && (key === 'characterTurn' || shareLargeMaps && entries.length >= SHARED_MAP_ENTRIES)) {
           // 角色回合与大型字典共用既有值引用，专门用例覆盖旧历史、备份、分叉与回收。
@@ -176,8 +191,16 @@ export class ObjectStore {
         return transformed;
       } finally { ancestors.delete(input); }
     };
-    return writeValue(transform(value, '', 0), children);
+    try {
+      const hash = writeValue(transform(value, '', 0, ''), children);
+      if (cacheRequest) this.requestValues.commit();
+      return hash;
+    } finally {
+      if (cacheRequest) this.requestValues.discard();
+    }
   }
+
+  clearRequestCache(): void { this.requestValues.clear(); }
 
   getValue<T = unknown>(hash: Buffer, projection?: ValueProjection,
     additionalSelection?: (projected: T) => ValueSelection | undefined): T {

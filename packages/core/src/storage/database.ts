@@ -420,7 +420,8 @@ export class PlatformDatabase {
         const revision = (current?.revision ?? 0) + 1;
         this.db.prepare(`INSERT INTO records(namespace,id,owner_id,value_hash,revision) VALUES(?,?,?,?,?)
           ON CONFLICT(namespace,id) DO UPDATE SET owner_id=excluded.owner_id,value_hash=excluded.value_hash,revision=excluded.revision`)
-          .run(record.namespace, record.id, record.ownerId ?? null, this.objects.putValue(record.value, record.namespace === 'model-requests', record.namespace === 'workspace-checkpoints'), revision);
+          .run(record.namespace, record.id, record.ownerId ?? null, this.objects.putValue(record.value,
+            record.namespace === 'model-requests', record.namespace === 'workspace-checkpoints', record.ownerId ?? record.id), revision);
         return { namespace: record.namespace, id: record.id, revision };
       });
     })();
@@ -704,6 +705,7 @@ export class PlatformDatabase {
   private collectGarbage(): StorageOperations['collectGarbage']['output'] {
     // 回收会删除未引用的段，后续 SQLite 可能复用编号，已有运行下次重新取得完整快照。
     this.histories.clearSnapshots();
+    this.objects.clearRequestCache();
     const result = this.db.transaction(() => {
       this.db.prepare(`DELETE FROM histories WHERE id NOT IN (
         SELECT history_id FROM conversations UNION SELECT history_id FROM snapshots
