@@ -6,7 +6,8 @@
  * 流式指示器、底部统计、任务卡片。所有状态与副作用从 MessageItem 原样迁入，
  * 对外仅接收 message 一个 prop。
  */
-import { ref, computed, watch, onUnmounted, type ComponentPublicInstance } from 'vue'
+import { ref, computed, inject, watch, onUnmounted, type ComponentPublicInstance } from 'vue'
+import { messageSmoothTextKey } from '../../../composables/messageConversationContext'
 import MessageAttachments from '../MessageAttachments.vue'
 import MessageTaskCards from '../MessageTaskCards.vue'
 import InlineContextMessage from '../InlineContextMessage.vue'
@@ -59,7 +60,8 @@ const isStreaming = computed(() => props.message.streaming === true)
 // 平滑流式显示层：当前消息正在流出的段落（最后一个 text/thought part）的平滑文本。
 // 流式期间存在（含空字符串占位，表示新段落从 0 开始打字），终结后由 store 删除。
 // 测试 mock 状态可能不含 smoothTexts，缺失时按 undefined 处理（无可选链兜底语义不变）
-const smoothText = computed<SmoothDisplayText | undefined>(() => chatStore.smoothTexts?.get(props.message.id))
+const readSmoothText = inject(messageSmoothTextKey, (id: string) => chatStore.smoothTexts?.get(id))
+const smoothText = computed<SmoothDisplayText | undefined>(() => readSmoothText(props.message.id))
 
 // 活动尾块平滑显示层：tailInfo + 正文 text 尾块 CharFlow 宿主生命周期
 const {

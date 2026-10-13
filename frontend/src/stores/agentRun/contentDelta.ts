@@ -135,7 +135,7 @@ export interface AgentRunStreamUpdate {
 }
 
 // 同一流式基线之前的历史保持不变。只保留身份与变化起点，不串联旧数组以免长期保留每帧快照。
-const streamContentChanges = new WeakMap<Content[], { lineage: object; start: number }>()
+const streamContentChanges = new WeakMap<Content[], { lineage: object; start: number; snapshotVersion: number }>()
 
 export function getStreamContentChangeStart(previous: Content[], next: Content[]): number | undefined {
   previous = toRaw(previous)
@@ -144,6 +144,13 @@ export function getStreamContentChangeStart(previous: Content[], next: Content[]
   const before = streamContentChanges.get(previous)
   const after = streamContentChanges.get(next)
   return before && after && after.lineage === before.lineage ? after.start : undefined
+}
+
+/** 只有同一基线上的纯追加才能按长度取显示增量；权威快照必须重新建立真实文本基线。 */
+export function isAppendOnlyStreamChange(previous: Content[], next: Content[]): boolean {
+  const before = streamContentChanges.get(toRaw(previous))
+  const after = streamContentChanges.get(toRaw(next))
+  return !!before && !!after && before.lineage === after.lineage && before.snapshotVersion === after.snapshotVersion
 }
 
 export function applyStreamChunkToContents(
@@ -159,13 +166,15 @@ export function applyStreamUpdatesToContents(contents: Content[], updates: reado
   const source = toRaw(contents || [])
   const next = [...source]
   const writable = new Set<Content>()
-  const baseline = streamContentChanges.get(source) ?? { lineage: {}, start: source.length }
+  const baseline = streamContentChanges.get(source) ?? { lineage: {}, start: source.length, snapshotVersion: 0 }
   streamContentChanges.set(source, baseline)
   let changedFrom = baseline.start
+  let snapshotVersion = baseline.snapshotVersion
 
   for (const { chunk, timestamp } of updates) {
     const snapshot = chunk?.contentSnapshot as Content | undefined
     if (snapshot?.parts) {
+      snapshotVersion++
       const replacement = cloneContent({
         ...snapshot,
         timestamp: snapshot.timestamp || timestamp,
@@ -215,6 +224,6 @@ export function applyStreamUpdatesToContents(contents: Content[], updates: reado
     if (chunk?.thinkingStartTime) modelContent.thinkingStartTime = chunk.thinkingStartTime
   }
 
-  streamContentChanges.set(next, { lineage: baseline.lineage, start: changedFrom })
+  streamContentChanges.set(next, { lineage: baseline.lineage, start: changedFrom, snapshotVersion })
   return next
 }

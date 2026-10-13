@@ -4,6 +4,7 @@ import type { SubAgentRunEvent, SubAgentRunManifest, SubAgentRunContentWindow, S
 import { useMonitorControls } from './useMonitorControls'
 import { useMonitorMessageProjection } from './useMonitorMessageProjection'
 import { useMonitorMessageWindow } from './useMonitorMessageWindow'
+import { useMonitorSmoothText } from './useMonitorSmoothText'
 import MonitorElapsed from './MonitorElapsed.vue'
 import type { SubAgentContextCompactionRecord } from '@shared/subAgentContextCompaction'
 import { computed, nextTick, onMounted, onBeforeUnmount, provide, ref, watch } from 'vue'
@@ -563,6 +564,7 @@ const {
 })
 const floorByMessageId = messageProjection.floorByMessageId
 const renderMessages = computed(() => messageProjection.render(visibleRows.value))
+useMonitorSmoothText(renderMessages, () => focusedWindow.value?.contents)
 const focusedContextCompactions = computed(() => {
   const runId = focusedRun.value?.runId
   return runId ? contextCompactionsByRunId.value[runId] || [] : []

@@ -4,6 +4,17 @@ import type { RenderBlock } from '../components/message/renderBlocks'
 import type { SmoothDisplayText } from '../stores/chat/types'
 import { registerSmoothDisplay, unregisterSmoothDisplay } from '../stores/chat/smoothStreamManager'
 
+export function getSmoothTextTail(message: Message): { type: 'text' | 'thought'; partKey: string; text: string } | null {
+  const parts = message.parts
+  const last = parts?.at(-1)
+  if (!parts || typeof last?.text !== 'string' || !last.text.trim()) return null
+  const type = last.thought === true ? 'thought' : 'text'
+  const previous = parts.at(-2)
+  // 相邻同类片段由渲染器合成一个块，不能只用尾片段替代整个块。
+  if (previous && typeof previous.text === 'string' && (previous.thought === true ? 'thought' : 'text') === type) return null
+  return { type, partKey: `${type}:${parts.length - 1}`, text: last.text }
+}
+
 /**
  * MessageItem 正文活动尾块（text/thought）的平滑流式显示层（F-07 巨型组件拆分）。
  *
@@ -27,19 +38,8 @@ export function useMessageTextTail(
   const tailInfo = computed<{ type: 'text' | 'thought'; partKey: string } | null>(() => {
     const smooth = smoothText.value
     if (!smooth || !isStreaming.value) return null
-    const parts = getMessage().parts
-    if (!parts || parts.length === 0) return null
-    const lastPart = parts[parts.length - 1]
-    if (typeof lastPart.text !== 'string' || !lastPart.text.trim()) return null
-
-    const type = lastPart.thought === true ? 'thought' : 'text'
-    const prevPart = parts[parts.length - 2]
-    const prevType = prevPart?.thought === true ? 'thought' : 'text'
-    if (prevPart && typeof prevPart.text === 'string' && prevType === type) return null
-
-    const key = `${type}:${parts.length - 1}`
-    if (key !== smooth.partKey) return null
-    return { type, partKey: key }
+    const tail = getSmoothTextTail(getMessage())
+    return tail?.partKey === smooth.partKey ? tail : null
   })
 
   function isSmoothThoughtBlock(block: RenderBlock): boolean {

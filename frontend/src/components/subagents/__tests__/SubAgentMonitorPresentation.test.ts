@@ -8,6 +8,7 @@ import { useSettingsStore } from '@/stores/settingsStore'
 import { useLanguageSettings } from '@/composables/useLanguageSettings'
 import SubAgentMonitor from '../SubAgentMonitor.vue'
 import type { SubAgentRunContentWindowState } from '../monitorWindowState'
+import { hasSmoothStream } from '../../../stores/chat/smoothStreamManager'
 
 const bridge = vi.hoisted(() => ({ send: vi.fn(), listeners: new Set<(message: any) => void>() }))
 vi.mock('@/utils/vscode', () => ({
@@ -64,6 +65,21 @@ async function mountMonitor() {
 }
 
 describe('Monitor 复用真实 MessageItem / StreamingIndicator', () => {
+  test('独立监视器恢复平滑正文基线，暂停后释放显示流并交还真实正文', async () => {
+    const view = await mountMonitor()
+    expect(hasSmoothStream('a_7')).toBe(true)
+    expect(view.get('[data-message-id="a_7"]').text()).toContain('reply 7')
+    status('paused')
+    await flushPromises()
+    expect(hasSmoothStream('a_7')).toBe(false)
+    status('running')
+    await flushPromises()
+    expect(hasSmoothStream('a_7')).toBe(true)
+    view.unmount()
+    wrapper = undefined
+    expect(hasSmoothStream('a_7')).toBe(false)
+  })
+
   test('独立入口加载已保存文案；设置保存和清空实时响应，不重拉历史', async () => {
     const view = await mountMonitor()
     expect(view.findAll('.message-floor').map(floor => floor.text())).toEqual(['#4', '#5'])

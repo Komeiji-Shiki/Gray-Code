@@ -10,7 +10,7 @@
 import { describe, expect } from 'vitest'
 import { reactive, toRaw } from 'vue'
 import type { Content } from '../../../types'
-import { applyStreamChunkToContents, applyStreamUpdatesToContents, getStreamContentChangeStart } from '../contentDelta'
+import { applyStreamChunkToContents, applyStreamUpdatesToContents, getStreamContentChangeStart, isAppendOnlyStreamChange } from '../contentDelta'
 
 test('响应式窗口与原始索引共享追加片段的变化边界', () => {
   const before = reactive([makeModelContent(0), makeModelContent(1)])
@@ -18,6 +18,10 @@ test('响应式窗口与原始索引共享追加片段的变化边界', () => {
   const latest = applyStreamChunkToContents(reactive(after), { delta: [{ text: ' b' }] })
   expect(getStreamContentChangeStart(toRaw(before), after)).toBe(1)
   expect(getStreamContentChangeStart(after, latest)).toBe(1)
+  expect(isAppendOnlyStreamChange(before, reactive(latest))).toBe(true)
+  const replaced = applyStreamChunkToContents(latest, makeSnapshot('权威正文'))
+  expect(isAppendOnlyStreamChange(latest, replaced)).toBe(false)
+  expect(isAppendOnlyStreamChange(replaced, applyStreamChunkToContents(replaced, { delta: [{ text: '继续' }] }))).toBe(true)
   expect(latest[0]).toBe(toRaw(before)[0])
   expect(latest[1].parts[0].text).toBe('model-1 a b')
 })
