@@ -22,7 +22,7 @@ describe('ConversationManager createBranchConversation', () => {
             updatedAt: 2,
             workspaceUri: 'file:///source-workspace',
             custom: {
-                inputModelConfig: { channelId: 'gemini', modelId: 'gemini-2.5-pro' },
+                inputModelConfig: { configId: 'gemini', modelId: 'gemini-2.5-pro' },
                 promptModeConfig: { modeId: 'planner' },
                 inputPinnedFiles: [{ path: 'README.md' }],
                 inputSkills: ['typescript'],
@@ -64,7 +64,7 @@ describe('ConversationManager createBranchConversation', () => {
         expect(branchMetadata).toBeTruthy();
         expect(branchMetadata?.workspaceUri).toBe('file:///source-workspace');
         expect(branchMetadata?.custom).toMatchObject({
-            inputModelConfig: { channelId: 'gemini', modelId: 'gemini-2.5-pro' },
+            inputModelConfig: { configId: 'gemini', modelId: 'gemini-2.5-pro' },
             promptModeConfig: { modeId: 'planner' },
             inputPinnedFiles: [{ path: 'README.md' }],
             inputSkills: ['typescript'],
