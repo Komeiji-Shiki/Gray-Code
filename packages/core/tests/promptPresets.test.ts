@@ -33,7 +33,7 @@ test('converted templates produce the same system and dynamic text with a host-i
   const assembler = new PromptAssembler({ settings: () => settings, workspacePaths: () => [], sections });
   const runtime = { todoList: [{ id: 'a', content: 'Existing task', status: 'pending' }] };
   const converted = migratePromptPreset(legacy);
-  expect(assembler.getSystemPrompt(converted, true, runtime)).toBe(assembler.getSystemPrompt(legacy, true, runtime));
+  expect(assembler.getSystemPrompt(converted, runtime)).toBe(assembler.getSystemPrompt(legacy, runtime));
   const before = assembler.getPromptContextBundle(legacy, runtime);
   const after = assembler.getPromptContextBundle(converted, runtime);
   expect(after.text).toBe(before.text);

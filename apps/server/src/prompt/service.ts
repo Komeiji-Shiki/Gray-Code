@@ -8,7 +8,6 @@ import { stat } from 'node:fs/promises';
 import { pathToFileURL } from 'node:url';
 import type { ActorIdentity, AgentDefinition, PlatformMessage, PlatformConversation, StartRunInput, ContinueRunInput, WorkspaceDefinition } from '@graycode/contracts';
 import { PromptAssembler, type PromptAssemblyHost } from '../../../../backend/modules/prompt/PromptAssembler';
-import { StaticPromptCache } from '../../../../backend/modules/prompt/staticPromptCache';
 import { generateContextBadgeFormatSection, generateMemorySection, wrapPromptSection } from '../../../../backend/modules/prompt/commonSections';
 import { getSingleWorkspaceFileTree } from '../../../../backend/modules/prompt/workspaceFileTree';
 import { normalizePinnedFiles, readPinnedFileCapped, PINNED_FILE_MAX_TOTAL_BYTES } from '../../../../backend/modules/prompt/pinnedFiles';
@@ -37,7 +36,6 @@ function hasApprovedPlanExecution(history: readonly PlatformMessage[]): boolean 
 
 /** Capture each turn once. Tool iterations reuse the captured prompt; history retains prior snapshots. */
 export class PlatformPromptService {
-  private readonly staticPrompts = new StaticPromptCache();
   constructor(private readonly app: PlatformApplication) {}
   async prepare(input: { request: StartRunInput | ContinueRunInput; agent: AgentDefinition; actor: ActorIdentity; workspace?: WorkspaceDefinition;
     history: PlatformMessage[]; conversation: PlatformConversation; previousTurn?: PlatformMessage; clientId?: string; signal?: AbortSignal;
@@ -146,7 +144,7 @@ export class PlatformPromptService {
       getContext: () => ({ workspaceRoot: workspace?.directory, os: os.platform(), timezone: Intl.DateTimeFormat().resolvedOptions().timeZone, currentTime: new Date().toISOString() }),
     };
     const assembler = new PromptAssembler({ settings: () => settings,
-      workspacePaths: () => workspace ? workspaceRoots(workspace).map(root => root.directory) : [], sections }, {}, this.staticPrompts);
+      workspacePaths: () => workspace ? workspaceRoots(workspace).map(root => root.directory) : [], sections });
     const previous = input.history.findLast(message => message.isUserInput && typeof message.turnDynamicContext === 'string');
     const cache = previous ? deserializePromptContextCache(previous.turnDynamicContext as string) : undefined;
     const skills = input.agent.toolNames.includes('read_skill') && (input.actor.role === 'owner' || input.actor.effects.includes('workspace_read'))
@@ -171,7 +169,7 @@ export class PlatformPromptService {
     const companionPetAllowed = toolNames.includes('pet_control')
       && !['ask', 'deny'].includes(input.agent.toolApproval?.pet_control ?? 'auto');
     return {
-      systemPrompt: assembler.getSystemPrompt(mode, false, context) + this.app.companion.prompt(companionTurn, companionPetAllowed),
+      systemPrompt: assembler.getSystemPrompt(mode, context) + this.app.companion.prompt(companionTurn, companionPetAllowed),
       // 计数预览使用空历史，bundle 已是完整文本，复用它避免再次生成目录树与诊断。
       ...(input.preview ? { previewDynamicText: bundle.text } : {}),
       toolNames,

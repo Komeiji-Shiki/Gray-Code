@@ -1,5 +1,4 @@
 import { PromptTemplateRenderer } from './PromptTemplateRenderer'
-import { StaticPromptCache } from './staticPromptCache'
 import type { DynamicRuntimeContext, PromptContextBundle, DynamicContextDiffBase, PromptAssemblyHost } from './promptAssemblyTypes'
 export type { DynamicRuntimeContext, PromptContextBundle, DynamicContextDiffBase, PromptAssemblyHost } from './promptAssemblyTypes'
 
@@ -38,15 +37,14 @@ export {
 } from './pinnedFiles'
 export { getGlobIgnoreRegexCacheStats } from './ignorePatterns'
 
-/** Host-independent preset renderer. Hosts supply context readers; assembly and caching are shared. */
+/** 宿主提供上下文读取端口，模板与回合拼装保持共用。 */
 export class PromptAssembler {
     private readonly renderer: PromptTemplateRenderer
     private config: PromptConfig
     /** 段落生成器（VSCode 副作用读取集中于此） */
     private readonly sections: PromptAssemblyHost['sections']
     
-    constructor(private readonly host: PromptAssemblyHost, config: Partial<PromptConfig> = {},
-        private readonly staticCache = new StaticPromptCache()) {
+    constructor(private readonly host: PromptAssemblyHost, config: Partial<PromptConfig> = {}) {
         this.sections = host.sections
         this.renderer = new PromptTemplateRenderer(host, () => this.config)
         this.config = {
@@ -61,15 +59,6 @@ export class PromptAssembler {
      */
     updateConfig(config: Partial<PromptConfig>): void {
         this.config = { ...this.config, ...config }
-        // 清除缓存
-        this.invalidateCache()
-    }
-    
-    /**
-     * 使缓存失效
-     */
-    invalidateCache(): void {
-        this.staticCache.clear()
     }
 
     private resolvePromptModeSnapshot(modeSnapshot?: ResolvedPromptModeSnapshot): ResolvedPromptModeSnapshot | undefined {
@@ -86,131 +75,8 @@ export class PromptAssembler {
         return settingsManager?.resolvePromptMode()
     }
 
-    private buildPromptCacheKey(modeSnapshot?: ResolvedPromptModeSnapshot, runtime?: DynamicRuntimeContext): string {
-        const settingsManager = this.host.settings()
-        const promptConfig = settingsManager?.getSystemPromptConfig()
-        const resolvedMode = this.resolvePromptModeSnapshot(modeSnapshot)
-        const prefix = promptConfig?.customPrefix || ''
-        const suffix = promptConfig?.customSuffix || ''
-        // 模板文本必须纳入缓存键：只改模板（prefix/suffix/mode 不变）时，
-        // 旧缓存会在最多 60 秒内返回过期提示词。模板可能很长，
-        // 用指纹（长度 + FNV-1a 哈希）代替原文，控制 key 大小与比较成本。
-        const template = resolvedMode?.template ?? promptConfig?.template ?? ''
-        const memoryConfig = settingsManager?.getMemoryConfig?.()
-        const memoryEnabled = memoryConfig?.enabled !== false
-        const memoryPrompt = typeof memoryConfig?.systemPrompt === 'string' ? memoryConfig.systemPrompt : ''
-        // 环境输入纳入缓存键：ENVIRONMENT 段含工作区集合与渲染语言——渲染用
-        // getUserLanguage()（显式语言设置优先，'auto' 回落 vscode.env.language），
-        // 键必须与其一致，否则显式设置语言后键不变、TTL 内滞留旧语言提示词（第五轮 LOW）。
-        // 切换工作区/语言后若键不变，60s TTL 内会返回旧 ENVIRONMENT。
-        const workspaceFingerprint = fingerprint(
-            this.host.workspacePaths()
-                .sort()
-                .join('\u0000')
-        )
-        const language = this.getUserLanguage()
-        return `${resolvedMode?.id || 'default'}::${prefix}::${suffix}::template=${fingerprint(template)}`
-            + `::memory=${memoryEnabled}::${memoryPrompt}::ws=${workspaceFingerprint}::lang=${language}`
-            + `::host=${this.staticHostKey(template, runtime)}`
-    }
-
-    private staticHostKey(template: string, runtime?: DynamicRuntimeContext): string {
-        // 平台静态段还受根目录名称/顺序、时区与工具权限影响，仅用工作区路径和设置值不足以共享。
-        // 只读取模板实际引用的段落；角色宏虽不使用 {{$KEY}} 语法，也必须随当前角色变化。
-        const macros = [...template.matchAll(/\{\{\s*(char|user|persona)\s*\}\}/gi)]
-            .map(match => runtime?.characterMacros?.[match[1].toLowerCase()] ?? match[0])
-        return JSON.stringify([
-            template.includes('{{$ENVIRONMENT}}') ? this.sections.generateStaticEnvironmentSection() : null,
-            template.includes('{{$MEMORY}}') ? this.sections.generateMemorySection() : null,
-            template.includes('{{$CONTEXT_BADGE_FORMAT}}') ? this.sections.generateContextBadgeFormatSection() : null,
-            macros,
-        ])
-    }
-
-    /**
-     * entries 模式纯静态 system 提示词缓存键。
-     * 任一 system entry 含动态占位符（TODO_LIST 等）时返回 null（结果依赖 runtime，不可缓存）。
-     * 键覆盖：模式 id + 启用集合 + 顺序 + 内容指纹
-     * （getEnabledPromptEntries 已按 enabled 过滤、order 排序，指纹前带 order 保证顺序变化即失效）。
-     * ENVIRONMENT/MEMORY 的渲染值依赖 runtime 输入（工作区集合/渲染语言/记忆配置），
-     * 仅内容指纹无法捕获——切工作区/改语言/改记忆后旧缓存会在 TTL 内滞留（04 批 MEDIUM）。
-     * 与 buildPromptCacheKey（422-434）同款指纹逻辑：引用 {{$ENVIRONMENT}} 时键追加
-     * ws/lang 指纹（lang 用 this.getUserLanguage()，与渲染一致、显式设置优先——第五轮 LOW
-     * 修正：旧实现取 vscode.env.language，显式设置语言时键与渲染脱节），引用 {{$MEMORY}}
-     * 时追加 memoryConfig 指纹；两者都未引用时键保持原样。
-     */
-    private buildEntriesStaticCacheKey(mode?: ResolvedPromptModeSnapshot, runtime?: DynamicRuntimeContext): string | null {
-        if (!this.renderer.usesPromptEntries(mode)) {
-            return null
-        }
-        const entries = this.renderer.getEnabledPromptEntries(mode)
-            .filter(entry => (entry.type || 'prompt') === 'prompt')
-            .filter(entry => entry.role === 'system' && entry.content.trim() !== '{{$WORLDBOOK_DEPTH}}')
-        if (entries.some(entry => this.renderer.hasDynamicPlaceholder(entry.content))) {
-            return null
-        }
-        const contentFingerprint = fingerprint(
-            entries.map(entry => `${entry.order ?? 0}\u0000${entry.content}`).join('\u0001')
-        )
-        let key = `${mode?.id || 'default'}::entries::${contentFingerprint}`
-        const referencesEnvironment = entries.some(entry => entry.content.includes('{{$ENVIRONMENT}}'))
-        const referencesMemory = entries.some(entry => entry.content.includes('{{$MEMORY}}'))
-        if (referencesEnvironment || referencesMemory) {
-            const settingsManager = this.host.settings()
-            if (referencesEnvironment) {
-                const workspaceFingerprint = fingerprint(
-                    this.host.workspacePaths()
-                        .sort()
-                        .join('\u0000')
-                )
-                // 与 buildPromptCacheKey 一致：语言用 this.getUserLanguage()（显式设置优先），
-                // 与 ENVIRONMENT 渲染一致，避免显式设置语言后键不变、TTL 内滞留旧提示词（第五轮 LOW）。
-                const language = this.getUserLanguage()
-                key += `::ws=${workspaceFingerprint}::lang=${language}`
-            }
-            if (referencesMemory) {
-                const memoryConfig = settingsManager?.getMemoryConfig?.()
-                const memoryEnabled = memoryConfig?.enabled !== false
-                const memoryPrompt = typeof memoryConfig?.systemPrompt === 'string' ? memoryConfig.systemPrompt : ''
-                key += `::memory=${memoryEnabled}::${memoryPrompt}`
-            }
-        }
-        return `${key}::host=${this.staticHostKey(entries.map(entry => entry.content).join('\n'), runtime)}`
-    }
-    
-    /**
-     * 获取系统提示词（使用缓存）
-     */
-    getSystemPrompt(modeSnapshot?: ResolvedPromptModeSnapshot, forceRefresh: boolean = false, runtime?: DynamicRuntimeContext): string {
-        const resolvedMode = this.resolvePromptModeSnapshot(modeSnapshot)
-        const key = this.renderer.usesPromptEntries(resolvedMode)
-            ? this.buildEntriesStaticCacheKey(resolvedMode, runtime)
-            : this.buildPromptCacheKey(resolvedMode, runtime)
-        // 动态条目继续使用本轮宿主；共享缓存仅保存已完整标识输入的静态结果。
-        return key === null ? this.generatePrompt(resolvedMode, runtime)
-            : this.staticCache.read(key, () => this.generatePrompt(resolvedMode, runtime), forceRefresh)
-    }
-    
-    /**
-     * 强制刷新并获取系统提示词
-     * 
-     * 在以下情况下调用：
-     * - 新对话的第一条消息
-     * - 用户删除首条消息后重新发送
-     * - 用户编辑首条消息后重试
-     */
-    refreshAndGetPrompt(modeSnapshot?: ResolvedPromptModeSnapshot, runtime?: DynamicRuntimeContext): string {
-        return this.getSystemPrompt(modeSnapshot, true, runtime)
-    }
-    
-    /**
-     * 生成系统提示词
-     *
-     * 始终使用模板模式生成提示词
-     * 用户可以通过设置自定义模板内容
-     * 根据当前模式使用对应的模板
-     */
-    private generatePrompt(modeSnapshot?: ResolvedPromptModeSnapshot, runtime?: DynamicRuntimeContext): string {
+    /** 每次按已捕获的宿主和角色资料渲染，避免为了缓存键重复生成整份段落。 */
+    getSystemPrompt(modeSnapshot?: ResolvedPromptModeSnapshot, runtime?: DynamicRuntimeContext): string {
         const settingsManager = this.host.settings()
         const promptConfig = settingsManager?.getSystemPromptConfig()
         const resolvedMode = this.resolvePromptModeSnapshot(modeSnapshot)
@@ -243,39 +109,6 @@ export class PromptAssembler {
      */
     private cleanupEmptyLines(text: string): string {
         return this.sections.cleanupEmptyLines(text)
-    }
-    
-    /**
-     * 生成静态环境信息段落（用于系统提示词，可缓存）
-     * 
-     * 包含：
-     * - 工作区路径
-     * - 操作系统信息
-     * - 时区
-     * - 用户语言
-     */
-    private generateStaticEnvironmentSection(): string {
-        return this.sections.generateStaticEnvironmentSection()
-    }
-
-    /**
-     * 生成 lim-context 徽章结构说明（静态）
-     *
-     * 目的：让模型明确区分“标题属性”和“正文内容”，
-     * 避免把 binary 徽章按文本内容解析。
-     */
-    private generateContextBadgeFormatSection(): string {
-        return this.sections.generateContextBadgeFormatSection()
-    }
-
-    /**
-     * 生成记忆系统的使用说明。
-     *
-     * 优先从用户设置中读取自定义提示词（limcode.toolsConfig.memory.systemPrompt），
-     * 否则使用内置默认值。
-     */
-    private generateMemorySection(): string {
-        return this.sections.generateMemorySection()
     }
     
     /**
@@ -596,17 +429,6 @@ export class PromptAssembler {
      */
     getDynamicContextText(modeSnapshot?: ResolvedPromptModeSnapshot, runtime?: DynamicRuntimeContext): string {
         return this.getPromptContextBundle(modeSnapshot, runtime).text
-    }
-    
-    /**
-     * 获取用户语言环境
-     *
-     * 根据设置返回用户当前使用的语言
-     * - 如果设置为 'auto'，使用 VS Code 的语言设置
-     * - 否则使用用户选择的语言
-     */
-    private getUserLanguage(): string {
-        return this.sections.getUserLanguage()
     }
     
     /**

@@ -250,7 +250,7 @@ export async function getHistoryWithContextTrimInfo(
 
     // 收集需要计算 token 的内容：系统提示词、动态上下文、缺失 token 数的用户消息
     // 传入 runtime 以便正确解析模板中的变量
-    const systemPrompt = deps.promptManager.getSystemPrompt(promptModeSnapshot, false, runtime);
+    const systemPrompt = deps.promptManager.getSystemPrompt(promptModeSnapshot, runtime);
 
     // 使用预生成的 prompt context 文本（如果传入），否则内部生成；该文本包含 chat-history 前后两侧临时消息。
     let dynamicContextText: string;

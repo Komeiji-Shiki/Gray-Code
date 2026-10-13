@@ -108,7 +108,7 @@ describe('PromptAssembler prompt entries', () => {
             ]
         };
 
-        const systemPrompt = manager.getSystemPrompt(mode, true, runtime);
+        const systemPrompt = manager.getSystemPrompt(mode, runtime);
         const bundle = manager.getPromptContextBundle(mode, runtime);
 
         expect(systemPrompt).toContain('System');
@@ -218,7 +218,7 @@ describe('PromptAssembler prompt entries', () => {
         const settings = createSettingsManagerMock(legacyMode);
         const manager = createPromptAssembler(settings, { includeWorkspaceFiles: false });
 
-        const systemPrompt = manager.getSystemPrompt(legacyMode, true, { todoList: [] });
+        const systemPrompt = manager.getSystemPrompt(legacyMode, { todoList: [] });
         const bundle = manager.getPromptContextBundle(legacyMode, { todoList: [{ id: 'a', content: 'Legacy todo', status: 'pending' }] });
 
         expect(systemPrompt).toContain('Legacy');
@@ -243,6 +243,6 @@ describe('PromptAssembler prompt entries', () => {
         });
         const manager = createPromptAssembler(settings, { includeWorkspaceFiles: false });
 
-        expect(manager.getSystemPrompt(emptyMode, true, {})).toBe('');
+        expect(manager.getSystemPrompt(emptyMode, {})).toBe('');
     });
 });
