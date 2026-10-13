@@ -76,7 +76,7 @@ export function snapshotUrl(url: string): string {
 }
 
 /** 按树顺序输出，正文、表头和所属控件保持相邻；Chromium 返回的数组可能是广度优先排列。 */
-export function* snapshotRows(nodes: AxNode[], options: SnapshotOptions, backendNodeId?: number): Generator<{ node: AxNode; row: SnapshotNode }> {
+export function* snapshotRows(nodes: AxNode[], options: SnapshotOptions, backendNodeId?: number): Generator<{ node: AxNode; buildRow(): SnapshotNode }> {
   const byId = new Map(nodes.map(node => [node.nodeId, node]));
   const children = new Map<string, AxNode[]>();
   for (const node of nodes) if (node.parentId) {
@@ -143,35 +143,44 @@ export function* snapshotRows(nodes: AxNode[], options: SnapshotOptions, backend
     const body = paragraph && paragraph !== name ? paragraph : undefined;
     const value = node.value?.value === undefined ? undefined : String(node.value.value);
     if (query && ![name, body, description, value, properties.url].some(text => typeof text === 'string' && text.toLocaleLowerCase().includes(query))) continue;
-    // 输出预算外只需要筛选后的数量；实际取 row 时才截取正文、复制属性并查找所属区域。
-    yield { node, get row(): SnapshotNode {
-      let textTruncated = false;
-      const excerpt = (text: string) => {
-        if (text.length <= 3000) return text;
-        textTruncated = true;
-        const match = query ? text.toLocaleLowerCase().indexOf(query) : 0;
-        const start = Math.max(0, match - 200);
-        return (start ? '…' : '') + text.slice(start, start + 3000) + (start + 3000 < text.length ? '…' : '');
-      };
-      const row: SnapshotNode = { depth, role, name: excerpt(name),
-        ...(body ? { text: excerpt(body) } : {}),
-        ...(description ? { description: excerpt(description) } : {}),
-        ...(value !== undefined ? { value: excerpt(value) } : {}),
-        ...Object.fromEntries(Object.entries(properties).filter(([key]) => snapshotProperties.has(key))) };
-      if (textTruncated) row.textTruncated = true;
-      if (options.query || options.role) {
-        const context: Array<{ role: string; name: string }> = [], seen = new Set<string>();
-        let ancestor = byId.get(node.parentId ?? '');
-        while (ancestor && context.length < 3 && !seen.has(ancestor.nodeId)) {
-          seen.add(ancestor.nodeId);
-          const role = ancestor.role?.value ?? 'node', name = describeContext(ancestor);
-          if (name && role !== 'RootWebArea') context.push({ role, name });
-          ancestor = byId.get(ancestor.parentId ?? '');
+    // 输出预算外只计数；调用方通过 buildRow 明确生成一次正文与所属区域。
+    yield {
+      node,
+      buildRow(): SnapshotNode {
+        let textTruncated = false;
+        const excerpt = (text: string) => {
+          if (text.length <= 3000) return text;
+          textTruncated = true;
+          const match = query ? text.toLocaleLowerCase().indexOf(query) : 0;
+          const start = Math.max(0, match - 200);
+          return (start ? '…' : '') + text.slice(start, start + 3000) + (start + 3000 < text.length ? '…' : '');
+        };
+        const row: SnapshotNode = {
+          depth,
+          role,
+          name: excerpt(name),
+          ...(body ? { text: excerpt(body) } : {}),
+          ...(description ? { description: excerpt(description) } : {}),
+          ...(value !== undefined ? { value: excerpt(value) } : {}),
+          ...Object.fromEntries(Object.entries(properties).filter(([key]) => snapshotProperties.has(key))),
+        };
+        if (textTruncated) row.textTruncated = true;
+        if (options.query || options.role) {
+          const context: Array<{ role: string; name: string }> = [];
+          const seen = new Set<string>();
+          let ancestor = byId.get(node.parentId ?? '');
+          while (ancestor && context.length < 3 && !seen.has(ancestor.nodeId)) {
+            seen.add(ancestor.nodeId);
+            const role = ancestor.role?.value ?? 'node';
+            const name = describeContext(ancestor);
+            if (name && role !== 'RootWebArea') context.push({ role, name });
+            ancestor = byId.get(ancestor.parentId ?? '');
+          }
+          if (context.length) row.context = context.reverse();
         }
-        if (context.length) row.context = context.reverse();
-      }
-      return row;
-    } };
+        return row;
+      },
+    };
   }
 }
 

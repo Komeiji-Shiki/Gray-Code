@@ -258,7 +258,8 @@ export class BrowserPage {
       // 深层组件不截断树深度；输出预算在筛选之后应用，后面的正文和 iframe 仍可检索。
       for (const candidate of snapshotRows(nodes, options, scope?.backendNodeId)) {
         if (total++ < offset || rows.length >= maximum || budgetReached) continue;
-        const { node, row } = candidate;
+        const { node } = candidate;
+        const row = candidate.buildRow();
         const size = JSON.stringify(row).length;
         if (characters + size > 60000 && rows.length) { budgetReached = true; continue; }
         characters += size;
