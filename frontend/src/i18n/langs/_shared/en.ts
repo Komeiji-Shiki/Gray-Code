@@ -1149,6 +1149,17 @@ const sharedEn = {
             unsavedDescription: "Save changes from all categories, or discard this draft and return to chat.",
             unsavedTitle: "Unsaved settings",
         },
+        settingsSearch: {
+            accounts: "Accounts and permissions",
+            backup: "Application data backup",
+            desktopEditor: "Default code editor and file associations",
+            discord: "Discord Bot",
+            languageServices: "Code completion and language services",
+            onebot: "NapCat / OneBot",
+            promptEntries: "Preset prompt entries",
+            remote: "Remote connections",
+            workspaces: "Workspaces",
+        },
         shell: {
             addWorkspace: "Add workspace",
             awaitingApproval: "Awaiting confirmation",

@@ -24,6 +24,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import vm from 'node:vm';
 import { fileURLToPath } from 'node:url';
+import ts from 'typescript';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const BACKEND_LANGS_DIR = path.join(ROOT, 'backend', 'i18n', 'langs');
@@ -48,7 +49,7 @@ const GENERATED_HEADER = `/**
  */`;
 
 /* ------------------------------------------------------------------ */
-/* 语言包解析：TS 语言包是纯数据对象（基准包无类型标注），可用沙箱求值  */
+/* 语言包解析：标准 TS 转译后在仅支持语言数据导入的沙箱中求值          */
 /* ------------------------------------------------------------------ */
 
 /**
@@ -57,30 +58,48 @@ const GENERATED_HEADER = `/**
  * @param {Record<string, unknown>} context 沙箱上下文（解析前端包时注入 _shared 生成物等）
  */
 function loadPack(filePath, context = {}) {
-    let src = fs.readFileSync(filePath, 'utf8');
-    // 语言包按界面领域拆分后仍只允许纯数据；前端已经注入的共享包直接复用。
-    const values = { ...context };
-    const imports = src.matchAll(/^import\s+(\w+)\s+from\s+['"]([^'"]+)['"];?\s*$/gm);
-    for (const [, name, reference] of imports) {
-        if (name in values || !reference.startsWith('.')) continue;
-        const importedPath = path.resolve(path.dirname(filePath), reference);
-        values[name] = loadPack(importedPath.endsWith('.ts') ? importedPath : `${importedPath}.ts`);
-    }
-    src = src.replace(/^\/\*[\s\S]*?\*\//, '');                      // 头部块注释
-    src = src.replace(/^import[^\n]*\n?/gm, '');                      // import 行（含 type import）
-    src = src.replace(/export\s+default\s+[\w$]+\s*;?/, '');          // export default xxx;
-    src = src.replace(/^export\s+default\s+/m, '');                   // 领域语言包可直接导出纯对象
-    src = src.replace(/^const\s+[\w$]+\s*(:\s*[^=]+?)?\s*=\s*/m, ''); // const xxx[: Type] = ...
-    src = src.replace(/;\s*$/, '');
     try {
-        return vm.runInNewContext(`(${src})`, values, { timeout: 10000 });
+        const source = fs.readFileSync(filePath, 'utf8');
+        const parsed = ts.createSourceFile(filePath, source, ts.ScriptTarget.ES2022, false, ts.ScriptKind.TS);
+        const imports = new Map();
+        for (const statement of parsed.statements) {
+            if (ts.isImportDeclaration(statement) && !statement.importClause?.isTypeOnly) {
+                imports.set(statement.moduleSpecifier.text, statement.importClause);
+            }
+        }
+        const compiled = ts.transpileModule(source, {
+            fileName: filePath,
+            reportDiagnostics: true,
+            compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS }
+        });
+        const errors = compiled.diagnostics?.filter(diagnostic => diagnostic.category === ts.DiagnosticCategory.Error) ?? [];
+        if (errors.length) {
+            throw new Error(ts.formatDiagnostics(errors, {
+                getCurrentDirectory: () => ROOT,
+                getCanonicalFileName: name => name,
+                getNewLine: () => '\n'
+            }));
+        }
+        // 只载入相对路径的默认数据导出；type import 由编译器移除，不向语言包提供 Node require。
+        const requirePack = reference => {
+            const clause = imports.get(reference);
+            if (!reference.startsWith('.') || !clause?.name || clause.namedBindings) {
+                throw new Error(`语言包仅支持相对路径的默认数据导入: ${reference}`);
+            }
+            const name = clause.name.text;
+            const importedPath = path.resolve(path.dirname(filePath), reference);
+            const value = name in context
+                ? context[name]
+                : loadPack(importedPath.endsWith('.ts') ? importedPath : `${importedPath}.ts`);
+            return { default: value };
+        };
+        const exports = {};
+        vm.runInNewContext(compiled.outputText, { exports, require: requirePack }, { timeout: 10000, filename: filePath });
+        return exports.default;
     } catch (err) {
-        // 剥离 TS 语法后 vm 求值抛错：显式报错退出，避免后续用残缺对象继续运行产生误导性结果。
-        // 常见触发：语言包出现本脚本不支持的语法（类型标注、多行 import、非纯对象字面量等）。
         console.error(`[i18n-sync] 语言包解析失败: ${filePath}`);
-        console.error('  剥离 TS 语法后 vm 求值抛错（语言包可能含有类型标注 / 多行 import 等本脚本不支持的语法）：');
         console.error(`  ${err instanceof Error ? (err.stack || err.message) : String(err)}`);
-        console.error('  请保持语言包为纯对象字面量（基准包无类型标注），或改用 esbuild/tsc 转译方案。');
+        console.error('  请保持语言包为纯数据，运行时导入仅使用相对路径的默认导出。');
         process.exit(1);
     }
 }

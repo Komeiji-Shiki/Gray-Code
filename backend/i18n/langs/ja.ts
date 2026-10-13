@@ -29,6 +29,17 @@ import desktopMaintenance from './ja/desktopMaintenance';
 const ja: BackendLanguageMessages = {
     desktop: {
         inputUi,
+        settingsSearch: {
+            languageServices: 'コード補完と言語サービス',
+            desktopEditor: '既定のコードエディターとファイルの関連付け',
+            promptEntries: 'プリセットプロンプトの項目',
+            backup: 'アプリデータのバックアップ',
+            discord: 'Discord Bot',
+            onebot: 'NapCat / OneBot',
+            accounts: 'アカウントと権限',
+            workspaces: 'ワークスペース',
+            remote: 'リモート接続'
+        },
         appClosing: 'アプリを終了しています。しばらくしてからもう一度開いてください。',
         bot: {
             policyTitle: "グループメッセージ設定",

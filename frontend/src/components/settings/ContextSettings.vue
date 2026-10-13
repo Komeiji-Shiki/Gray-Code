@@ -2,7 +2,7 @@
 import { useDesktopSettingsDraft } from '@/platform/settingsDraft'
 import { MESSAGE_NAMES } from '@shared/protocol'
 import { ref, reactive, onMounted, onUnmounted, watch, toRaw } from 'vue'
-import { CustomCheckbox } from '../common'
+import { CustomCheckbox, PatternListEditor } from '../common'
 import { sendToExtension } from '@/utils/vscode'
 import { useI18n } from '@/i18n'
 import { useDeferredNumberInput, getSettingsView } from '@/composables/useDeferredNumberInput'
@@ -71,9 +71,6 @@ const isSaving = ref(false)
 const saveMessage = ref('')
 // 保存成功消息清除定时器（卸载时清理，避免卸载后仍修改 saveMessage）
 let saveMessageTimer: ReturnType<typeof setTimeout> | null = null
-
-// 忽略模式输入框
-const newIgnorePattern = ref('')
 
 // 草稿模式：清空后不立即回填默认值；离开设置页时自动回填已保存值
 const {
@@ -193,30 +190,6 @@ async function doSaveConfig() {
 async function updateConfig<K extends keyof ContextAwarenessConfig>(field: K, value: ContextAwarenessConfig[K]) {
   config[field] = value
   await saveConfig()
-}
-
-// 添加忽略模式
-async function addIgnorePattern() {
-  const pattern = newIgnorePattern.value.trim()
-  if (pattern && !config.ignorePatterns.includes(pattern)) {
-    config.ignorePatterns.push(pattern)
-    newIgnorePattern.value = ''
-    await saveConfig()
-  }
-}
-
-// 移除忽略模式
-async function removeIgnorePattern(index: number) {
-  config.ignorePatterns.splice(index, 1)
-  await saveConfig()
-}
-
-// 处理回车添加
-function handleKeydown(event: KeyboardEvent) {
-  if (event.key === 'Enter') {
-    event.preventDefault()
-    addIgnorePattern()
-  }
 }
 
 // 更新诊断配置
@@ -527,36 +500,14 @@ useDesktopSettingsDraft(async () => {
         
         <div class="setting-block">
           <div class="ignore-patterns">
-            <!-- 现有模式列表 -->
-            <div class="pattern-list" v-if="config.ignorePatterns.length > 0">
-              <div
-                v-for="(pattern, index) in config.ignorePatterns"
-                :key="index"
-                class="pattern-item"
-              >
-                <code>{{ pattern }}</code>
-                <button class="remove-btn" @click="removeIgnorePattern(index)" :title="t('components.settings.contextSettings.ignorePatterns.removeTooltip')">
-                  <i class="codicon codicon-close"></i>
-                </button>
-              </div>
-            </div>
-            
-            <p v-else class="empty-hint">{{ t('components.settings.contextSettings.ignorePatterns.emptyHint') }}</p>
-            
-            <!-- 添加新模式 -->
-            <div class="add-pattern">
-              <input
-                type="text"
-                v-model="newIgnorePattern"
-                :placeholder="t('components.settings.contextSettings.ignorePatterns.inputPlaceholder')"
-                class="pattern-input"
-                @keydown="handleKeydown"
-              />
-              <button class="add-btn" @click="addIgnorePattern" :disabled="!newIgnorePattern.trim()">
-                <i class="codicon codicon-add"></i>
-                {{ t('components.settings.contextSettings.ignorePatterns.addButton') }}
-              </button>
-            </div>
+            <PatternListEditor
+              :model-value="config.ignorePatterns"
+              :placeholder="t('components.settings.contextSettings.ignorePatterns.inputPlaceholder')"
+              :empty-text="t('components.settings.contextSettings.ignorePatterns.emptyHint')"
+              :add-label="t('components.settings.contextSettings.ignorePatterns.addButton')"
+              :remove-label="t('components.settings.contextSettings.ignorePatterns.removeTooltip')"
+              @update:model-value="updateConfig('ignorePatterns', $event)"
+            />
             
             <!-- 通配符说明 -->
             <div class="pattern-help">
@@ -753,97 +704,6 @@ useDesktopSettingsDraft(async () => {
   display: flex;
   flex-direction: column;
   gap: 12px;
-}
-
-.pattern-list {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-}
-
-.pattern-item {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  padding: 4px 8px;
-  background: var(--gc-badge-bg);
-  color: var(--gc-badge-fg);
-  border-radius: var(--gc-radius-sm);
-  font-size: 12px;
-}
-
-.pattern-item code {
-  font-family: var(--gc-font-code);
-  font-size: 11px;
-}
-
-.remove-btn {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 16px;
-  height: 16px;
-  padding: 0;
-  background: transparent;
-  border: none;
-  color: inherit;
-  cursor: pointer;
-  border-radius: var(--gc-radius-xs);
-  opacity: 0.7;
-}
-
-.remove-btn:hover {
-  opacity: 1;
-  background: rgba(255, 255, 255, 0.1);
-}
-
-.empty-hint {
-  margin: 0;
-  font-size: 12px;
-  color: var(--gc-text-muted);
-  font-style: italic;
-}
-
-.add-pattern {
-  display: flex;
-  gap: 8px;
-}
-
-.pattern-input {
-  flex: 1;
-  padding: 6px 10px;
-  font-size: 12px;
-  background: var(--gc-surface-input);
-  color: var(--gc-text-primary);
-  border: 1px solid var(--gc-border-control);
-  border-radius: var(--gc-radius-sm);
-  outline: none;
-}
-
-.pattern-input:focus {
-  border-color: var(--gc-focus-border);
-}
-
-.add-btn {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  padding: 6px 12px;
-  font-size: 12px;
-  background: var(--gc-button-secondary);
-  color: var(--gc-text-on-secondary);
-  border: none;
-  border-radius: var(--gc-radius-sm);
-  cursor: pointer;
-}
-
-.add-btn:hover:not(:disabled) {
-  background: var(--gc-button-secondary-hover);
-}
-
-.add-btn:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
 }
 
 .pattern-help {

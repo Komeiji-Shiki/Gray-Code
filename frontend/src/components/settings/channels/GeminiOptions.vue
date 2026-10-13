@@ -3,6 +3,7 @@ import { computed, watch } from 'vue'
 import { CustomSelect, type SelectOption } from '../../common'
 import { useI18n } from '../../../i18n'
 import { useDeferredNumberInput } from '../../../composables/useDeferredNumberInput'
+import { useChannelOptions } from './useChannelOptions'
 
 const { t } = useI18n()
 
@@ -36,58 +37,21 @@ const DEFAULT_VALUES: Record<string, any> = {
   }
 }
 
-// 检查配置项是否启用
-function isOptionEnabled(optionKey: string): boolean {
-  const enabled = props.config?.optionsEnabled?.[optionKey]
-  return enabled ?? false
-}
+const {
+  isOptionEnabled, handleOptionEnabledChange, getNestedOptionValue, updateNestedOption
+} = useChannelOptions(() => props.config, DEFAULT_VALUES, {
+  option: (key, value) => emit('update:option', key, value),
+  enabled: (key, enabled, ...values) => emit('update:optionEnabled', key, enabled, ...values)
+})
 
 // 获取思考配置字段值
 function getThinkingConfigValue(field: string, defaultValue: any = undefined): any {
-  return props.config?.options?.thinkingConfig?.[field] ?? defaultValue
-}
-
-// 处理选项启用状态变更
-function handleOptionEnabledChange(optionKey: string, enabled: boolean) {
-  // 当开启选项时，确保写入默认值（合并已有值和默认值）
-  if (enabled && optionKey in DEFAULT_VALUES) {
-    const currentValue = props.config?.options?.[optionKey]
-    const defaultValue = DEFAULT_VALUES[optionKey]
-    
-    let optionValue: any
-    if (typeof defaultValue === 'object' && defaultValue !== null) {
-      // 对象类型：合并默认值和当前值，确保所有默认字段都存在
-      optionValue = {
-        ...defaultValue,
-        ...(currentValue || {})
-      }
-    } else if (currentValue === undefined || currentValue === null) {
-      // 非对象类型：仅当当前值为空时写入默认值
-      optionValue = defaultValue
-    } else {
-      optionValue = currentValue
-    }
-    
-    // 同时发送 optionEnabled 和 option 更新，避免竞态条件
-    emit('update:optionEnabled', optionKey, enabled, optionValue)
-  } else {
-    // 仅更新启用状态
-    emit('update:optionEnabled', optionKey, enabled)
-  }
+  return getNestedOptionValue('thinkingConfig', field, defaultValue)
 }
 
 // 更新思考配置字段
 function updateThinkingConfig(field: string, value: any) {
-  const currentOptions = props.config?.options || {}
-  const currentThinkingConfig = currentOptions.thinkingConfig || {}
-  // 确保始终包含默认值，防止某些字段丢失
-  const updatedThinkingConfig = {
-    ...DEFAULT_VALUES.thinkingConfig,  // 首先应用默认值
-    ...currentThinkingConfig,          // 然后应用当前值
-    [field]: value                      // 最后应用新值
-  }
-  
-  emit('update:option', 'thinkingConfig', updatedThinkingConfig)
+  updateNestedOption('thinkingConfig', field, value)
 }
 
 // ============ 草稿模式数字输入 ============

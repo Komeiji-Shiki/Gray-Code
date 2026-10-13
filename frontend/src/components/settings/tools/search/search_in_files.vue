@@ -10,12 +10,10 @@ import { MESSAGE_NAMES } from '@shared/protocol'
 import { ref, onMounted } from 'vue'
 import { sendToExtension } from '@/utils/vscode'
 import { t } from '@/i18n'
+import { PatternListEditor } from '@/components/common'
 
 // 排除模式列表
 const excludePatterns = ref<string[]>([])
-
-// 新增模式输入
-const newPattern = ref('')
 
 // 保存状态
 const isSaving = ref(false)
@@ -54,20 +52,9 @@ async function saveConfig() {
   }
 }
 
-// 添加模式
-function addPattern() {
-  const pattern = newPattern.value.trim()
-  if (pattern && !excludePatterns.value.includes(pattern)) {
-    excludePatterns.value.push(pattern)
-    newPattern.value = ''
-    saveConfig()
-  }
-}
-
-// 删除模式
-function removePattern(index: number) {
-  excludePatterns.value.splice(index, 1)
-  saveConfig()
+function updatePatterns(patterns: string[]) {
+  excludePatterns.value = patterns
+  void saveConfig()
 }
 
 // 组件挂载时加载配置
@@ -92,42 +79,14 @@ onMounted(() => {
           <span>{{ t('components.settings.toolSettings.common.loading') }}</span>
         </div>
         
-        <!-- 当前排除列表 -->
-        <div v-else class="pattern-list">
-          <div
-            v-for="(pattern, index) in excludePatterns"
-            :key="index"
-            class="pattern-item"
-          >
-            <span class="pattern-text">{{ pattern }}</span>
-            <button
-              class="remove-btn"
-              @click="removePattern(index)"
-              :title="t('components.settings.toolSettings.search.searchInFiles.deleteTooltip')"
-            >
-              <i class="codicon codicon-close"></i>
-            </button>
-          </div>
-        </div>
-        
-        <!-- 添加新模式 -->
-        <div class="add-pattern">
-          <input
-            v-model="newPattern"
-            type="text"
-            class="pattern-input"
-            :placeholder="t('components.settings.toolSettings.search.searchInFiles.inputPlaceholder')"
-            @keyup.enter="addPattern"
-          />
-          <button
-            class="add-btn"
-            @click="addPattern"
-            :disabled="!newPattern.trim()"
-          >
-            <i class="codicon codicon-add"></i>
-            {{ t('components.settings.toolSettings.search.searchInFiles.addButton') }}
-          </button>
-        </div>
+        <PatternListEditor
+          v-else
+          :model-value="excludePatterns"
+          :placeholder="t('components.settings.toolSettings.search.searchInFiles.inputPlaceholder')"
+          :add-label="t('components.settings.toolSettings.search.searchInFiles.addButton')"
+          :remove-label="t('components.settings.toolSettings.search.searchInFiles.deleteTooltip')"
+          @update:model-value="updatePatterns"
+        />
         
         <!-- 保存状态 -->
         <div v-if="isSaving" class="save-status">
@@ -177,99 +136,6 @@ onMounted(() => {
   display: flex;
   flex-direction: column;
   gap: 8px;
-}
-
-/* 模式列表 */
-.pattern-list {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-}
-
-.pattern-item {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  padding: 4px 8px;
-  background: var(--gc-badge-bg);
-  color: var(--gc-badge-fg);
-  border-radius: var(--gc-radius-sm);
-  font-size: 11px;
-  font-family: var(--gc-font-code);
-}
-
-.remove-btn {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 0;
-  background: none;
-  border: none;
-  color: var(--gc-badge-fg);
-  opacity: 0.6;
-  cursor: pointer;
-  transition: opacity 0.15s;
-}
-
-.remove-btn:hover {
-  opacity: 1;
-}
-
-.remove-btn .codicon {
-  font-size: 12px;
-}
-
-/* 添加新模式 */
-.add-pattern {
-  display: flex;
-  gap: 8px;
-}
-
-.pattern-input {
-  flex: 1;
-  padding: 6px 10px;
-  background: var(--gc-surface-input);
-  color: var(--gc-text-primary);
-  border: 1px solid var(--gc-border-control);
-  border-radius: var(--gc-radius-sm);
-  font-size: 12px;
-  font-family: var(--gc-font-code);
-}
-
-.pattern-input:focus {
-  outline: none;
-  border-color: var(--gc-focus-border);
-}
-
-.pattern-input::placeholder {
-  color: var(--gc-text-placeholder);
-}
-
-.add-btn {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  padding: 6px 12px;
-  background: var(--gc-button-secondary);
-  color: var(--gc-text-on-secondary);
-  border: none;
-  border-radius: var(--gc-radius-sm);
-  font-size: 12px;
-  cursor: pointer;
-  transition: background-color 0.15s;
-}
-
-.add-btn:hover:not(:disabled) {
-  background: var(--gc-button-secondary-hover);
-}
-
-.add-btn:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
-}
-
-.add-btn .codicon {
-  font-size: 14px;
 }
 
 /* 加载状态 */

@@ -1149,6 +1149,17 @@ const sharedJa = {
             unsavedDescription: "すべての分類の変更を保存するか、下書きを破棄してチャットに戻れます。",
             unsavedTitle: "未保存の設定",
         },
+        settingsSearch: {
+            accounts: "アカウントと権限",
+            backup: "アプリデータのバックアップ",
+            desktopEditor: "既定のコードエディターとファイルの関連付け",
+            discord: "Discord Bot",
+            languageServices: "コード補完と言語サービス",
+            onebot: "NapCat / OneBot",
+            promptEntries: "プリセットプロンプトの項目",
+            remote: "リモート接続",
+            workspaces: "ワークスペース",
+        },
         shell: {
             addWorkspace: "ワークスペースを追加",
             awaitingApproval: "確認待ち",

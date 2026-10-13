@@ -134,14 +134,14 @@ export function settingsSearchIndex(isDesktopHost: boolean, supportsFileAssociat
     anchor: '[data-search-anchor="max-tool-iterations"]'
   },
   ...(isDesktopHost ? [{
-    key: 'development-language-services', tab: 'development' as const, label: '代码补全与语言服务',
-    labelKey: 'components.settings.settingsPanel.sections.tools.title',
+    key: 'development-language-services', tab: 'development' as const,
+    labelKey: 'desktop.settingsSearch.languageServices',
     keywords: ['开发工具', '代码编辑器', 'development', 'code editor', '语言服务', '代码补全', 'LSP', 'language server', 'completion', '言語サーバー', 'TypeScript', 'JavaScript', 'Vue', 'Svelte', 'Python', 'HTML', 'CSS', 'JSON', 'YAML', 'Shell', 'Go', 'Rust', 'C++', 'Java', 'C#', 'PHP', 'Lua', 'PowerShell', 'SQL', 'Markdown'],
     anchor: '[data-search-anchor="language-services"]'
   }] : []),
   ...(supportsFileAssociations ? [{
     key: 'development-editor', tab: 'development' as const,
-    labelKey: 'components.settings.tabs.development', label: '默认代码编辑器与文件关联',
+    labelKey: 'desktop.settingsSearch.desktopEditor',
     keywords: ['开发工具', '默认代码编辑器', '文件关联', '右键打开', '编辑器注册', 'development', 'default editor', 'file association'],
     anchor: '[data-search-anchor="desktop-editor"]'
   }] : []),
@@ -450,7 +450,7 @@ export function settingsSearchIndex(isDesktopHost: boolean, supportsFileAssociat
   },
   {
     key: 'prompt-entries', tab: 'prompt',
-    labelKey: 'components.settings.settingsPanel.sections.prompt.title', label: '预设提示词条目',
+    labelKey: 'desktop.settingsSearch.promptEntries',
     keywords: ['预设条目', 'entries', '条目', 'role', 'chat history', '排序', '组装方式', 'assembly', '传统模板', 'legacy',
       '动态上下文', 'dynamic context', '保留策略', 'preserve', 'single', '静态模板', 'static', '系统提示词', 'system prompt', '缓存', 'ダイナミック', 'スタティック', 'template', '模板'],
     anchor: '[data-search-anchor="prompt-entries"]'
@@ -660,8 +660,8 @@ export function settingsSearchIndex(isDesktopHost: boolean, supportsFileAssociat
     anchor: '[data-search-anchor="storage"]'
   },
   ...(window.__GRAYCODE_HOST?.kind === 'desktop' ? [{
-    key: 'general-backup', tab: 'general' as const, label: '程序数据备份',
-    labelKey: 'components.settings.storageSettings.title',
+    key: 'general-backup', tab: 'general' as const,
+    labelKey: 'desktop.settingsSearch.backup',
     keywords: ['备份', 'backup', '恢复', 'restore', '加密', '密码', '对话', '附件'],
     anchor: '[data-search-anchor="backup"]'
   }] : []),
@@ -689,15 +689,15 @@ export function settingsSearchIndex(isDesktopHost: boolean, supportsFileAssociat
     keywords: ['用量', 'usage', '使用量', '统计', 'stats', '統計', 'token用量', '使用时间', 'activity', 'アクティビティ', '热力图']
   },
   ...(isDesktopHost ? [
-    { key: 'discord', tab: 'discord' as const, label: 'Discord Bot', labelKey: '',
+    { key: 'discord', tab: 'discord' as const, labelKey: 'desktop.settingsSearch.discord',
       keywords: ['Discord', 'Bot', '机器人', '频道', '提及', '私聊', '群聊'] },
-    { key: 'onebot', tab: 'onebot' as const, label: 'NapCat / OneBot', labelKey: '',
+    { key: 'onebot', tab: 'onebot' as const, labelKey: 'desktop.settingsSearch.onebot',
       keywords: ['QQ', 'NapCat', 'OneBot', '机器人', '群聊', '私聊', 'WebSocket'] },
-    { key: 'accounts', tab: 'accounts' as const, label: '账号与授权', labelKey: '',
+    { key: 'accounts', tab: 'accounts' as const, labelKey: 'desktop.settingsSearch.accounts',
       keywords: ['账号', '授权', '权限', '绑定', '主人', '成员', '访客', '白名单', '黑名单', 'account', 'permission', 'owner', 'member'] },
-    { key: 'workspaces', tab: 'workspaces' as const, label: '工作区', labelKey: '',
+    { key: 'workspaces', tab: 'workspaces' as const, labelKey: 'desktop.settingsSearch.workspaces',
       keywords: ['工作区', '项目目录', '项目路径', 'workspace', 'project', 'directory'] },
-    { key: 'remote', tab: 'remote' as const, label: '远程连接', labelKey: '',
+    { key: 'remote', tab: 'remote' as const, labelKey: 'desktop.settingsSearch.remote',
       keywords: ['远程连接', '手机连接', '浏览器连接', 'Web', 'remote', 'mobile', '登录', '设备', '令牌'] },
   ] : []),
 ]

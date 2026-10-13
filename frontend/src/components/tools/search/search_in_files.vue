@@ -656,10 +656,7 @@ function isDiffExpanded(path: string): boolean {
   font-family: var(--gc-font-code);
   font-weight: 600;
   color: var(--gc-text-primary);
-  background: rgba(0, 200, 83, 0.16);
   border: 1px solid rgba(0, 200, 83, 0.35);
-  padding: 0 6px;
-  border-radius: var(--gc-radius-xs);
   opacity: 1;
   background: var(--gc-code-bg);
   padding: 0 4px;

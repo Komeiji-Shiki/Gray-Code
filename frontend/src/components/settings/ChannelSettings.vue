@@ -2,6 +2,10 @@
 import { useChannelCredentials } from './channelSettings/useChannelCredentials'
 import { MESSAGE_NAMES, PUSH_MESSAGE_NAMES } from '@shared/protocol'
 import type { ContextManagementMethod } from '@shared/contextManagement'
+import {
+  DEFAULT_MAX_CONTEXT_TOKENS,
+  resolveMaxContextTokensForConfig
+} from '../../../../backend/modules/api/chat/services/contextTrim/contextWindowResolution'
 import { ref, computed, onMounted, onUnmounted, nextTick, watch } from 'vue'
 import { ConfirmDialog, type SelectOption } from '../common'
 import { sendToExtension, onExtensionCommand } from '@/utils/vscode'
@@ -319,43 +323,32 @@ interface ContextBudgetHint {
   source: 'channel' | 'model' | 'default'
 }
 
-function positiveTokenValue(value: unknown): number | undefined {
-  const parsed = typeof value === 'number' ? value : Number(String(value ?? '').trim())
-  return Number.isFinite(parsed) && parsed > 0 ? Math.floor(parsed) : undefined
-}
-
 const contextBudgetHint = computed<ContextBudgetHint>(() => {
   const config = currentConfig.value
-  const selectedModel = config?.models?.find(model => model.id === config.model)
-  const configuredContext = config?.maxContextTokens !== undefined
-    ? (positiveTokenValue(maxContextTokensDraft.value) ?? positiveTokenValue(config.maxContextTokens))
-    : undefined
-  const modelContext = positiveTokenValue(selectedModel?.contextWindow)
-  const declaredContextTokens = configuredContext ?? modelContext ?? 256000
-  const source: ContextBudgetHint['source'] = configuredContext !== undefined
-    ? 'channel'
-    : (modelContext !== undefined ? 'model' : 'default')
+  if (!config) {
+    return {
+      declaredContextTokens: DEFAULT_MAX_CONTEXT_TOKENS,
+      effectiveInputTokens: DEFAULT_MAX_CONTEXT_TOKENS,
+      contextWindowIncludesOutput: false,
+      source: 'default'
+    }
+  }
 
-  let outputKey: 'maxOutputTokens' | 'max_tokens' | 'max_output_tokens' | undefined
-  if (config?.type === 'gemini' || config?.type === 'gemini-interactions') outputKey = 'maxOutputTokens'
-  if (config?.type === 'openai' || config?.type === 'anthropic') outputKey = 'max_tokens'
-  if (config?.type === 'openai-responses') outputKey = 'max_output_tokens'
-  const configuredOutput = outputKey
-    && config?.optionsEnabled?.[outputKey] === true
-    ? positiveTokenValue(config.options?.[outputKey])
-    : undefined
-  const maxOutputTokens = configuredOutput ?? positiveTokenValue(selectedModel?.maxOutputTokens)
-  const contextWindowIncludesOutput = selectedModel?.contextWindowIncludesOutput
-    ?? (config?.type === 'openai' || config?.type === 'openai-responses' || config?.type === 'anthropic')
-  const effectiveInputTokens = contextWindowIncludesOutput
-    ? Math.max(1, declaredContextTokens - (maxOutputTokens ?? 0))
-    : declaredContextTokens
+  // 编辑中的合法上限参与提示；空草稿沿用保存值，与延迟数字输入的回填语义一致。
+  const draftValue = Number(maxContextTokensDraft.value)
+  const previewConfig = config.maxContextTokens !== undefined && Number.isFinite(draftValue) && draftValue > 0
+    ? { ...config, maxContextTokens: draftValue }
+    : config
+  const resolution = resolveMaxContextTokensForConfig(previewConfig)
+  const source = resolution.source === 'config.maxContextTokens'
+    ? 'channel'
+    : resolution.source === 'model.contextWindow' ? 'model' : 'default'
 
   return {
-    declaredContextTokens,
-    effectiveInputTokens,
-    ...(maxOutputTokens !== undefined ? { maxOutputTokens } : {}),
-    contextWindowIncludesOutput,
+    declaredContextTokens: resolution.maxContextTokens,
+    effectiveInputTokens: resolution.maxInputTokens,
+    ...(resolution.maxOutputTokens !== undefined ? { maxOutputTokens: resolution.maxOutputTokens } : {}),
+    contextWindowIncludesOutput: resolution.contextWindowIncludesOutput,
     source
   }
 })

@@ -29,6 +29,17 @@ import desktopMaintenance from './en/desktopMaintenance';
 const en: BackendLanguageMessages = {
     desktop: {
         inputUi,
+        settingsSearch: {
+            languageServices: 'Code completion and language services',
+            desktopEditor: 'Default code editor and file associations',
+            promptEntries: 'Preset prompt entries',
+            backup: 'Application data backup',
+            discord: 'Discord Bot',
+            onebot: 'NapCat / OneBot',
+            accounts: 'Accounts and permissions',
+            workspaces: 'Workspaces',
+            remote: 'Remote connections'
+        },
         appClosing: 'The app is closing. Please reopen it shortly.',
         bot: {
             policyTitle: "Group message policy",

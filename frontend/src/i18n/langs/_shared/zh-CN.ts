@@ -1149,6 +1149,17 @@ const sharedZhCN = {
             unsavedDescription: "可以保存所有分类的更改，或放弃这份草稿后返回对话。",
             unsavedTitle: "设置尚未保存",
         },
+        settingsSearch: {
+            accounts: "账号与授权",
+            backup: "程序数据备份",
+            desktopEditor: "默认代码编辑器与文件关联",
+            discord: "Discord Bot",
+            languageServices: "代码补全与语言服务",
+            onebot: "NapCat / OneBot",
+            promptEntries: "预设提示词条目",
+            remote: "远程连接",
+            workspaces: "工作区",
+        },
         shell: {
             addWorkspace: "添加工作区",
             awaitingApproval: "等待确认",

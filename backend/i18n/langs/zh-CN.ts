@@ -32,6 +32,17 @@ import desktopMaintenance from './zh-CN/desktopMaintenance';
 const zhCN = {
     desktop: {
         inputUi,
+        settingsSearch: {
+            languageServices: '代码补全与语言服务',
+            desktopEditor: '默认代码编辑器与文件关联',
+            promptEntries: '预设提示词条目',
+            backup: '程序数据备份',
+            discord: 'Discord Bot',
+            onebot: 'NapCat / OneBot',
+            accounts: '账号与授权',
+            workspaces: '工作区',
+            remote: '远程连接'
+        },
         appClosing: '应用正在关闭，请稍后重新打开。',
         bot: {
             policyTitle: "群聊消息策略",
