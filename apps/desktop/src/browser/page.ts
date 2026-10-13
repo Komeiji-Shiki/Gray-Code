@@ -30,17 +30,27 @@ const watchExpression = `(() => {
   if (state?.document === document) return state.id;
   state?.observer.disconnect();
   state = globalThis.__graycodeSnapshotWatch = { id: 1, document, roots: new WeakSet() };
-  const visit = root => {
+  const visit = (root, scanned) => {
     if (root.nodeType !== 1 && root.nodeType !== 9 && root.nodeType !== 11) return;
+    if (scanned?.has(root)) return;
+    scanned?.add(root);
     if ((root.nodeType === 9 || root.nodeType === 11) && !state.roots.has(root)) {
       state.roots.add(root); state.observer.observe(root, { subtree: true, childList: true, attributes: true, characterData: true });
     }
-    if (root.shadowRoot) visit(root.shadowRoot);
-    for (const element of root.querySelectorAll('*')) if (element.shadowRoot) visit(element.shadowRoot);
+    if (root.shadowRoot) visit(root.shadowRoot, scanned);
+    for (const element of root.querySelectorAll('*')) {
+      if (scanned?.has(element)) continue;
+      scanned?.add(element);
+      if (element.shadowRoot) visit(element.shadowRoot, scanned);
+    }
   };
   const mark = records => {
     state.id++;
-    if (Array.isArray(records)) for (const record of records) for (const node of record.addedNodes) visit(node);
+    if (Array.isArray(records)) {
+      // 父节点的查询已覆盖本批子孙；只在这次回调内去重，下一批仍发现新内容和开放 shadow root。
+      const scanned = new WeakSet();
+      for (const record of records) for (const node of record.addedNodes) visit(node, scanned);
+    }
   };
   state.observer = new MutationObserver(mark);
   for (const type of ['input', 'change', 'focusin', 'focusout']) document.addEventListener(type, mark, true);

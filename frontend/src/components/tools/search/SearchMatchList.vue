@@ -19,11 +19,12 @@ let container: HTMLElement | null = null
 let width = 0
 let disposed = false
 const virtual = computed(() => props.matches.length > 30)
-const offsets = computed(() => {
+function rowOffsets(matches: SearchMatch[], heights: Map<SearchMatch, number>) {
   const result = [0]
-  for (const match of props.matches) result.push(result.at(-1)! + (measured.value.get(match) ?? (props.compact ? 28 : 80)))
+  for (const match of matches) result.push(result.at(-1)! + (heights.get(match) ?? (props.compact ? 28 : 80)))
   return result
-})
+}
+const offsets = computed(() => rowOffsets(props.matches, measured.value))
 function indexAt(position: number, positions = offsets.value): number {
   let low = 0
   let high = positions.length - 1
@@ -40,9 +41,35 @@ const endIndex = computed(() => virtual.value
 // 旧 ref 回调也必须保留当次渲染的绝对编号，不能在卸载时读取新窗口的起点。
 const visible = computed(() => props.matches.slice(startIndex.value, endIndex.value)
   .map((match, index) => ({ match, index: startIndex.value + index })))
-watch(() => props.matches, matches => {
-  const retained = new Set(matches)
-  measured.value = new Map([...measured.value].filter(([match]) => retained.has(match)))
+function sameMatch(left: SearchMatch | undefined, right: SearchMatch | undefined): boolean {
+  return !!left && !!right && left.file === right.file && left.line === right.line && left.column === right.column
+    && left.match === right.match && left.context === right.context
+}
+watch(() => props.matches, (matches, previous) => {
+  const heights = new Map(measured.value)
+  // 回执可用新对象重建相同结果；先读取仍挂载的旧行，包含尚未启用虚拟化的十条预览。
+  for (const [index, element] of elements) {
+    const height = element.getBoundingClientRect().height
+    if (height > 0 && previous[index]) heights.set(previous[index], height)
+  }
+  const oldOffsets = rowOffsets(previous, heights)
+  const top = container?.scrollTop ?? scrollTop.value
+  const anchor = indexAt(top, oldOffsets)
+  const within = top - oldOffsets[anchor]
+  const target = sameMatch(matches[anchor], previous[anchor]) ? anchor
+    : matches.findIndex(match => sameMatch(match, previous[anchor]))
+  const next = new Map<SearchMatch, number>()
+  matches.forEach((match, index) => {
+    const height = heights.get(match) ?? (sameMatch(match, previous[index]) ? heights.get(previous[index]) : undefined)
+    if (height !== undefined) next.set(match, height)
+  })
+  measured.value = next
+  void nextTick(() => {
+    if (disposed || !container || props.matches !== matches) return
+    const height = target < 0 ? 0 : offsets.value[target + 1] - offsets.value[target]
+    container.scrollTop = target < 0 ? 0 : offsets.value[target] + Math.min(Math.max(0, within), Math.max(0, height - 1))
+    onScroll()
+  })
 })
 watch(virtual, enabled => {
   if (!observer || !container) return

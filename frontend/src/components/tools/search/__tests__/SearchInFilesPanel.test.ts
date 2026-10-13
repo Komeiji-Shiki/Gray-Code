@@ -68,6 +68,25 @@ test('变高匹配缩短后保留当前条目，旧行内偏移不会跳到后�
   expect(wrapper.find('[data-match-index="0"]').exists()).toBe(true)
 })
 
+test('相同回执重建对象后保留高度和阅读锚点，全新结果回到顶部', async () => {
+  const results = Array.from({ length: 80 }, (_, index) => ({ file: `file-${index}`, line: 1, column: 1, match: 'text', context: 'text' }))
+  const wrapper = render({ query: 'text' }, { success: true, data: { results } })
+  await wrapper.get('.expand-btn').trigger('click')
+  resizeCallbacks.at(-1)!([{ target: wrapper.get('[data-match-index="0"]').element,
+    borderBoxSize: [{ blockSize: 600, inlineSize: 300 }] }] as unknown as ResizeObserverEntry[], {} as ResizeObserver)
+  await flushPromises()
+  const viewport = wrapper.get<HTMLElement>('.test-scroll-container')
+  viewport.element.scrollTop = 1000
+  await viewport.trigger('scroll')
+  await wrapper.setProps({ result: { success: true, data: { results: results.map(item => ({ ...item })) } } })
+  await flushPromises()
+  expect(viewport.element.scrollTop).toBe(1000)
+  expect(wrapper.find('[data-match-index="6"]').exists()).toBe(true)
+  await wrapper.setProps({ result: { success: true, data: { results: results.map(item => ({ ...item, file: `new-${item.file}` })) } } })
+  await flushPromises()
+  expect(viewport.element.scrollTop).toBe(0)
+})
+
 test('原型同名的合法文件也能显示结果与文件数量', () => {
   const results = ['constructor', '__proto__'].map(file => ({ file, line: 1, column: 1, match: 'text', context: 'text' }))
   const wrapper = render({ query: 'text' }, { success: true, data: { results, count: 2 } })
