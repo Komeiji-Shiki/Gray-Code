@@ -4,11 +4,12 @@
  * 管理多对话标签页的创建、切换、关闭和状态快照/恢复
  */
 
-import type { ChatStoreState, ConversationSessionSnapshot, TabInfo } from './types'
+import type { ChatStoreState, TabInfo } from './types'
 import type { StreamChunk } from '../../types'
 import type { StreamHandlerContext } from './streamHandler'
 import { handleStreamChunkBatch } from './streamHandler'
-import { rebuildMessageIndexById } from './state'
+import { snapshotCurrentSession, restoreSessionFromSnapshot, resetConversationState } from './sessionSnapshots'
+export { snapshotCurrentSession, restoreSessionFromSnapshot, resetConversationState } from './sessionSnapshots'
 import { clearPendingDirtyConfirm } from './dirtyConfirmState'
 import { clearAllSmoothForState, resetTurnBaseTokenEstimate } from './streamChunkHandlers'
 import { pruneMessageListUiStateByTab } from '../../components/message/messageListUiState'
@@ -23,146 +24,6 @@ const MAX_BACKGROUND_BUFFER_CHUNKS = 2000
 /** 生成标签页 ID */
 function generateTabId(): string {
   return `tab_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`
-}
-
-/**
- * 将当前活跃会话状态快照为一个 ConversationSessionSnapshot
- */
-export function snapshotCurrentSession(state: ChatStoreState): ConversationSessionSnapshot {
-  return {
-    conversationId: state.currentConversationId.value,
-    allMessages: [...state.allMessages.value],
-    windowStartIndex: state.windowStartIndex.value,
-    totalMessages: state.totalMessages.value,
-    configId: state.configId.value,
-    selectedModelId: state.selectedModelId.value,
-    selectedReasoningEffort: state.selectedReasoningEffort.value,
-    isLoadingMoreMessages: state.isLoadingMoreMessages.value,
-    isStreaming: state.isStreaming.value,
-    isLoading: state.isLoading.value,
-    streamingMessageId: state.streamingMessageId.value,
-    activeStreamId: state.activeStreamId.value,
-    activeRunStatus: state.activeRunStatus.value,
-    isWaitingForResponse: state.isWaitingForResponse.value,
-    checkpoints: [...state.checkpoints.value],
-    activeBuild: state.activeBuild.value ? { ...state.activeBuild.value } : null,
-    error: state.error.value ? { ...state.error.value } : null,
-    retryStatus: state.retryStatus.value ? { ...state.retryStatus.value } : null,
-    autoSummaryStatus: state.autoSummaryStatus.value ? { ...state.autoSummaryStatus.value } : null,
-    historyFolded: state.historyFolded.value,
-    foldedMessageCount: state.foldedMessageCount.value,
-    inputValue: state.inputValue.value,
-    pendingModelOverride: state.pendingModelOverride.value,
-    pendingConfigIdOverride: state.pendingConfigIdOverride.value,
-    editorNodes: [...state.editorNodes.value],
-    // Attachment imports capture this draft; preserve ownership across tab switches.
-    attachments: state.attachments.value,
-    messageQueue: [...state.messageQueue.value],
-    currentPromptModeId: state.currentPromptModeId.value,
-    toolResponseCache: Array.from(state.toolResponseCache.value.entries()),
-    pendingBranchRefreshAfterStream: state._pendingBranchRefreshAfterStream.value,
-    pendingBranchReplayContext: state._pendingBranchReplayContext.value
-      ? { ...state._pendingBranchReplayContext.value }
-      : null,
-    // TREE-12：分支图快照（null = 无图 / 线性模式）；图按整体替换维护（无原地修改），共享引用安全
-    branchGraph: state.branchGraph.value
-  }
-}
-
-/**
- * 从快照恢复会话状态到当前活跃 state
- */
-export function restoreSessionFromSnapshot(
-  state: ChatStoreState,
-  snapshot: ConversationSessionSnapshot
-): void {
-  state.currentConversationId.value = snapshot.conversationId
-  state.allMessages.value = [...snapshot.allMessages]
-  rebuildMessageIndexById(state)
-  state.windowStartIndex.value = snapshot.windowStartIndex
-  state.totalMessages.value = snapshot.totalMessages
-  state.configId.value = snapshot.configId
-  state.selectedModelId.value = snapshot.selectedModelId
-  state.selectedReasoningEffort.value = snapshot.selectedReasoningEffort ?? ''
-  state.isLoadingMoreMessages.value = snapshot.isLoadingMoreMessages
-  state.isStreaming.value = snapshot.isStreaming
-  state.isLoading.value = snapshot.isLoading
-  state.streamingMessageId.value = snapshot.streamingMessageId
-  state.activeStreamId.value = snapshot.activeStreamId ?? null
-  state.activeRunStatus.value = snapshot.activeRunStatus ?? null
-  state.isWaitingForResponse.value = snapshot.isWaitingForResponse
-  state.checkpoints.value = [...snapshot.checkpoints]
-  state.activeBuild.value = snapshot.activeBuild ? { ...snapshot.activeBuild } : null
-  state.error.value = snapshot.error ? { ...snapshot.error } : null
-  state.retryStatus.value = snapshot.retryStatus ? { ...snapshot.retryStatus } : null
-  state.autoSummaryStatus.value = snapshot.autoSummaryStatus ? { ...snapshot.autoSummaryStatus } : null
-  state.historyFolded.value = snapshot.historyFolded
-  state.foldedMessageCount.value = snapshot.foldedMessageCount
-  state.inputValue.value = snapshot.inputValue
-  state.pendingModelOverride.value = snapshot.pendingModelOverride
-  state.pendingConfigIdOverride.value = snapshot.pendingConfigIdOverride ?? null
-  state.editorNodes.value = [...snapshot.editorNodes]
-  state.attachments.value = snapshot.attachments
-  state.messageQueue.value = [...snapshot.messageQueue]
-  state.currentPromptModeId.value = snapshot.currentPromptModeId
-  // 恢复工具响应缓存快照；旧快照无此字段时回退空 Map
-  state.toolResponseCache.value = Array.isArray(snapshot.toolResponseCache)
-    ? new Map(snapshot.toolResponseCache)
-    : new Map()
-  state._pendingBranchRefreshAfterStream.value = snapshot.pendingBranchRefreshAfterStream ?? null
-  state._pendingBranchReplayContext.value = snapshot.pendingBranchReplayContext
-    ? { ...snapshot.pendingBranchReplayContext }
-    : null
-  // TREE-12：恢复分支图快照（切标签页回来恢复分支视图状态）；旧快照无此字段时回退 null
-  state.branchGraph.value = snapshot.branchGraph ?? null
-}
-
-/**
- * 重置当前会话状态为空白
- */
-export function resetConversationState(state: ChatStoreState): void {
-  // H1：会话重置前清理所有平滑条目（销毁实例 + 删除显示文本），UI 切回真实 content
-  clearAllSmoothForState(state)
-  state.currentConversationId.value = null
-  state.allMessages.value = []
-  rebuildMessageIndexById(state)
-  state.windowStartIndex.value = 0
-  state.totalMessages.value = 0
-  state.isLoadingMoreMessages.value = false
-  state.toolResponseCache.value = new Map()
-  state.isStreaming.value = false
-  state.isLoading.value = false
-  state.streamingMessageId.value = null
-  state.activeStreamId.value = null
-  state.activeRunStatus.value = null
-  state._lastCancelledStreamId.value = null
-  state._pendingBranchRefreshAfterStream.value = null
-  state._pendingBranchReplayContext.value = null
-  state.isWaitingForResponse.value = false
-  state.checkpoints.value = []
-  state.activeBuild.value = null
-  state.error.value = null
-  state.retryStatus.value = null
-  state.autoSummaryStatus.value = null
-  state.historyFolded.value = false
-  state.foldedMessageCount.value = 0
-  state.inputValue.value = ''
-  state.pendingModelOverride.value = null
-  state.pendingConfigIdOverride.value = null
-  state.selectedModelId.value = state.currentConfig.value?.model || ''
-  state.selectedReasoningEffort.value = ''
-  state.editorNodes.value = []
-  state.attachments.value = []
-  state.messageQueue.value = []
-  state.currentPromptModeId.value = window.__GRAYCODE_HOST?.getDefaultPromptModeId?.() ?? 'code'
-  // TREE-12：新空白会话无分支图（等待 loadBranchGraph 拉取）
-  state.branchGraph.value = null
-  // TREE-07：会话重置同时复位分支切换 / 分支图加载锁，避免残留 true 永久锁死切换器
-  state.isSwitchingBranch.value = false
-  state.branchGraphLoading.value = false
-  // BCP-05：整会话重置（新建空白对话）时清空 dirty 确认，
-  // 避免确认框残留到新对话并把续作动作发到错误会话（resetConversationState 为全量重置，无条件清空）
-  clearPendingDirtyConfirm()
 }
 
 /**

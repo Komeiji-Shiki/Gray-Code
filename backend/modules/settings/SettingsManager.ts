@@ -23,30 +23,7 @@
  * 本类聚合委托各服务，公共方法签名与导出保持不变。
  */
 
-/**
- * GrayCode - 设置管理器（门面）
- *
- * 负责全局设置的管理、持久化和通知。
- *
- * 实现已按主题拆分（纯重构，行为零变化）：
- * - SettingsCore：共享状态（settings/storage/监听器）与基础设施（深合并、toolsConfig 读写）
- * - CheckpointSettingsService：存档点配置段
- * - PromptSettingsService：系统提示词/模式配置段
- * - ToolsSettingsService：工具启用/自动执行/工具配置/Shell/工具模式段
- * - MemorySettingsService：记忆配置段
- * - ContextSettingsService：上下文感知/诊断配置段
- * - PinnedFilesSettingsService：固定文件配置段
- * - SkillsSettingsService：Skills 配置段
- * - ImageToolsSettingsService：图像工具配置段
- * - ProxySettingsService：代理配置段
- * - SummarizeSettingsService：总结配置段
- * - TokenCountSettingsService：Token 计数配置段
- * - UISettingsService：UI 设置/公告版本段
- * - StoragePathSettingsService：存储路径配置段
- * - SubAgentsSettingsService：子代理配置段
- *
- * 本类聚合委托各服务，公共方法签名与导出保持不变。
- */
+
 import type {
     GlobalSettings,
     SettingsChangeListener,
