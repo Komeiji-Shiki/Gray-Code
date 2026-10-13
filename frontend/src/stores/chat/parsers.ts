@@ -71,20 +71,33 @@ const MAX_THUMBNAIL_BASE64_FALLBACK = 200 * 1024
  */
 function getImageSizeFromBase64(mimeType: string, base64: string): { width: number; height: number } | null {
   try {
-    const raw = atob(base64)
     const mime = (mimeType || '').toLowerCase()
+    if (!['image/png', 'image/jpeg', 'image/jpg', 'image/gif'].includes(mime)) return null
+
+    let raw = ''
+    let prefixLength = 0
+    function ensureBytes(length: number): boolean {
+      while (raw.length < length && prefixLength < base64.length) {
+        prefixLength = Math.min(base64.length, Math.max(64, prefixLength * 2, Math.ceil(length / 3) * 4))
+        // 只净化已读取的前缀，兼容旧附件中的 Base64 空白；中间前缀保持完整四字符组。
+        const prefix = base64.slice(0, prefixLength).replace(/[\t\n\f\r ]/g, '')
+        raw = atob(prefixLength === base64.length ? prefix : prefix.slice(0, prefix.length - prefix.length % 4))
+      }
+      return raw.length >= length
+    }
 
     // PNG：8 字节签名 + IHDR 块（长度 4 + 'IHDR' 4），随后 4 字节宽、4 字节高（大端）
-    if (mime === 'image/png' && raw.length >= 24) {
+    if (mime === 'image/png' && ensureBytes(24)) {
       const view = new DataView(new ArrayBuffer(8))
       for (let i = 0; i < 8; i++) view.setUint8(i, raw.charCodeAt(16 + i))
       return { width: view.getUint32(0), height: view.getUint32(4) }
     }
 
     // JPEG：扫描段标记，SOFn（C0-CF 除 DHT C4 / JPG C8 / DAC CC）段内为 精度(1)+高(2)+宽(2)（大端）
-    if ((mime === 'image/jpeg' || mime === 'image/jpg') && raw.length >= 12) {
+    if ((mime === 'image/jpeg' || mime === 'image/jpg') && ensureBytes(12)) {
       let offset = 2 // 跳过 SOI
-      while (offset + 9 <= raw.length) {
+      // SOF 可能位于多个大型元数据段之后，按段扩展头部，不设置会截断有效 JPEG 的固定上限。
+      while (ensureBytes(offset + 9)) {
         if (raw.charCodeAt(offset) !== 0xff) {
           offset += 1
           continue
@@ -94,11 +107,10 @@ function getImageSizeFromBase64(mimeType: string, base64: string): { width: numb
           offset += 2
           continue
         }
-        if (offset + 4 > raw.length) return null
+        if (marker === 0xda) return null
         const segLen = (raw.charCodeAt(offset + 2) << 8) + raw.charCodeAt(offset + 3)
         if (segLen < 2) return null
         if (marker >= 0xc0 && marker <= 0xcf && marker !== 0xc4 && marker !== 0xc8 && marker !== 0xcc) {
-          if (offset + 9 > raw.length) return null
           const height = (raw.charCodeAt(offset + 5) << 8) + raw.charCodeAt(offset + 6)
           const width = (raw.charCodeAt(offset + 7) << 8) + raw.charCodeAt(offset + 8)
           return { width, height }
@@ -109,7 +121,7 @@ function getImageSizeFromBase64(mimeType: string, base64: string): { width: numb
     }
 
     // GIF：逻辑屏幕描述符，6-7 字节宽、8-9 字节高（小端 16 位）
-    if (mime === 'image/gif' && raw.length >= 10) {
+    if (mime === 'image/gif' && ensureBytes(10)) {
       const width = raw.charCodeAt(6) + (raw.charCodeAt(7) << 8)
       const height = raw.charCodeAt(8) + (raw.charCodeAt(9) << 8)
       return { width, height }

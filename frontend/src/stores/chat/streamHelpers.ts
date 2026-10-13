@@ -109,7 +109,8 @@ export function addTextToMessage(message: Message, text: string, isThought: bool
   // 只有相同类型（都是思考或都不是思考）才合并
   const lastIsThought = lastPart?.thought === true
   if (lastPart && lastPart.text !== undefined && !lastPart.functionCall && lastIsThought === isThought) {
-    lastPart.text += text
+    // 流式消息只浅拷贝 parts；替换尾片段，避免修改上一份消息仍引用的响应式对象。
+    message.parts[message.parts.length - 1] = { ...lastPart, text: lastPart.text + text }
   } else {
     message.parts.push(isThought ? { text, thought: true } : { text })
   }

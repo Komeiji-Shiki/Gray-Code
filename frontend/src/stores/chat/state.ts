@@ -303,7 +303,7 @@ export function markToolResponseCacheChanged(state: Pick<ChatStoreState, 'toolRe
 }
 
 /**
- * 写入一条工具响应缓存并触发 ref 更新（Map.set 不会被 Vue 的 ref 追踪，必须手动 triggerRef）。
+ * 原始 Map 写入后统一通知，避免集合代理与 triggerRef 重复触发同一批消费者。
  * 仅「新增 key」且已满员时才淘汰最旧条目：覆盖更新已有 key 不增加容量，不应误淘汰
  * 其他条目（满员时更新已有 key 若无条件淘汰，最旧条目会被无辜踢出）。
  */
@@ -312,11 +312,11 @@ export function setToolResponseCacheEntry(
   toolCallId: string,
   response: Record<string, unknown>
 ): void {
-  const cache = state.toolResponseCache.value
+  const cache = toRaw(state.toolResponseCache.value)
   if (!cache.has(toolCallId) && cache.size >= TOOL_RESPONSE_CACHE_MAX_SIZE) {
     evictOldestToolResponseCacheEntry(cache)
   }
-  cache.set(toolCallId, response)
+  cache.set(toolCallId, toRaw(response))
   markToolResponseCacheChanged(state)
 }
 
@@ -346,12 +346,12 @@ export function setToolResponseCacheEntries(
   entries: Array<[string, Record<string, unknown>]>
 ): void {
   if (entries.length === 0) return
-  const cache = state.toolResponseCache.value
+  const cache = toRaw(state.toolResponseCache.value)
   for (const [toolCallId, response] of entries) {
     if (!cache.has(toolCallId) && cache.size >= TOOL_RESPONSE_CACHE_MAX_SIZE) {
       evictOldestToolResponseCacheEntry(cache)
     }
-    cache.set(toolCallId, response)
+    cache.set(toolCallId, toRaw(response))
   }
   markToolResponseCacheChanged(state)
 }
