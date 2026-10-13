@@ -50,6 +50,8 @@ npm run platform -- --help
 | npm run package:desktop | 正式桌面构建后生成便携包 |
 | npm run package:installer | 从对应便携输出生成安装与更新交付物 |
 
+`typecheck:all` 与 `ci` 由 `scripts/run-checks.mjs` 调度：类型检查、平台构建与提示词引擎、国际化检查并行，同时运行的任务数不超过核心数；backend 与 frontend 测试在类型检查之后按原顺序串行，平台集成测试最后单独运行。只打印失败任务的输出，最后列出每项耗时，一项失败不会中断其他检查。只检查不输出的类型程序把增量信息记在 `node_modules/.cache/graycode-checks/`，未变化的文件复用上次结果，干净检出时等同完整检查。
+
 开发中先做必要的快速检查，主要回归在修改完成后集中执行。相同条件已经通过时，无需不断重复整套测试。示例：
 
 ~~~powershell
