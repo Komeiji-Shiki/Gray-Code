@@ -10,6 +10,16 @@ import { buildFunctionCallToolRenderEntry, upsertToolRenderEntry } from '../../.
 
 type ProjectedMessage = Pick<Message, 'id' | 'parts' | 'tools'>
 
+test('平滑尾段跳过全文投影，思考保留外壳，合并多片段仍完整显示', () => {
+  const message: ProjectedMessage = { id: 'tail', parts: [{ text: '活动正文' }] }
+  expect(projectRenderBlocks(message, [], 'text:0')).toEqual([])
+  expect(projectRenderBlocks({ ...message, parts: [{ text: '思考正文', thought: true }] }, [], 'thought:0'))
+    .toEqual([{ type: 'thought', text: '', key: '0:thought', partKey: 'thought:0', partCount: 1 }])
+  const merged = { ...message, parts: [{ text: '前文' }, { text: '尾文' }] }
+  expect(projectRenderBlocks(merged, [], 'text:1')).toEqual(projectRenderBlocks(merged))
+  expect(projectRenderBlocks(message)[0].text).toBe('活动正文')
+})
+
 /** 重构前 MessageContent.renderBlocks 的投影部分（逐字保留线性搜索），作为对照基准。 */
 function legacyProject(message: ProjectedMessage): RenderBlock[] {
   const parts = message.parts

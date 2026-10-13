@@ -26,7 +26,8 @@ interface ToolLocation {
 
 export function projectRenderBlocks(
   message: Pick<Message, 'id' | 'parts' | 'tools'>,
-  previousBlocks: readonly RenderBlock[] = []
+  previousBlocks: readonly RenderBlock[] = [],
+  smoothPartKey?: string
 ): RenderBlock[] {
   const parts = message.parts
   if (!parts || parts.length === 0) return []
@@ -115,11 +116,17 @@ export function projectRenderBlocks(
 
   for (let partIndex = 0; partIndex < parts.length; partIndex++) {
     const part = parts[partIndex]
+    const partKey = `${part.thought ? 'thought' : 'text'}:${partIndex}`
     // 处理思考内容
     if (part.thought && part.text) {
       // 思考内容：先刷新其他块
       flushText()
       flushTools()
+      // 活动尾段由 CharFlow 持有全文，只留下思考卡片结构；合并多段时仍走原投影。
+      if (smoothPartKey === partKey && currentThoughtPartCount === 0) {
+        blocks.push({ type: 'thought', text: '', key: `${blocks.length}:thought`, partKey, partCount: 1 })
+        continue
+      }
       currentThoughtBlock.push(part.text)
       currentThoughtPartIndex = partIndex
       currentThoughtPartCount += 1
@@ -131,9 +138,11 @@ export function projectRenderBlocks(
       // 文本块：先刷新思考块和工具块
       flushThought()
       flushTools()
-      currentTextBlock.push(part.text)
-      currentTextPartIndex = partIndex
-      currentTextPartCount += 1
+      if (smoothPartKey !== partKey || currentTextPartCount > 0) {
+        currentTextBlock.push(part.text)
+        currentTextPartIndex = partIndex
+        currentTextPartCount += 1
+      }
     }
 
     // 处理工具调用（即使同一个 part 有 thoughtSignature）

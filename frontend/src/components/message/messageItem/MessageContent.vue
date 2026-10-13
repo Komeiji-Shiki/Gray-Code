@@ -155,7 +155,8 @@ onUnmounted(() => {
 let _prevRenderBlocks: RenderBlock[] = []
 
 // 消息投影只随源数据更新，平滑显示帧复用它，避免反复遍历已经完成的段落和工具。
-const projectedRenderBlocks = computed(() => projectRenderBlocks(props.message, _prevRenderBlocks))
+const smoothTailPartKey = computed(() => tailInfo.value?.partKey)
+const projectedRenderBlocks = computed(() => projectRenderBlocks(props.message, _prevRenderBlocks, smoothTailPartKey.value))
 
 const renderBlocks = computed<RenderBlock[]>(() => {
   const blocks = projectedRenderBlocks.value.slice()
