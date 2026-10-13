@@ -66,9 +66,19 @@ export interface ToolCatalog {
 }
 
 function canonical(value: unknown): unknown {
-  if (Array.isArray(value)) return value.map(canonical);
-  if (value && typeof value === 'object') return Object.fromEntries(Object.keys(value).sort().map(key => [key, canonical((value as Record<string, unknown>)[key])]));
+  if (Array.isArray(value)) return Object.freeze(value.map(canonical));
+  if (value && typeof value === 'object') {
+    return Object.freeze(Object.fromEntries(Object.keys(value).sort().map(key => [key, canonical((value as Record<string, unknown>)[key])])));
+  }
   return value;
+}
+
+interface ToolDefinitionSnapshot {
+  id: number;
+  declaration: ToolDeclaration;
+  parameters: ToolDeclaration['parameters'];
+  schema: string;
+  separateValidation: boolean;
 }
 
 /** 校验器缓存与目录捕获共用同一份 Schema 规范化结果，替换时才能准确判断是否可以复用。 */
@@ -82,6 +92,10 @@ export class RuntimeToolRegistry {
   private readonly tools = new Map<string, RuntimeTool>();
   private readonly schemaValidators = new ToolSchemaValidators();
   private readonly validators = new Map<string, { schema: string } & CompiledToolSchema>();
+  private readonly definitions = new WeakMap<RuntimeTool, ToolDefinitionSnapshot>();
+  private readonly overrideDefinitions = new Map<string, { fingerprint: string; definition: ToolDefinitionSnapshot }>();
+  private readonly catalogs = new Map<string, Pick<ToolCatalog, 'declarations' | 'version'>>();
+  private nextDefinitionId = 0;
 
   /** 宿主可为实际执行提供上下文，声明和效果分类保持纯函数。 */
   constructor(private readonly decorate?: (tool: RuntimeTool) => RuntimeTool) {}
@@ -94,20 +108,33 @@ export class RuntimeToolRegistry {
       ...(tool.validationSchema ? { validationSchema: structuredClone(tool.validationSchema) } : {}) });
   }
 
+  private definition(tool: RuntimeTool, override: boolean): ToolDefinitionSnapshot {
+    const stored = !override ? this.definitions.get(tool) : undefined;
+    if (stored) return stored;
+    const declaration = canonical(tool.declaration) as ToolDeclaration;
+    const parameters = validationParameters(tool, declaration);
+    const schema = JSON.stringify(parameters);
+    // 运行时替换可以修改同一个对象，也可以每次返回新闭包；只复用声明，执行器仍取当前调用。
+    const fingerprint = override ? JSON.stringify([declaration, tool.validationSchema ? parameters : null]) : '';
+    const previous = override ? this.overrideDefinitions.get(declaration.name) : undefined;
+    if (previous?.fingerprint === fingerprint) return previous.definition;
+    const definition = { id: ++this.nextDefinitionId, declaration, parameters, schema, separateValidation: !!tool.validationSchema };
+    if (override) this.overrideDefinitions.set(declaration.name, { fingerprint, definition });
+    else this.definitions.set(tool, definition);
+    return definition;
+  }
+
   catalog(names: string[], overrides?: ReadonlyMap<string, RuntimeTool>): ToolCatalog {
-    const declarations: ToolDeclaration[] = [];
-    const validationSchemas: Record<string, unknown> = {};
+    const definitions: ToolDefinitionSnapshot[] = [];
     const entries = new Map<string, { tool: RuntimeTool } & CompiledToolSchema>();
     for (const name of [...new Set(names)].sort()) {
       const override = overrides?.get(name);
       const tool = override ? this.decorate?.(override) ?? override : this.tools.get(name);
       if (tool && tool.declaration.name !== name) throw new Error('工具替换名称不匹配。');
       if (!tool) throw new Error(`Configured tool is unavailable: ${name}`);
-      const declaration = canonical(tool.declaration) as ToolDeclaration;
-      declarations.push(declaration);
-      const parameters = validationParameters(tool, declaration);
-      if (tool.validationSchema) validationSchemas[name] = parameters;
-      const schema = JSON.stringify(parameters);
+      const definition = this.definition(tool, !!override);
+      definitions.push(definition);
+      const { parameters, schema } = definition;
       let cached = this.validators.get(name);
       if (cached?.schema !== schema) {
         let compiled: CompiledToolSchema;
@@ -118,8 +145,22 @@ export class RuntimeToolRegistry {
       }
       entries.set(name, { tool, validate: cached.validate, normalizeArguments: cached.normalizeArguments });
     }
+    const key = definitions.map(definition => definition.id).join(',');
+    const previous = this.catalogs.get(key);
+    if (previous) {
+      this.catalogs.delete(key); this.catalogs.set(key, previous);
+      return { ...previous, entries };
+    }
+    const declarations = definitions.map(definition => definition.declaration);
+    const validationSchemas = Object.fromEntries(definitions.filter(definition => definition.separateValidation)
+      .map(definition => [definition.declaration.name, definition.parameters]));
     const fingerprint = Object.keys(validationSchemas).length ? { declarations, validationSchemas } : declarations;
-    return { declarations, entries, version: createHash('sha256').update(JSON.stringify(fingerprint)).digest('hex') };
+    // 捕获后的声明不可变，多个运行可以共享 Token 缓存；版本仍按原有内容与排序计算。
+    Object.freeze(declarations);
+    const catalog = { declarations, version: createHash('sha256').update(JSON.stringify(fingerprint)).digest('hex') };
+    this.catalogs.set(key, catalog);
+    if (this.catalogs.size > 64) this.catalogs.delete(this.catalogs.keys().next().value!);
+    return { ...catalog, entries };
   }
 
   /** 配置默认工具清单时只需要名称，避免复制随后不会使用的完整参数声明。 */
@@ -140,6 +181,7 @@ export class RuntimeToolRegistry {
       if (!tool || JSON.stringify(validationParameters(tool)) !== cached.schema) this.validators.delete(name);
     }
     for (const [name, tool] of next.tools) this.tools.set(name, tool);
+    for (const name of this.overrideDefinitions.keys()) if (name.startsWith(prefix)) this.overrideDefinitions.delete(name);
   }
 }
 
