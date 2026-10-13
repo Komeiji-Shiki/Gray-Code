@@ -35,11 +35,6 @@ export class DesktopPetWindow {
     return { success: true };
   }
 
-  acceptsEvent(window: BrowserWindow, event: Record<string, unknown>): boolean {
-    return window !== this.window || typeof event.type === 'string' && (event.type.startsWith('pets.')
-      || ['settings.changed', 'screenSense.changed', 'transport.resumed'].includes(event.type));
-  }
-
   private trackPointer() {
     clearInterval(this.pointerTimer);
     this.lastPointer = undefined;

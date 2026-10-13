@@ -108,9 +108,12 @@ const desktopFiles = new DesktopOpenFiles(file => openDesktopPath(application, c
 function notify(event: Record<string, unknown>): void {
   if (event.clientId && event.clientId !== client.clientId) return;
   if (Array.isArray(event.excludeClientIds) && event.excludeClientIds.includes(client.clientId)) return;
-  for (const item of BrowserWindow.getAllWindows())
-    if (trustedWindows.has(item.webContents.id) && !item.isDestroyed() && petWindowController?.acceptsEvent(item, event) !== false)
+  // 事件由页面通过桌面桥订阅；主进程只核对接收方归属，不复制各组件的消费清单。
+  for (const item of BrowserWindow.getAllWindows()) {
+    if (trustedWindows.has(item.webContents.id) && !item.isDestroyed()) {
       item.webContents.send("graycode:event", event);
+    }
+  }
 }
 function trust(item: BrowserWindow): void {
   const contentsId = item.webContents.id;

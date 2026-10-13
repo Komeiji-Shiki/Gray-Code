@@ -68,6 +68,20 @@ test('重复使用同一回调的订阅仍可分别取消', () => {
   expect(listener).toHaveBeenCalledTimes(1);
 });
 
+test.each(['run.started', 'approval.requested', 'question.requested', 'message.saved'])(
+  '页面订阅能收到收件箱需要的 %s 运行事件', type => {
+    const listener = jest.fn();
+    const unsubscribe = bridge.subscribe(listener);
+    const event = { type: 'event', event: { type, runId: 'pet-inbox-run' } };
+    try {
+      ipcRenderer.emit('graycode:event', {}, event);
+      expect(listener).toHaveBeenCalledWith(event);
+    } finally {
+      unsubscribe();
+    }
+  },
+);
+
 test('订阅者抛错不影响其他订阅者或后续事件', () => {
   const log = jest.spyOn(console, 'error').mockImplementation(() => {});
   const broken = bridge.subscribe(() => { throw new Error('界面错误'); });

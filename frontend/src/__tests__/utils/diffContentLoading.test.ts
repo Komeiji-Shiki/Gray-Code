@@ -41,21 +41,46 @@ test('宿主 payload 仅复制代理分支，普通附件保持引用且可结�
   respond({ success: true })
   await pending
   const plain = { focused: true }
-  expect(prepareHostPayload(plain, value => isProxy(value) ? toRaw(value) : value)).toBe(plain)
+  expect(prepareHostPayload(plain, toRaw)).toBe(plain)
 })
 
-test('代理与非 JSON 数据混用时保留根转换，循环引用照常拒绝', () => {
-  const unwrap = (value: object) => isProxy(value) ? toRaw(value) : value
-  const values = [
-    { proxy: reactive({ enabled: true }), missing: undefined, number: Number.NaN, array: [undefined, , 1] },
-    { proxy: reactive({ enabled: true }), date: new Date(0), map: new Map([['key', 1]]), set: new Set([1]), callback: () => {} },
-    { __v_raw: { untouched: true }, name: '普通字段' },
-  ]
-  for (const value of values) expect(prepareHostPayload(value, unwrap)).toEqual(JSON.parse(JSON.stringify(value)))
-  expect(() => prepareHostPayload({ proxy: reactive({ enabled: true }), bigint: 1n }, unwrap)).toThrow()
+test('解除代理不改写值，正式传输保留特殊值和循环关系', () => {
+  const value = {
+    proxy: reactive({ enabled: true }), missing: undefined, number: Number.NaN, array: [undefined, , 1],
+    date: new Date(0), map: new Map([['key', 1]]), set: new Set([1]), bigint: 1n,
+    customBody: { json: '{"__v_raw":{"untouched":true}}' }, name: '普通字段'
+  }
+  const prepared = prepareHostPayload(value, toRaw)
+  expect(isProxy(prepared.proxy)).toBe(false)
+  expect(prepared.missing).toBeUndefined()
+  expect(Object.hasOwn(prepared, 'missing')).toBe(true)
+  expect(prepared.number).toBeNaN()
+  expect(prepared.date).toBe(value.date)
+  expect(prepared.map).toBe(value.map)
+  expect(prepared.set).toBe(value.set)
+  expect(prepared.bigint).toBe(1n)
+  expect(prepared.customBody.json).toBe(value.customBody.json)
+  expect(1 in prepared.array).toBe(false)
+  const cloned = structuredClone(prepared)
+  expect(cloned.proxy.enabled).toBe(true)
+  expect(Object.hasOwn(cloned, 'missing')).toBe(true)
+  expect(cloned.number).toBeNaN()
+  expect(cloned.date.getTime()).toBe(0)
+  expect(cloned.map.get('key')).toBe(1)
+  expect(cloned.set.has(1)).toBe(true)
+  expect(cloned.bigint).toBe(1n)
+  expect(1 in cloned.array).toBe(false)
+  expect(cloned.customBody.json).toBe(value.customBody.json)
   const cycle: { self?: unknown } = {}
   cycle.self = cycle
-  expect(() => prepareHostPayload(cycle, unwrap)).toThrow()
+  const copied = prepareHostPayload(cycle, toRaw)
+  expect(copied.self).toBe(copied)
+})
+
+test('不可克隆的参数由正式发送拒绝，不用JSON改写后重试', async () => {
+  post.mockImplementationOnce((message: unknown) => structuredClone(message))
+  await expect(sendToExtension('settings.fixture', { callback: () => {} })).rejects.toThrow()
+  expect(post).toHaveBeenCalledTimes(1)
 })
 
 test('桌面资源上传的代理字段解包时保留原二进制缓冲', async () => {

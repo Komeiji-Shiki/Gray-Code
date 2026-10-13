@@ -10,7 +10,7 @@ import { routeExtensionMessage, type PendingRequestHandler } from './extensionMe
 import { MESSAGE_NAMES, UNBOUNDED_REQUEST_TYPES } from '@shared/protocol'
 import { getHostTransport } from './hostTransport'
 import { prepareHostPayload } from '@shared/hostPayload'
-import { isProxy, toRaw } from 'vue'
+import { toRaw } from 'vue'
 import { t } from '../i18n'
 
 // 获取 VSCode API（全局类型由 vite-env.d.ts 声明：acquireVsCodeApi(): VsCodeApi）
@@ -82,24 +82,8 @@ export function sendToExtension<T = any>(type: string, data?: any, options?: Ext
 
     // 发送消息
     try {
-      // Proxy 只复制所属分支；混合非 JSON 数据仍保留原来的根转换语义。
-      let safeData = prepareHostPayload(data, value => isProxy(value) ? toRaw(value) : value)
-      try {
-        vscode.postMessage({
-          type,
-          requestId,
-          data: safeData
-        })
-      } catch (postErr: any) {
-        // 分支复制后仍可能漏检非 Vue Proxy，克隆错误继续按原数据 JSON 化重试一次。
-        if (safeData !== data && postErr?.name !== 'DataCloneError') throw postErr
-        safeData = JSON.parse(JSON.stringify(data))
-        vscode.postMessage({
-          type,
-          requestId,
-          data: safeData
-        })
-      }
+      const safeData = prepareHostPayload(data, toRaw)
+      vscode.postMessage({ type, data: safeData, requestId })
     } catch (err: any) {
       // 例如：payload 过大导致 structured clone / postMessage 失败
       clearTimeoutTimer()
