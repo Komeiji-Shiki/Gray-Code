@@ -54,7 +54,7 @@ export async function bindMigrationWorkspace(app: PlatformApplication, actorId: 
   }
   await app.storage.commitConversation({ conversationId, expectedRevision: state.history.revision, expectedMetadataToken: state.metadataToken,
     metadata: { ...state.metadata, workspaceId, workspaceUri: pathToFileURL(workspace.directory).toString() }, records });
-  app.productUi.conversations.clearMetadataCache();
+
   app.publish({ type: 'workspace.checkpoint.changed', conversationId });
   app.publish({ type: 'conversation.changed', conversationId });
   return { success: true, workspaceId };

@@ -311,7 +311,7 @@ export class WorkspaceCheckpoints {
       const version = { metadata: state.metadata, metadataToken: state.metadataToken, historyRevision: state.history.revision };
       const operation = await this.app.changes.perform(transaction, workspace, version, [...uniqueChanges.values()], change?.commit ?? {}, { messageId: checkpoint.messageNodeId }, [...uniqueDirectories.values()]);
       if (preview) this.previews.delete(preview.id);
-      this.app.productUi.conversations.clearMetadataCache();
+
       this.app.publish({ type: 'conversation.changed', conversationId });
       return { success: true, restored: [...uniqueChanges.values()].filter(item => item.after.bytes !== null).length,
         deleted: [...uniqueChanges.values()].filter(item => item.after.bytes === null).length, skipped: value.plan.skipped, operationId: operation.id };

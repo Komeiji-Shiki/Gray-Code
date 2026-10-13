@@ -55,7 +55,7 @@ export function conversationTools(app: PlatformApplication, historyConfig: Histo
         const state = await snapshot();
         await app.storage.commitConversation({ conversationId: id, expectedRevision: state.historyRevision,
           expectedMetadataToken: state.metadataToken, activeRunId: context.runId, metadata: state.metadata });
-        app.productUi.conversations.clearMetadataCache();
+
         app.publish({ type: 'conversation.changed', conversationId: id });
       }
       return { ...result, attachments: multimodal };

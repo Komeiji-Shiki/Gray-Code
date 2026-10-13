@@ -425,6 +425,28 @@ describe('getMetadata 完整性检查只读 index（HIS-11）', () => {
 });
 
 describe('getMetadataLight 元数据缓存（PERF）', () => {
+    test('存储版本推进后重读，迟到旧读取不重新填入缓存', async () => {
+        const adapter = new IndexedMemoryStorage();
+        let version = 0;
+        Object.defineProperty(adapter, 'metadataVersion', { get: () => version });
+        const manager = new ConversationManager(adapter);
+        await manager.createConversation('conv-version', 'Old');
+        const newer = { ...(await adapter.loadMetadata('conv-version'))!, title: 'New' };
+        await adapter.saveMetadata(newer);
+        version++;
+        expect((await manager.getMetadataLight('conv-version'))?.title).toBe('New');
+
+        manager.clearMetadataCache();
+        let resolveOld!: (value: Awaited<ReturnType<typeof adapter.loadMetadataWithStatus>>) => void;
+        jest.spyOn(adapter, 'loadMetadataWithStatus').mockImplementationOnce(() => new Promise(resolve => { resolveOld = resolve; }));
+        const oldRead = manager.getMetadataLight('conv-version');
+        await adapter.saveMetadata({ ...newer, title: 'Latest' });
+        version++;
+        resolveOld({ value: newer });
+        await oldRead;
+        expect((await manager.getMetadataLight('conv-version'))?.title).toBe('Latest');
+    });
+
     test('缓存命中时不读取存储（对话列表分页/统计热路径）', async () => {
         const adapter = new IndexedMemoryStorage();
         const metadataRead = jest.spyOn(adapter, 'loadMetadataWithStatus');

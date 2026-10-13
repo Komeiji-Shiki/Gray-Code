@@ -153,7 +153,7 @@ export class ProductChat {
       if (['REVISION_CONFLICT', 'STORAGE_BUSY'].includes((error as { code?: string }).code ?? '')) return;
       throw error;
     }
-    this.app.productUi.conversations.clearMetadataCache();
+
     this.app.publish({ type: 'conversation.changed', conversationId: conversation.id, metadataOnly: true });
   }
   async resumeConversationStream(client: ClientSession, conversationId: string): Promise<{ active: boolean; latestMessageId?: string }> {

@@ -13,6 +13,8 @@ function toPlatform(content: Content): PlatformMessage {
 export class SqliteStorageAdapter implements IStorageAdapter {
   constructor(readonly platform: PlatformStorage) {}
 
+  get metadataVersion(): number { return this.platform.metadataVersion; }
+
   async createConversation(metadata: ConversationMetadata): Promise<void> {
     await this.platform.createConversation({ ...metadata });
   }

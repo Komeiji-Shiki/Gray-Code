@@ -41,7 +41,7 @@ export class ConversationService {
   async commit(change: PreparedConversationChange, preserveWindow = false) {
     const result = await this.app.storage.commitConversation({ conversationId: change.state.metadata.id,
       expectedRevision: change.state.history.revision, expectedMetadataToken: change.state.metadataToken, ...change.commit });
-    this.app.productUi.conversations.clearMetadataCache();
+
     this.app.publish({ type: 'conversation.changed', conversationId: change.state.metadata.id, revision: result.revision, ...(preserveWindow ? { preserveWindow: true } : {}) });
     return { success: true, revision: result.revision, historyLength: result.total, snapshotId: change.commit.snapshot?.id };
   }
@@ -102,7 +102,7 @@ export class ConversationService {
     const metadata = { id: targetId, title, actorId, createdAt: now, updatedAt: now, workspaceId: state.metadata.workspaceId, workspaceUri: state.metadata.workspaceUri, custom };
     await this.app.storage.forkConversation(id, metadata, { beforeIndex: end, expectedRevision: state.history.revision,
       records: [branchMutation(state, branches, state.history.messages), { namespace: branchNamespace, id: targetId, ownerId: targetId, expectedRevision: null, value: targetBranch }] });
-    this.app.productUi.conversations.clearMetadataCache(); this.app.publish({ type: 'conversation.changed', conversationId: targetId });
+    this.app.publish({ type: 'conversation.changed', conversationId: targetId });
     return { success: true, conversationId: targetId, title, createdAt: now, updatedAt: now, messageCount: history.length, preview, workspaceUri: metadata.workspaceUri, branch: custom.branch };
   }
   async settleCancelled(actorId: string, id: string, index: number, toolCallIds: string[]) {

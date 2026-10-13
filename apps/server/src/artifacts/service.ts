@@ -128,7 +128,7 @@ export class PlatformArtifacts {
         else await this.app.storage.commitConversation({ conversationId: state.metadata.id,
           expectedRevision: state.historyRevision, expectedMetadataToken: state.metadataToken, activeRunId: context.runId, metadata: state.metadata });
       }
-      if (metadataChanged) this.app.productUi.conversations.clearMetadataCache();
+
       return { ...result, attachments: multimodal };
     });
   }
@@ -143,7 +143,7 @@ export class PlatformArtifacts {
     const metadata = { ...state.metadata, custom: { ...state.metadata.custom as Record<string, unknown>, pendingApprovalGate: null } };
     await this.app.storage.commitConversation({ conversationId: run.conversationId, expectedRevision: state.historyRevision,
       expectedMetadataToken: state.metadataToken, activeRunId: run.id, metadata });
-    this.app.productUi.conversations.clearMetadataCache();
+
   }
   async shouldStop(conversationId: string, toolCallIds: string[]) {
     const conversation = await this.app.storage.getConversation(conversationId);

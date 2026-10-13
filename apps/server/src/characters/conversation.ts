@@ -40,7 +40,7 @@ export async function characterConversation(app: PlatformApplication, client: Cl
       await app.storage.commitConversation({ conversationId: params.conversationId, expectedRevision: state.history.revision,
         expectedMetadataToken: params.metadataToken, metadata: { ...state.metadata, updatedAt: Date.now(),
           custom: { ...(state.metadata.custom as Record<string, unknown>), characterConfig: value } } });
-      app.productUi.conversations.clearMetadataCache();
+
       return { success: true };
     },
   };

@@ -18,7 +18,8 @@ export class ConversationMetadataService {
     private static readonly META_CACHE_CAPACITY = 256;
 
 
-    private readonly metaCache = new Map<string, ConversationMetadata | null>();
+    private readonly metaCache = new Map<string, { value: ConversationMetadata | null; version: number | undefined }>();
+    private cacheEpoch = 0;
 
 
     private touchMetaCache(conversationId: string): void {
@@ -37,7 +38,7 @@ export class ConversationMetadataService {
 
 
     cacheMetadata(conversationId: string, metadata: ConversationMetadata | null): void {
-        this.metaCache.set(conversationId, metadata);
+        this.metaCache.set(conversationId, { value: metadata, version: this.storage.metadataVersion });
         this.touchMetaCache(conversationId);
     }
 
@@ -365,20 +366,25 @@ export class ConversationMetadataService {
         // 与 getMetadata 同源：metaCache 是最近一次持久化快照（所有写路径统一失效/回填），
         // 命中即跳过磁盘 IO——对话列表分页（每页 30 条）与用量统计/检查点查询的逐对话读取
         // 从「每次 fs 读 + JSON parse」降为纯内存命中。返回深拷贝，防止调用方污染缓存。
+        const version = this.storage.metadataVersion;
+        const epoch = this.cacheEpoch;
         const cached = this.metaCache.get(conversationId);
-        if (cached !== undefined) {
-            return cached === null ? null : JSON.parse(JSON.stringify(cached)) as ConversationMetadata;
+        if (cached !== undefined && cached.version === version) {
+            this.touchMetaCache(conversationId);
+            return cached.value === null ? null : JSON.parse(JSON.stringify(cached.value)) as ConversationMetadata;
         }
         const result = await this.storage.loadMetadataWithStatus(conversationId);
+        // 写入或显式失效可能先于旧读取返回，旧结果可返回给原调用方，但不能重新填入当前缓存。
+        const canCache = epoch === this.cacheEpoch && version === this.storage.metadataVersion;
         if (result.value) {
-            this.cacheMetadata(conversationId, result.value);
+            if (canCache) this.cacheMetadata(conversationId, result.value);
             // 未命中路径同样返回深拷贝：直接返回原始引用会让调用方修改污染 metaCache
             // （与命中路径同一语义，防止缓存被污染后其它读误用）。
             return JSON.parse(JSON.stringify(result.value)) as ConversationMetadata;
         }
         // 与 loadStoredMetadata 相同的降级语义：仅 not_found 才做负缓存，
         // io_error/parse_error 不缓存（parse_error 的 getMetadata 走损坏降级，不在此污染缓存）
-        if (!result.errorCode || result.errorCode === 'not_found') {
+        if (canCache && (!result.errorCode || result.errorCode === 'not_found')) {
             this.cacheMetadata(conversationId, null);
         }
         return result.value ?? null;
@@ -516,10 +522,12 @@ export class ConversationMetadataService {
     }
 
     invalidateCache(conversationId: string): void {
+        this.cacheEpoch++;
         this.metaCache.delete(conversationId);
     }
 
     clearCache(): void {
+        this.cacheEpoch++;
         this.metaCache.clear();
     }
 }

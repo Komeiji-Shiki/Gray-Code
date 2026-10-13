@@ -21,6 +21,10 @@ export class PlatformStorage {
   private sequence = 0;
   private closing?: Promise<void>;
   private unavailable?: Error;
+  private metadataEpoch = 0;
+
+  /** 由存储线程的实际会话写入推进，供共享此存储实例的元数据缓存校验。 */
+  get metadataVersion(): number { return this.metadataEpoch; }
   private constructor(public readonly directory: string) {
     this.worker = new Worker(path.join(__dirname, 'storage.worker.cjs'), { workerData: { directory } });
     this.exited = new Promise(resolve => this.worker.once('exit', () => resolve()));
@@ -39,7 +43,10 @@ export class PlatformStorage {
         if (message.type === 'reply' || message.type === 'error') {
           const call = store.pending.get(message.id!);
           store.pending.delete(message.id!);
-          if (message.type === 'reply') call?.resolve(message.value);
+          if (message.type === 'reply') {
+            store.metadataEpoch = Math.max(store.metadataEpoch, message.metadataVersion);
+            call?.resolve(message.value);
+          }
           else call?.reject(new PlatformStorageError(message.error.code as StorageErrorCode, message.error.message));
         }
       });

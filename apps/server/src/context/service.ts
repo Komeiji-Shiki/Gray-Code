@@ -49,7 +49,7 @@ export class PlatformContextService {
       ...(snapshot ? { snapshot: { id: randomUUID(), conversationId: state.metadata.id, timestamp: Date.now(), name: '总结变更前', kind: 'context-summary' } } : {}) });
     state.history.revision = result.revision; state.history.total = result.total; state.metadataToken = result.metadataToken;
     frame.dirty = false; frame.historyReplaced = false; frame.messageUpdates.clear(); frame.appendMessages.length = 0;
-    this.app.productUi.conversations.clearMetadataCache();
+
   }
   /** 正式请求和预览共享最终视图、预算和动作决策。 */
   async prepareModel(context: ModelRequestContext, preview = false) {

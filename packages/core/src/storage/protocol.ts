@@ -137,5 +137,5 @@ export type StorageMethod = keyof StorageOperations;
 export interface StorageRequest { id: number; method: StorageMethod; input: unknown }
 export type StorageReply =
   | { type: 'ready' }
-  | { type: 'reply'; id: number; value: unknown }
+  | { type: 'reply'; id: number; value: unknown; metadataVersion: number }
   | { type: 'error'; id?: number; error: { code: string; message: string } };

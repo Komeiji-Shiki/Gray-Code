@@ -85,7 +85,7 @@ export class SubAgentMonitorService {
         { namespace: 'subagent-transcript', id: key, ownerId: target.conversationId, expectedRevision: record.revision,
           value: { contents: snapshot.contents, contextCompactions: snapshot.contextCompactions } },
       ] });
-    this.app.productUi.conversations.clearMetadataCache();
+
     this.app.publish({ type: 'ui.message', message: { type: 'subagentMonitor.event', data: { manifest, activeRunIds: this.app.subagents.activeIds(),
       event: { runId, type: 'content_snapshot', timestamp: Date.now(), contentRevision: snapshot.contentRevision, eventSequence: snapshot.eventSequence } } } });
     return { manifest, window: createRunContentWindow(snapshot), activeRunIds: this.app.subagents.activeIds() };

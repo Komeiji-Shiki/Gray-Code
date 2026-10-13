@@ -626,7 +626,7 @@ export class PlatformApplication {
       updatedAt: now,
     };
     await this.storage.initializeConversation(conversation, initialMessages, options.records);
-    this.productUi.conversations.clearMetadataCache();
+
     this.publish({ type: 'conversation.changed', conversationId: conversation.id });
     return conversation;
   }

@@ -106,6 +106,8 @@ export interface HistoryOutlineEntry {
 }
 
 export interface IStorageAdapter {
+    /** 平台存储成功修改元数据后推进；未提供版本的适配器继续使用显式缓存失效。 */
+    readonly metadataVersion?: number;
     /** Atomically create metadata and empty history when the storage supports transactions. */
     createConversation?(metadata: ConversationMetadata): Promise<void>;
     /**

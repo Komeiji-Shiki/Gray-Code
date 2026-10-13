@@ -36,6 +36,8 @@ interface MigrationRow {
 
 /** Synchronous implementation is deliberately private to one worker thread. */
 export class PlatformDatabase {
+  /** 当前进程内的元数据版本，只用于共享存储读缓存的失效，不改变持久格式。 */
+  metadataVersion = 0;
   private readonly db: SqliteConnection;
   private readonly objects: ObjectStore;
   private readonly histories: HistoryStore;
@@ -223,6 +225,7 @@ export class PlatformDatabase {
       this.db.prepare('DELETE FROM records WHERE owner_id=?').run(id);
       this.db.prepare('DELETE FROM migrations WHERE conversation_id=?').run(id);
       this.db.prepare('DELETE FROM conversations WHERE id=?').run(id);
+      this.metadataVersion++;
       this.db.prepare('DELETE FROM histories WHERE id=?').run(row.history_id);
       return true;
     })() },
@@ -325,6 +328,7 @@ export class PlatformDatabase {
     mergeBackupUnits: { concurrentRead: false, execute: input => {
       this.histories.clearSnapshots();
       const result = mergeBackupUnits(this.db, this.objects, this.objectPath, input);
+      this.metadataVersion++;
       this.vectorMatrices.invalidate();
       return result;
     } },
@@ -455,6 +459,7 @@ export class PlatformDatabase {
     if (this.findConversation(metadata.id)) throw new PlatformStorageError('REVISION_CONFLICT', 'Conversation ID already exists.');
     this.db.prepare('INSERT INTO conversations(id,title,created_at,updated_at,workspace_uri,metadata_hash,history_id) VALUES(?,?,?,?,?,?,?)')
       .run(metadata.id, metadata.title ?? null, metadata.createdAt, metadata.updatedAt, metadata.workspaceUri ?? null, this.objects.putValue(metadata), historyId);
+    this.metadataVersion++;
     return this.summary(this.conversation(metadata.id));
   }
 
@@ -464,6 +469,7 @@ export class PlatformDatabase {
       this.conversation(metadata.id);
       this.db.prepare('UPDATE conversations SET title=?,created_at=?,updated_at=?,workspace_uri=?,metadata_hash=? WHERE id=?')
         .run(metadata.title ?? null, metadata.createdAt, metadata.updatedAt, metadata.workspaceUri ?? null, this.objects.putValue(metadata), metadata.id);
+      this.metadataVersion++;
     })();
   }
 

@@ -14,7 +14,7 @@ try {
     port.postMessage({ type: 'error', id: request.id, error: errorDetails(error) } satisfies StorageReply);
   };
   const completed = (request: StorageRequest, value: unknown) => {
-    port.postMessage({ type: 'reply', id: request.id, value } satisfies StorageReply);
+    port.postMessage({ type: 'reply', id: request.id, value, metadataVersion: database.metadataVersion } satisfies StorageReply);
   };
   const isVector = (request: StorageRequest) => request.method === 'longMemoryRecall'
     && !!(request.input as StorageOperations['longMemoryRecall']['input']).vector;
