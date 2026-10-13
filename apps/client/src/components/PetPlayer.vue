@@ -148,11 +148,20 @@ function apply(command: PetCommandInput | null, signal?: AbortSignal): Promise<v
   }
   return result;
 }
+let pointerFrame: number | undefined;
+let pointerPosition = { x: 0, y: 0, leave: false };
 function pointer(x: number, y: number, leave = false) {
-  if (!ready.value || props.configuration.followPointer === false) return;
-  const bounds = frame.value?.getBoundingClientRect();
-  if (!bounds) return;
-  post({ action: 'pointer', x: (x - bounds.left) * devicePixelRatio, y: (y - bounds.top) * devicePixelRatio, leave });
+  if (closed || !ready.value || props.configuration.followPointer === false) return;
+  pointerPosition = { x, y, leave };
+  if (pointerFrame !== undefined) return;
+  pointerFrame = requestAnimationFrame(() => {
+    pointerFrame = undefined;
+    if (closed || !ready.value || props.configuration.followPointer === false) return;
+    const bounds = frame.value?.getBoundingClientRect();
+    if (!bounds) return;
+    post({ action: 'pointer', x: (pointerPosition.x - bounds.left) * devicePixelRatio,
+      y: (pointerPosition.y - bounds.top) * devicePixelRatio, leave: pointerPosition.leave });
+  });
 }
 function trackPointer(event: PointerEvent) { pointer(event.clientX, event.clientY, event.type === 'pointerleave'); }
 function stopSpeech() {
@@ -228,6 +237,7 @@ onMounted(async () => {
 onBeforeUnmount(() => {
   stopSpeech();
   closed = true;
+  if (pointerFrame !== undefined) cancelAnimationFrame(pointerFrame);
   observer?.disconnect();
   clearInterval(heartbeat);
   window.removeEventListener('message', message);

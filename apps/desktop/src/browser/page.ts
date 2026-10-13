@@ -246,8 +246,9 @@ export class BrowserPage {
     let total = 0, characters = 0, budgetReached = false;
     for (const { frameId, identity, sessionId, nodes } of read.reads) {
       // 深层组件不截断树深度；输出预算在筛选之后应用，后面的正文和 iframe 仍可检索。
-      for (const { node, row } of snapshotRows(nodes, options, scope?.backendNodeId)) {
+      for (const candidate of snapshotRows(nodes, options, scope?.backendNodeId)) {
         if (total++ < offset || rows.length >= maximum || budgetReached) continue;
+        const { node, row } = candidate;
         const size = JSON.stringify(row).length;
         if (characters + size > 60000 && rows.length) { budgetReached = true; continue; }
         characters += size;

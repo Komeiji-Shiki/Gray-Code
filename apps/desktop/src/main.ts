@@ -109,7 +109,7 @@ function notify(event: Record<string, unknown>): void {
   if (event.clientId && event.clientId !== client.clientId) return;
   if (Array.isArray(event.excludeClientIds) && event.excludeClientIds.includes(client.clientId)) return;
   for (const item of BrowserWindow.getAllWindows())
-    if (trustedWindows.has(item.webContents.id) && !item.isDestroyed())
+    if (trustedWindows.has(item.webContents.id) && !item.isDestroyed() && petWindowController?.acceptsEvent(item, event) !== false)
       item.webContents.send("graycode:event", event);
 }
 function trust(item: BrowserWindow): void {

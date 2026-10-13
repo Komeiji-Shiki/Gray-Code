@@ -25,7 +25,7 @@ function fixture() {
   let change!: () => void;
   const publish = jest.fn();
   const app = { publish, pets: { attachHost: (host: { changed: () => void }) => { change = host.changed; },
-    snapshot: async () => ({ configuration }), call: jest.fn() } } as unknown as PlatformApplication;
+    snapshot: async () => ({ configuration, state: { generation: 'fixture', phase: 'ready' } }), call: jest.fn() } } as unknown as PlatformApplication;
   const window = new DesktopPetWindow(app, { actorId: 'owner', clientId: 'fixture' }, 'preload.cjs', jest.fn());
   return { configuration, change: () => change(), publish, window };
 }

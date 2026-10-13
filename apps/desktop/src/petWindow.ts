@@ -10,6 +10,8 @@ export class DesktopPetWindow {
   private followPointer = false;
   private positionTimer?: NodeJS.Timeout;
   private pointerTimer?: NodeJS.Timeout;
+  private pointerIdentity = '';
+  private lastPointer?: { x: number; y: number; width: number; height: number };
 
   constructor(
     private readonly app: PlatformApplication,
@@ -33,15 +35,26 @@ export class DesktopPetWindow {
     return { success: true };
   }
 
+  acceptsEvent(window: BrowserWindow, event: Record<string, unknown>): boolean {
+    return window !== this.window || typeof event.type === 'string' && (event.type.startsWith('pets.')
+      || ['settings.changed', 'screenSense.changed', 'transport.resumed'].includes(event.type));
+  }
+
   private trackPointer() {
     clearInterval(this.pointerTimer);
+    this.lastPointer = undefined;
     this.pointerTimer = setInterval(() => {
       if (!this.followPointer || !this.window || this.window.isDestroyed() || this.disposed) return;
       const cursor = screen.getCursorScreenPoint();
       const bounds = this.window.getContentBounds();
+      const next = { x: cursor.x - bounds.x, y: cursor.y - bounds.y, width: bounds.width, height: bounds.height };
+      const previous = this.lastPointer;
+      if (previous && next.x === previous.x && next.y === previous.y
+        && next.width === previous.width && next.height === previous.height) return;
+      this.lastPointer = next;
       // 只把光标相对于本窗口的位置送给自己的播放器，桌面截图与服务器模型请求均不参与。
       this.window.webContents.send('graycode:event', {
-        type: 'pets.pointer', x: cursor.x - bounds.x, y: cursor.y - bounds.y,
+        type: 'pets.pointer', x: next.x, y: next.y,
       });
     }, 100);
     this.pointerTimer.unref();
@@ -50,9 +63,14 @@ export class DesktopPetWindow {
   private async synchronize() {
     const sequence = ++this.sequence;
     if (this.disposed) return;
-    const { configuration } = await this.app.pets.snapshot();
+    const { configuration, state } = await this.app.pets.snapshot();
     if (sequence !== this.sequence || this.disposed) return;
-    this.followPointer = configuration.followPointer === true && !configuration.stopped;
+    const followPointer = configuration.followPointer === true && !configuration.stopped;
+    const identity = `${state.generation}:${state.rendererId ?? ''}:${state.phase}`;
+    // 首次就绪、重载或重新开启跟随时，即使鼠标没动也需要给新播放器补发一次位置。
+    if (identity !== this.pointerIdentity || followPointer !== this.followPointer) this.lastPointer = undefined;
+    this.pointerIdentity = identity;
+    this.followPointer = followPointer;
     if (!configuration.visible || configuration.surface !== 'floating' || !configuration.resourceId) {
       clearInterval(this.pointerTimer);
       this.window?.destroy();
