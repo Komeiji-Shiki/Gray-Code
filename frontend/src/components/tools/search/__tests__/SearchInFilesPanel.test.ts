@@ -7,9 +7,14 @@ import { setLanguage } from '../../../../i18n'
 const { load, send } = vi.hoisted(() => ({ load: vi.fn(), send: vi.fn() }))
 vi.mock('../../../../utils/vscode', () => ({ loadDiffContent: load, sendToExtension: send, showNotification: vi.fn() }))
 const wrappers: ReturnType<typeof mount>[] = []
+const resizeCallbacks: ResizeObserverCallback[] = []
 beforeEach(() => {
   setLanguage('zh-CN'); load.mockReset(); send.mockReset().mockResolvedValue({ success: true })
-  vi.stubGlobal('ResizeObserver', class { observe() {} unobserve() {} disconnect() {} })
+  resizeCallbacks.length = 0
+  vi.stubGlobal('ResizeObserver', class {
+    constructor(callback: ResizeObserverCallback) { resizeCallbacks.push(callback) }
+    observe() {} unobserve() {} disconnect() {}
+  })
 })
 afterEach(() => { wrappers.splice(0).forEach(wrapper => wrapper.unmount()); setLanguage('auto'); vi.unstubAllGlobals() })
 const render = (args: Record<string, unknown>, result?: Record<string, unknown>) => {
@@ -37,6 +42,30 @@ test('展开大量匹配只挂载附近行，滚动后保留原文件和行号�
   const target = wrapper.get('[data-match-index="100"] .file-path')
   await target.trigger('click')
   expect(send).toHaveBeenLastCalledWith('openWorkspaceFileAt', { path: 'file-100.ts', startLine: 101 })
+  viewport.element.scrollTop = 240
+  await viewport.trigger('scroll')
+  const next = wrapper.get<HTMLElement>('[data-match-index="4"] .file-path')
+  const focus = vi.spyOn(next.element, 'focus')
+  await wrapper.get('[data-match-index="3"] .file-path').trigger('keydown', { key: 'ArrowDown' })
+  expect(focus).toHaveBeenCalled()
+})
+
+test('变高匹配缩短后保留当前条目，旧行内偏移不会跳到后续结果', async () => {
+  const results = Array.from({ length: 80 }, (_, index) => ({ file: `file-${index}`, line: 1, column: 1, match: 'text', context: 'text' }))
+  const wrapper = render({ query: 'text' }, { success: true, data: { results } })
+  await wrapper.get('.expand-btn').trigger('click')
+  const viewport = wrapper.get<HTMLElement>('.test-scroll-container')
+  const resize = async (height: number) => {
+    resizeCallbacks.at(-1)!([{ target: wrapper.get('[data-match-index="0"]').element,
+      borderBoxSize: [{ blockSize: height, inlineSize: 300 }] }] as unknown as ResizeObserverEntry[], {} as ResizeObserver)
+    await flushPromises()
+  }
+  await resize(600)
+  viewport.element.scrollTop = 500
+  await viewport.trigger('scroll')
+  await resize(80)
+  expect(viewport.element.scrollTop).toBeLessThan(80)
+  expect(wrapper.find('[data-match-index="0"]').exists()).toBe(true)
 })
 
 test('原型同名的合法文件也能显示结果与文件数量', () => {

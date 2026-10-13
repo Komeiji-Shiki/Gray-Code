@@ -34,10 +34,12 @@ function indexAt(position: number, positions = offsets.value): number {
   }
   return Math.min(low, Math.max(0, positions.length - 2))
 }
-const range = computed(() => virtual.value
-  ? { start: indexAt(Math.max(0, scrollTop.value - 160)), end: Math.min(props.matches.length, indexAt(scrollTop.value + viewportHeight.value + 160) + 1) }
-  : { start: 0, end: props.matches.length })
-const visible = computed(() => props.matches.slice(range.value.start, range.value.end))
+const startIndex = computed(() => virtual.value ? indexAt(Math.max(0, scrollTop.value - 160)) : 0)
+const endIndex = computed(() => virtual.value
+  ? Math.min(props.matches.length, indexAt(scrollTop.value + viewportHeight.value + 160) + 1) : props.matches.length)
+// 旧 ref 回调也必须保留当次渲染的绝对编号，不能在卸载时读取新窗口的起点。
+const visible = computed(() => props.matches.slice(startIndex.value, endIndex.value)
+  .map((match, index) => ({ match, index: startIndex.value + index })))
 watch(() => props.matches, matches => {
   const retained = new Set(matches)
   measured.value = new Map([...measured.value].filter(([match]) => retained.has(match)))
@@ -69,8 +71,8 @@ async function navigate(event: KeyboardEvent) {
   else if (event.key === 'ArrowUp') target = current - 1
   else if (event.key === 'Home') target = 0
   else if (event.key === 'End') target = props.matches.length - 1
-  else if (event.key === 'Tab' && !event.shiftKey && current === range.value.end - 1 && event.target.classList.contains('line-info')) target = current + 1
-  else if (event.key === 'Tab' && event.shiftKey && current === range.value.start && event.target.classList.contains('file-path')) target = current - 1
+  else if (event.key === 'Tab' && !event.shiftKey && current === endIndex.value - 1 && event.target.classList.contains('line-info')) target = current + 1
+  else if (event.key === 'Tab' && event.shiftKey && current === startIndex.value && event.target.classList.contains('file-path')) target = current - 1
   else return
   if (target < 0 || target >= props.matches.length) return
   event.preventDefault()
@@ -108,7 +110,8 @@ onMounted(() => {
     measured.value = next
     if (virtual.value) void nextTick(() => {
       if (disposed || !container || props.matches[anchor] !== anchorMatch) return
-      container.scrollTop = offsets.value[anchor] + within
+      const height = offsets.value[anchor + 1] - offsets.value[anchor]
+      container.scrollTop = offsets.value[anchor] + Math.min(Math.max(0, within), Math.max(0, height - 1))
       onScroll()
     })
   })
@@ -138,21 +141,23 @@ function highlighted(match: SearchMatch): string {
 <template>
   <CustomScrollbar ref="scrollbar" :max-height="maxHeight">
     <div class="match-list" :style="virtual ? { height: offsets.at(-1) + 'px' } : undefined" @keydown="navigate">
-      <div :style="virtual ? { position: 'absolute', width: '100%', transform: `translateY(${offsets[range.start]}px)` } : undefined">
-        <div v-for="(match, index) in visible" :key="`${match.file}:${match.line}:${range.start + index}`"
-          :ref="node => bindRow(range.start + index, node)" :data-match-index="range.start + index"
+      <div :style="virtual ? { position: 'absolute', width: '100%', transform: `translateY(${offsets[startIndex]}px)` } : undefined">
+        <div v-for="row in visible" :key="`${row.match.file}:${row.match.line}:${row.index}`"
+          :ref="node => bindRow(row.index, node)" :data-match-index="row.index"
           class="match-item" :class="{ compact }">
           <template v-if="compact">
-            <span class="line-info">:{{ match.line }}:{{ match.column }}</span>
-            <code class="match-text">{{ match.match }}</code>
+            <span class="line-info">:{{ row.match.line }}:{{ row.match.column }}</span>
+            <code class="match-text">{{ row.match.match }}</code>
           </template>
           <template v-else>
             <div class="match-header">
               <span class="codicon codicon-file file-icon"></span>
-              <button type="button" class="file-path gc-link-button" :title="match.file" @click="openFileAt(match.file, match.line)">{{ match.file }}</button>
-              <button type="button" class="line-info gc-link-button" @click="openFileAt(match.file, match.line)">:{{ match.line }}:{{ match.column }}</button>
+              <button type="button" class="file-path gc-link-button" :title="row.match.file"
+                @click="openFileAt(row.match.file, row.match.line)">{{ row.match.file }}</button>
+              <button type="button" class="line-info gc-link-button"
+                @click="openFileAt(row.match.file, row.match.line)">:{{ row.match.line }}:{{ row.match.column }}</button>
             </div>
-            <pre class="match-context"><code v-html="highlighted(match)"></code></pre>
+            <pre class="match-context"><code v-html="highlighted(row.match)"></code></pre>
           </template>
         </div>
       </div>
