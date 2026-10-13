@@ -137,7 +137,8 @@ export interface ModelInput {
   taskContext?: { actor: Pick<ActorIdentity, 'id' | 'displayName' | 'role'>; workspace?: WorkspaceDefinition };
   systemPrompt: string;
   messages: PlatformMessage[];
-  tools: ToolDeclaration[];
+  /** 捕获后不可变的工具目录；替换目录时使用新数组。 */
+  tools: readonly Readonly<ToolDeclaration>[];
   signal: AbortSignal;
   onDelta?: (parts: Record<string, unknown>[]) => void;
   /** 供应方适配器按渠道设置重新请求前通知；本次已推送的思考增量应当丢弃。 */

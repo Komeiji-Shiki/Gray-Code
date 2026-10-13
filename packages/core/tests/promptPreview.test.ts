@@ -11,10 +11,11 @@ import { fixture } from './fixtures';
 import { MessageTokenEstimator } from '../../../backend/modules/api/chat/services/MessageTokenEstimator';
 import type { Content } from '../../../backend/modules/conversation/types';
 import { estimateModelInputTokens } from '../../../apps/server/src/model/usage';
+import { freezeToolDeclarations } from '../src/runtime/tools';
 
-test('usage 固定长前缀复用完整计数，内容或嵌入方式变化后保留原拼接口径', () => {
+test('usage 复用不可变工具目录和固定长前缀，目录替换后保留原拼接口径', () => {
   const input: ModelInput = { providerId: 'usage-fixture', conversationId: 'usage-fixture', systemPrompt: '固定前缀 '.repeat(30_000),
-    tools: [{ name: 'tool', description: '工具说明', parameters: { type: 'object' } }],
+    tools: freezeToolDeclarations([{ name: 'tool', description: '工具说明', parameters: { type: 'object' } }]),
     messages: [{ role: 'user', parts: [{ text: '当前输入' }] }],
     promptContext: { historyPlacement: 'entry', beforeHistoryMessages: [{ role: 'user', parts: [{ text: '前置上下文' }] }], afterHistoryMessages: [] },
     taskContext: { actor: { id: 'owner', displayName: '主人', role: 'owner' } }, signal: new AbortController().signal,
@@ -28,12 +29,18 @@ test('usage 固定长前缀复用完整计数，内容或嵌入方式变化后�
   };
   const expected = legacyCount();
   const estimate = jest.spyOn(MessageTokenEstimator.prototype, 'estimateMessageTokens');
+  const stringify = jest.spyOn(JSON, 'stringify');
   try {
     expect(estimateModelInputTokens(input)).toBe(expected);
-    expect(estimateModelInputTokens({ ...input, tools: input.tools.map(tool => ({ ...tool })) })).toBe(expected);
+    expect(estimateModelInputTokens({ ...input })).toBe(expected);
+    expect(stringify.mock.calls.filter(([value]) => value === input.tools)).toHaveLength(1);
+    expect(estimateModelInputTokens({ ...input, tools: freezeToolDeclarations(input.tools.map(tool => ({ ...tool }))) })).toBe(expected);
     expect(estimate.mock.calls.filter(([message]) => message.parts[0]?.text?.startsWith(input.systemPrompt)).length).toBe(1);
-  } finally { estimate.mockRestore(); }
-  input.tools[0]!.description = '原地变更后的工具说明';
+  } finally {
+    estimate.mockRestore();
+    stringify.mockRestore();
+  }
+  input.tools = freezeToolDeclarations([{ ...input.tools[0]!, description: '替换后的工具说明' }]);
   expect(estimateModelInputTokens(input)).toBe(legacyCount());
   input.promptContext!.taskContextEmbedded = true;
   expect(estimateModelInputTokens(input)).toBe(legacyCount());
@@ -184,7 +191,7 @@ describe('当前完整提示词的只读预览', () => {
     expect(JSON.stringify(result.character)).toContain('before_char'); expect(await app.storage.readConversationState('preview-chat')).toEqual(before);
     await preview(data);
     expect(transform.mock.calls.filter(([items]) => items.some(item => item.context.placement === 5))).toHaveLength(2);
-    const config = (before.metadata.custom as { characterConfig: object }).characterConfig;
+    const config = before.metadata.custom!.characterConfig!;
     await app.storage.commitConversation({ conversationId: 'preview-chat', expectedRevision: before.history.revision,
       expectedMetadataToken: before.metadataToken, metadata: { ...before.metadata,
         custom: { ...before.metadata.custom as object, characterConfig: { ...config, worldTokenBudget: 0 } } } });

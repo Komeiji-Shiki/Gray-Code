@@ -81,6 +81,18 @@ interface ToolDefinitionSnapshot {
   separateValidation: boolean;
 }
 
+/** 供应方模式转换后只冻结新建结构，既有目录中的冻结 Schema 继续共享。 */
+export function freezeToolDeclarations(declarations: ToolDeclaration[]): readonly Readonly<ToolDeclaration>[] {
+  const freeze = (value: unknown): void => {
+    if (value && typeof value === 'object' && !Object.isFrozen(value)) {
+      for (const child of Object.values(value)) freeze(child);
+      Object.freeze(value);
+    }
+  };
+  for (const declaration of declarations) freeze(declaration);
+  return Object.freeze(declarations);
+}
+
 /** 校验器缓存与目录捕获共用同一份 Schema 规范化结果，替换时才能准确判断是否可以复用。 */
 function validationParameters(tool: RuntimeTool, declaration?: ToolDeclaration): ToolDeclaration['parameters'] {
   if (tool.validationSchema) return canonical(tool.validationSchema) as ToolDeclaration['parameters'];

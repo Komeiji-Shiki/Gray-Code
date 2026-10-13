@@ -1,11 +1,11 @@
 import { randomUUID } from 'node:crypto';
 import type {
   ActorIdentity, AgentDefinition, ApprovalRequest, ApprovalChoice, ApprovalDecision, ModelProvider, PlatformMessage, RunEvent, RunRecord,
-  StartRunInput, ToolEffect, ToolOutcome, WorkspaceDefinition, ModelInput,
+  StartRunInput, ToolDeclaration, ToolEffect, ToolOutcome, WorkspaceDefinition, ModelInput,
   ContinueRunInput, ConversationState, ConversationCommit, PlatformConversation, ModelRequestSnapshot, ModelToolCall,
 } from '@graycode/contracts';
 import { PlatformStorage } from '../storage/client';
-import { RuntimeToolRegistry, authorizeEffects, needsApproval, type ToolCatalog, type ToolContext } from './tools';
+import { RuntimeToolRegistry, authorizeEffects, freezeToolDeclarations, needsApproval, type ToolCatalog, type ToolContext } from './tools';
 import { QuestionBroker } from './questions';
 import { DeltaCoalescer } from './deltas';
 import { NativeAsyncTools, NATIVE_ASYNC_NAMESPACE, WAIT_FOR_TASKS, nativeToolDeclaration, waitForTasksDeclaration, type NativeToolRecord } from './nativeAsync';
@@ -486,7 +486,7 @@ export class PlatformRuntime {
         const nativeEnabled = await this.services.models.supportsAsyncTools?.(request) ?? false;
         // 工具目录在回合开始时已捕获；复用声明对象，让前缀序列化和 tokenizer 缓存跨迭代生效。
         if (!requestTools || requestToolsNative !== nativeEnabled) {
-          requestTools = catalog.declarations.map(tool => {
+          const declarations: ToolDeclaration[] = catalog.declarations.map(tool => {
             const runtimeTool = catalog.entries.get(tool.name)?.tool;
             const allowed = runtimeTool?.nativeAsync !== false && agent.toolApproval?.[tool.name] !== 'deny' && (runtimeTool?.nativeAsync === true
               || runtimeTool?.parallelRead === true && agent.toolApproval?.[tool.name] !== 'ask'
@@ -496,7 +496,8 @@ export class PlatformRuntime {
             const { async: _async, ...synchronous } = tool;
             return synchronous;
           });
-          if (requestTools.some(tool => tool.async)) requestTools.push(waitForTasksDeclaration);
+          if (declarations.some(tool => tool.async)) declarations.push(waitForTasksDeclaration);
+          requestTools = freezeToolDeclarations(declarations);
           requestToolsNative = nativeEnabled;
         }
         request.tools = requestTools;

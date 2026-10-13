@@ -89,7 +89,7 @@ test('便携配置替换导入时，另一台机器已恢复默认的工具不�
 
 test('默认 Agent 不预先携带环境工具，普通对话不发送 Bot 附件和笔记工具，审批规则仍覆盖完整目录', async () => {
   const f = await fixture(); await f.store.close();
-  let declarations: { name: string }[] = [];
+  let declarations: readonly { name: string }[] = [];
   const app = await PlatformApplication.open({ dataDirectory: f.data,
     models: { generate: async input => { declarations = input.tools; return { role: 'model', parts: [{ text: 'ok' }] }; } } });
   try {

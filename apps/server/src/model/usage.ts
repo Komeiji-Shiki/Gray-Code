@@ -8,11 +8,21 @@ const FIXED_COUNT_ENTRIES = 8;
 const FIXED_COUNT_CHARACTERS = 1_048_576;
 const fixedPrefixCounts: { system: string; tools: string; task: string; characters: number; tokens: number }[] = [];
 let fixedPrefixCharacters = 0;
+const serializedToolCatalogs = new WeakMap<ModelInput['tools'], string>();
+
+function serializedTools(tools: ModelInput['tools']): string {
+  let text = serializedToolCatalogs.get(tools);
+  if (text === undefined) {
+    text = JSON.stringify(tools);
+    serializedToolCatalogs.set(tools, text);
+  }
+  return text;
+}
 
 function fixedInputTokens(input: ModelInput): number {
   // usage 的拼接边界和默认 tokenizer 与上下文预算不同，保留原口径；缓存比较完整序列化内容。
   const system = input.systemPrompt;
-  const tools = JSON.stringify(input.tools);
+  const tools = serializedTools(input.tools);
   const task = input.promptContext?.taskContextEmbedded ? '' : JSON.stringify(input.taskContext) ?? '';
   const index = fixedPrefixCounts.findIndex(entry => entry.system === system && entry.tools === tools && entry.task === task);
   if (index >= 0) {
