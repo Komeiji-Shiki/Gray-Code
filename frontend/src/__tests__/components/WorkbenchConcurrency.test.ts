@@ -13,7 +13,8 @@ vi.mock('../../../../apps/client/src/api', () => ({ call: mocks.call, rpc: mocks
   subscribe: (listener: (event: any) => void) => { mocks.listeners.add(listener); return () => mocks.listeners.delete(listener); } }));
 vi.mock('../../../../apps/client/src/state', async () => {
   const { reactive } = await import('vue');
-  return { state: reactive({ workspaceId: 'project', snapshot: { settings: { workspaces: [] } }, chatFocused: false, sideExpanded: true }),
+  return { state: reactive({ workspaceId: 'project', snapshot: { settings: { workspaces: [] } }, chatFocused: false, sideExpanded: true,
+    workbenchPanelRequest: null }),
     report: mocks.report, guard: async (operation: () => Promise<unknown>) => { try { return await operation(); } catch (error) { mocks.report(error); } } };
 });
 vi.mock('../../../../apps/client/src/computer', () => ({ computerState: { openRequest: 0 } }));
@@ -37,7 +38,7 @@ beforeEach(() => {
     if (method === 'documents.update') return { ...document(params.path), text: params.text, version: params.version + 1, dirty: true };
   });
   mocks.report.mockReset(); mocks.listeners.clear();
-  Object.assign(state, { workspaceId: 'project', snapshot: { settings: { workspaces: [] } }, chatFocused: false });
+  Object.assign(state, { workspaceId: 'project', snapshot: { settings: { workspaces: [] } }, chatFocused: false, workbenchPanelRequest: null });
 });
 afterEach(() => { wrappers.splice(0).forEach(wrapper => wrapper.unmount()); mocks.listeners.clear(); });
 function workbench(compact = false) {
@@ -63,7 +64,7 @@ test('用户选择其他面板后，旧打开失败不覆盖当前界面错误',
   const slow = deferred<ReturnType<typeof document>>();
   mocks.call.mockImplementation(async method => method === 'documents.open' ? slow.promise : undefined);
   const view = workbench(); view.open('slow.ts');
-  view.tabs().vm.$emit('add', 'terminal'); await flushPromises();
+  state.workbenchPanelRequest = { id: 'terminal' }; await flushPromises();
   slow.reject(new Error('旧文件读取失败')); await flushPromises();
   expect(view.tabs().props('active')).toBe('panel:terminal');
   expect(mocks.report).not.toHaveBeenCalled();

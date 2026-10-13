@@ -6,6 +6,7 @@ export const state = reactive({ panelResizing: false, panelObscured: false, pane
   notice: null as { message: string; severity: 'info' | 'warning' } | null,
   conversationId: null as string | null, mode: 'chat' as 'chat' | 'code' | 'character',
   conversationViews: [] as ConversationViewInfo[],
+  workbenchPanelRequest: null as { id: string } | null,
   navigationDialogOpen: false, fileDialogOpen: false,
   snapshot: null as SettingsSnapshot | null, workspaceId: '' });
 export const appearance = computed(() => state.snapshot?.settings.appearance);

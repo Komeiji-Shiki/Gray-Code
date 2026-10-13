@@ -1,7 +1,6 @@
 <script setup lang="ts">
 import { shellText as t } from '../i18n';
-import { useNavigationIntent, type NavigationIntent } from '../navigationIntent';
-const navigate = useNavigationIntent();
+import { collapsedConversationGroups as collapsedGroups, useConversationNavigation } from '../conversationNavigation';
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue';
 import type { ConversationNavigationItem, ConversationNavigationResult, ConversationViewInfo, NavigationOrdering } from '@graycode/contracts';
 import { call, subscribe, uiRequest } from '../api';
@@ -19,6 +18,10 @@ const emit = defineEmits<{
   navigate: [panel?: 'workbench'];
   jumpToMessage: [target: { conversationId: string; messageIndex: number; messageId?: string }];
 }>();
+const { navigate, command, newConversation, selectWorkspace } = useConversationNavigation((panel) => {
+  if (panel) emit('navigate', panel);
+  else emit('navigate');
+});
 const isDesktop = window.graycode?.kind !== 'web';
 const navigation = ref<ConversationNavigationResult>({ items: [], pinned: [], workspaces: [], runs: [] });
 const query = ref('');
@@ -29,7 +32,6 @@ let settingsTrigger: HTMLButtonElement | undefined;
 const initialLoading = ref(true);
 const loadingMore = ref(false);
 const error = ref('');
-const collapsedGroups = ref(new Set<string>());
 interface NavigationProject {
   key: string;
   name: string;
@@ -197,26 +199,6 @@ function scheduleRefresh() {
     void refresh();
   }, 160);
 }
-async function command(command: string, data?: Record<string, unknown>, intent?: NavigationIntent) {
-  const navigationCommand = [
-    'newChat',
-    'platform.openModeConversation',
-    'platform.switchConversationView',
-    'showHistory',
-    'showUsage',
-    'showSettings',
-  ].includes(command);
-  if (navigationCommand) intent ??= navigate({ tabId: String(data?.conversationId ?? data?.tabId ?? command) });
-  let result: unknown;
-  try {
-    result = await call('ui.command', { command, data });
-  } catch (error) {
-    if (intent && !intent.current()) return;
-    throw error;
-  }
-  if (navigationCommand && intent?.current()) emit('navigate');
-  return result;
-}
 function open(item: ConversationNavigationItem) {
   const intent = navigate({ workspaceId: item.workspaceId, tabId: item.id });
   menu.value = undefined;
@@ -235,41 +217,8 @@ async function selectProject(group: (typeof groups.value)[number]) {
     toggleGroup(group.key);
     return;
   }
-  await selectWorkspace(group.workspace?.id ?? '', group);
+  await selectWorkspace(group.workspace?.id ?? '', group, navigation.value.pinned);
 }
-async function selectWorkspace(workspaceId: string, group?: NavigationGroup) {
-  const intent = navigate({ workspaceId });
-  // 空分组可能还有分页外的旧对话，先按项目补查，再决定是否创建；工作区只由实际聚焦的对话更新。
-  const groupItems = group?.items.length ? group.items : undefined;
-  const source = groupItems ? navigation.value
-    : await uiRequest('conversation.navigation', { scope: 'personal', workspaceId: workspaceId || undefined });
-  if (!intent.current()) return;
-  const matchesWorkspace = (item: ConversationNavigationItem) => workspaceId
-    ? item.workspaceId === workspaceId && !item.automaticWorkspace
-    : !item.workspaceUri || item.automaticWorkspace;
-  const candidates = [
-    ...(groupItems ?? source.items.filter(matchesWorkspace)),
-    ...source.pinned.filter((item) => (!group || !!workspaceId) && matchesWorkspace(item)),
-  ].sort(
-    (left, right) => right.updatedAt - left.updatedAt,
-  );
-  const selected = candidates.find((item) => item.id === state.conversationId) ?? candidates[0];
-  if (selected) await command('platform.openModeConversation', { conversationId: selected.id }, intent);
-  else await newConversation(workspaceId || undefined, intent);
-  if (!intent.current()) return;
-  const next = new Set(collapsedGroups.value);
-  next.delete(group?.key ?? workspaceId);
-  collapsedGroups.value = next;
-  state.chatFocused = !workspaceId && !group?.uri;
-  emit('navigate', state.chatFocused ? undefined : 'workbench');
-}
-async function newConversation(workspaceId?: string, intent = navigate({ workspaceId })) {
-  if (workspaceId) {
-    const result = await uiRequest('ui.mode.new', { mode: 'code', workspaceId });
-    if (intent.current()) await command('platform.openModeConversation', { conversationId: result.conversationId }, intent);
-  } else await command('newChat', undefined, intent);
-}
-defineExpose({ selectWorkspace, newConversation });
 function openSettings(event: MouseEvent) {
   settingsTrigger = event.currentTarget as HTMLButtonElement;
   void guard(() => command('showSettings'));

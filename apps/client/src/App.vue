@@ -6,10 +6,10 @@ import { call, subscribe } from './api';
 import { CHAT_INITIALIZATION_MESSAGE } from '../../../shared/chatInitialization';
 import { SHELL_SHORTCUTS_MESSAGE, SHELL_SHORTCUT_MESSAGE, matchShellShortcut, shellShortcuts } from '../../../shared/shellShortcutBridge';
 import { debugControl, debugState } from './debugging';
-import { useNavigationIntent } from './navigationIntent';
+import { useConversationNavigation } from './conversationNavigation';
 import { shellText as t, setShellLanguage } from './i18n';
 import { applyAppearanceVariables } from '../../../shared/appearanceTokens';
-const navigate = useNavigationIntent();
+const { navigate, newConversation, selectWorkspace } = useConversationNavigation(finishNavigation);
 import { readWorkspacePanelMessage } from '../../../shared/workspacePanelNavigation';
 import Workbench from './components/Workbench.vue';
 import ErrorBanner from './components/ErrorBanner.vue';
@@ -28,8 +28,6 @@ const CompanionSetup = defineAsyncComponent(() => import('./components/Companion
 import PetSurface from './components/PetSurface.vue';
 import ScreenSenseStatus from './components/ScreenSenseStatus.vue';
 const productChatFrame = ref<HTMLIFrameElement>();
-const conversationSidebar = ref<InstanceType<typeof ConversationSidebar>>();
-const workbench = ref<InstanceType<typeof Workbench>>();
 function jumpToMessage(target: { conversationId: string; messageIndex: number; messageId?: string }) {
   productChatFrame.value?.contentWindow?.postMessage(
     { type: 'graycode.jumpToMessage', ...target },
@@ -81,6 +79,11 @@ function closeAutomations() {
 }
 const chatReady = ref(false);
 const chatInitialized = ref(false);
+watch([() => state.mode, chatInitialized], ([mode, initialized]) => {
+  if (!initialized) return;
+  productChatFrame.value?.contentWindow?.postMessage({ type: 'command', command: 'platform.modeSelected', data: { mode } },
+    window.location.origin === 'null' ? '*' : window.location.origin);
+});
 const chatLoadFailed = ref(false);
 const chatInitializationError = ref('');
 const chatFrameVersion = ref(0);
@@ -124,10 +127,11 @@ const compactQuery = window.matchMedia('(max-width: 850px)');
 const compactViewport = ref(compactQuery.matches);
 const viewportHeight = ref(window.visualViewport?.height ?? window.innerHeight);
 const viewportWidth = ref(window.innerWidth);
+const minimumChatWidth = 480;
 const savedSidebarWidth = Number(localStorage.getItem('graycode.sidebarWidth'));
 const sidebarWidth = ref(Number.isFinite(savedSidebarWidth) && savedSidebarWidth > 0 ? savedSidebarWidth : 250);
 // 侧栏拖到最宽时仍为聊天列和分隔条保留位置。
-const sidebarMaximum = computed(() => Math.max(200, Math.min(560, viewportWidth.value - 480 - 5)));
+const sidebarMaximum = computed(() => Math.max(200, Math.min(560, viewportWidth.value - minimumChatWidth - 5)));
 const visibleSidebarWidth = computed(() => Math.max(200, Math.min(sidebarMaximum.value, sidebarWidth.value)));
 const sidebarResizing = ref(false);
 const navigation = ref<HTMLElement>();
@@ -149,9 +153,9 @@ function sendShellShortcuts() {
 }
 function executeShellShortcut(command: string) {
   if (!state.ready) return;
-  if (command === 'newConversation') void guard(() => conversationSidebar.value!.newConversation());
+  if (command === 'newConversation') void guard(() => newConversation());
   else if (command === 'toggleSidebar') navigationCollapsed.value = !navigationCollapsed.value;
-  else if (command === 'projectSearch') workbench.value?.activatePanel('search');
+  else if (command === 'projectSearch') state.workbenchPanelRequest = { id: 'search' };
   else if (command.startsWith('debug.') && debugState.activeId) void debugControl(command.slice('debug.'.length));
 }
 function handleShellShortcut(event: KeyboardEvent) {
@@ -228,7 +232,7 @@ async function addWorkspace() {
     if (!selected) return;
     const workspace = await call<{ id: string }>('workspaces.add', selected);
     await loadSettings();
-    if (intent.current()) await conversationSidebar.value?.selectWorkspace(workspace.id);
+    if (intent.current()) await selectWorkspace(workspace.id);
   } finally {
     choosingWorkspace.value = false;
   }
@@ -352,7 +356,7 @@ onMounted(() => {
     if (event.type === 'desktop.shortcut' && enabledShortcuts.value.some(binding => binding.command === event.command))
       executeShellShortcut(event.command);
     if (event.type === 'workspace.selected' && event.source === 'desktop')
-      void guard(() => conversationSidebar.value!.selectWorkspace(event.workspaceId));
+      void guard(() => selectWorkspace(event.workspaceId));
     if (event.type === 'transport.resumed' && !state.ready && !booting.value) void bootstrap();
     if (event.type === 'pets.open') openCompanionSettings('pet');
     if (event.type === 'screenSense.open') openCompanionSettings('screen');
@@ -380,7 +384,7 @@ onUnmounted(() => {
   <div
     class="application"
     :class="{ 'web-host': isWeb, 'compact-host': compactViewport }"
-    :style="{ '--gc-viewport-height': viewportHeight + 'px' }"
+    :style="{ '--gc-viewport-height': viewportHeight + 'px', '--gc-chat-min-width': minimumChatWidth + 'px' }"
     :data-density="appearance?.density"
   >
     <header class="titlebar">
@@ -440,7 +444,7 @@ onUnmounted(() => {
         <span class="subtle">{{ t('workspace') }}</span>
         <WorkspaceSelector
           :model-value="state.workspaceId"
-          @update:model-value="(id) => guard(() => conversationSidebar!.selectWorkspace(id))"
+          @update:model-value="(id) => guard(() => selectWorkspace(id))"
           :workspaces="state.snapshot?.settings.workspaces ?? []"
           @browse="guard(addWorkspace)"
         />
@@ -567,7 +571,6 @@ onUnmounted(() => {
         :aria-busy="!chatReady"
       >
         <ConversationSidebar
-          ref="conversationSidebar"
           v-model:collapsed="navigationCollapsed"
           @automations="
             finishNavigation();
@@ -649,7 +652,7 @@ onUnmounted(() => {
             endSplit();
           "
         ></div>
-        <Workbench ref="workbench" v-show="!state.chatFocused && !state.settingsOpen" :compact="compactViewport" />
+        <Workbench v-show="!state.chatFocused && !state.settingsOpen" :compact="compactViewport" />
       </div>
     </div>
     <footer class="statusbar">

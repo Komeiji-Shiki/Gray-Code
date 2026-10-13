@@ -37,7 +37,7 @@
 }
 .desktop-workspace {
   display: grid;
-  grid-template-columns: minmax(480px, var(--gc-chat-width, 48%)) 5px minmax(0, 1fr);
+  grid-template-columns: minmax(var(--gc-chat-min-width), var(--gc-chat-width, 48%)) 5px minmax(0, 1fr);
   flex: 1;
   min-height: 0;
   grid-template-rows: minmax(0, 1fr);

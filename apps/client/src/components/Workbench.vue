@@ -98,6 +98,11 @@ function activatePanel(id: string) {
   if (id === 'editor') showingTree.value = true;
 }
 watch(
+  () => state.workbenchPanelRequest,
+  (request) => { if (request) activatePanel(request.id); },
+  { flush: 'sync' },
+);
+watch(
   () => computerState.openRequest,
   () => activatePanel('computer'),
 );
@@ -592,7 +597,6 @@ const unsubscribe = subscribe((event) => {
     }
   });
 });
-defineExpose({ activatePanel });
 onUnmounted(() => {
   disposed = true;
   readyWaiters.dispose();
