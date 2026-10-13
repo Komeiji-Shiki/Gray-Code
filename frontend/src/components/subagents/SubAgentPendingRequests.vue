@@ -4,12 +4,11 @@
  * 子代理调用需要确认的工具（例如删除文件）时会暂停，用户不必打开监视器就能在这里处理。
  */
 import { computed, onBeforeUnmount, ref, watch } from 'vue';
-import type { ApprovalRequest, QuestionRequest } from '../../../../packages/contracts/src/runtime';
+import type {
+  ConversationSubagentApproval as Approval,
+  ConversationSubagentQuestion as Question
+} from '../../../../packages/contracts/src/subagentRequests';
 import { sendToExtension, onMessageFromExtension } from '../../utils/vscode';
-
-type Source = { subagentRunId: string; agentName: string };
-type Approval = ApprovalRequest & Source;
-type Question = QuestionRequest & Source;
 
 const props = defineProps<{ conversationId: string | null }>();
 const approvals = ref<Approval[]>([]);
@@ -29,7 +28,7 @@ async function refresh() {
   const conversationId = props.conversationId;
   if (!conversationId) { approvals.value = []; questions.value = []; return; }
   try {
-    const result = await sendToExtension<{ approvals: Approval[]; questions: Question[] }>('subagents.pendingRequests', { conversationId });
+    const result = await sendToExtension('subagents.pendingRequests', { conversationId });
     if (disposed || current !== epoch || props.conversationId !== conversationId) return;
     // 宿主未提供该接口或返回结构不完整时不显示面板，也不影响对话其余界面。
     approvals.value = Array.isArray(result?.approvals) ? result.approvals : [];

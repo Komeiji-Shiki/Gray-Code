@@ -15,6 +15,7 @@
 // B1/T16：跨端共享类型迁入 shared/protocol.ts 单一来源；此处 re-export 保持既有导入方不破
 // （Content 接口在下方直接引用 ContentPart / UsageMetadata / SummaryTokenStats，故需 import 到本地作用域）
 import type { ContentPart, ForegroundWorkTransition, SummaryTokenStats, UsageMetadata } from '../../../shared/protocol';
+import type { ConversationCustomMetadata } from '../../../packages/contracts/src/conversationMetadata';
 export type { ContentPart, ForegroundWorkTransition, OpenAIResponsesReasoningMetadata, SummaryTokenStats, ThoughtSignatures, TokenDetailsEntry, UsageMetadata } from '../../../shared/protocol';
 
 /**
@@ -478,7 +479,7 @@ export interface ConversationMetadata {
     workspaceUri?: string;
     
     /** 自定义元数据 */
-    custom?: Record<string, unknown>;
+    custom?: ConversationCustomMetadata;
 
     /**
      * Storage integrity status (optional)

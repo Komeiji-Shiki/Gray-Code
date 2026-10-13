@@ -7,6 +7,8 @@
 import { MESSAGE_NAMES } from '@shared/protocol'
 import type { ChatStoreState } from './types'
 import { sendToExtension } from '../../utils/vscode'
+import type { ConversationModelConfig, ConversationPromptModeConfig } from '../../../../packages/contracts/src/conversationMetadata'
+export type { ConversationModelConfig, ConversationPromptModeConfig } from '../../../../packages/contracts/src/conversationMetadata'
 
 const CONVERSATION_MODEL_CONFIG_KEY = 'inputModelConfig'
 const CONVERSATION_PROMPT_MODE_KEY = 'promptModeConfig'
@@ -24,16 +26,6 @@ function beginConfigOperation(state: ChatStoreState, operations: WeakMap<ChatSto
   const tabId = state.activeTabId.value
   return () => operations.get(state) === operation
     && state.currentConversationId.value === conversationId && state.activeTabId.value === tabId
-}
-
-export interface ConversationModelConfig {
-  configId?: string
-  modelId?: string
-  reasoningEffort?: string
-}
-
-export interface ConversationPromptModeConfig {
-  modeId?: string
 }
 
 function normalizeModelId(modelId: string | null | undefined): string { return (modelId || '').trim() }
@@ -117,8 +109,8 @@ export async function applyConversationModelConfig(
   let stored: ConversationModelConfig | undefined
   try {
     stored = storedOverride || await (async () => {
-      const metadata = await sendToExtension<any>(MESSAGE_NAMES['conversation.getConversationMetadata'], { conversationId })
-      return metadata?.custom?.[CONVERSATION_MODEL_CONFIG_KEY] as ConversationModelConfig | undefined
+      const metadata = await sendToExtension(MESSAGE_NAMES['conversation.getConversationMetadata'], { conversationId })
+      return metadata?.custom?.[CONVERSATION_MODEL_CONFIG_KEY]
     })()
   } catch (error) {
     if (isCurrent()) console.error('Failed to apply conversation model config:', error)
@@ -179,8 +171,8 @@ export async function applyConversationPromptMode(
   const isCurrent = beginConfigOperation(state, promptModeOperationByState)
   try {
     const stored = storedOverride || await (async () => {
-      const metadata = await sendToExtension<any>(MESSAGE_NAMES['conversation.getConversationMetadata'], { conversationId })
-      return metadata?.custom?.[CONVERSATION_PROMPT_MODE_KEY] as ConversationPromptModeConfig | undefined
+      const metadata = await sendToExtension(MESSAGE_NAMES['conversation.getConversationMetadata'], { conversationId })
+      return metadata?.custom?.[CONVERSATION_PROMPT_MODE_KEY]
     })()
     if (!isCurrent()) return
     const modeId = typeof stored?.modeId === 'string' ? stored.modeId.trim() : ''

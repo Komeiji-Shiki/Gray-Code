@@ -6,6 +6,8 @@ import { previewPrompt } from '../prompt/preview';
 import { ArtifactApproval } from '../artifacts/approval';
 import { CheckpointUi } from '../workspace/checkpointUi';
 import { conversationUiHandlers } from '../conversations/ui';
+import { conversationMetadataUiHandlers } from '../conversations/metadataUi';
+import { subagentRequestHandlers } from '../subagents/uiRequests';
 import { inputFileHandlers, workspaceFileSearchKey, WorkspaceFileSearches } from '../workspace/uiFiles';
 import { pinnedFileHandlers } from '../workspace/pinned';
 import { workspaceUiHandlers } from '../workspace/ui';
@@ -214,6 +216,12 @@ export class ProductUi {
     if (checkpointHandler) return checkpointHandler(data);
     // 角色会话仍走前面的独立入口；其他稳定请求在原有会话和工作区权限检查之后处理。
     const stableHandlers: Omit<UiRequestHandlers, Extract<keyof UiRequestHandlers, `characters.conversation.${string}`>> = {
+      ...subagentRequestHandlers(this.app, client),
+      ...conversationMetadataUiHandlers(this.app, this.conversations),
+      'platform.questions.answer': async params => {
+        await this.app.runtime.answerQuestion(params.id, client.actorId, params.answers);
+        return { success: true };
+      },
       'characters.list': () => this.app.characters.list(),
       'characters.original': params => this.app.characters.original(params.id),
       'characters.definition': params => this.app.characters.definition(params.id),
@@ -290,15 +298,6 @@ export class ProductUi {
       }
       case 'subagents.monitorReady': return this.app.subagentMonitor.ready(client.actorId, data.conversationId, data.runId);
       case 'subagents.monitor.getRunWindow': return this.app.subagentMonitor.window(client.actorId, data.runId, data.conversationId, data.options);
-      case 'subagents.monitor.requests': return this.app.subagents.requests(client.actorId, data.runId);
-      case 'subagents.pendingRequests': return this.app.subagents.conversationRequests(client.actorId, data.conversationId);
-      case 'subagents.resolveApproval':
-        if (typeof data.accepted !== 'boolean') throw new Error('请明确接受或拒绝操作。');
-        return this.app.subagents.answer(client.actorId, data.runId, data.id, data.accepted, data.choiceId);
-      case 'subagents.answerQuestion': return this.app.subagents.answer(client.actorId, data.runId, data.id, data.answers);
-      case 'subagents.pauseRun': return this.app.subagents.control(client.actorId, data.runId, 'pause');
-      case 'subagents.resumeRun': return this.app.subagents.control(client.actorId, data.runId, 'resume');
-      case 'subagents.exitRun': return this.app.subagents.control(client.actorId, data.runId, 'exit');
       case 'subagents.retryRunFromMessage': return this.app.subagentMonitor.retry(client.actorId, data.runId, data.conversationId, data.contentIndex, data.messageId, data.expectedRevision);
       case 'subagents.deleteRunMessage': return this.app.subagentMonitor.deleteMessage(client.actorId, data.runId, data.conversationId, data.contentIndex, data.messageId, data.expectedRevision);
       case 'migration.start': return this.app.migration.start(client.actorId, data.source, { conversationIds: data.conversationIds });
@@ -635,7 +634,6 @@ export class ProductUi {
           (await this.app.storage.getRun(question.runId))?.conversationId === data.conversationId ? question : null));
         return list.filter(Boolean);
       }
-      case 'platform.questions.answer': await this.app.runtime.answerQuestion(data.id, client.actorId, data.answers); return { success: true };
       case 'getAppInfo': return { name: 'GrayCode', displayName: 'GrayCode', version: packageMetadata.version, publisher: packageMetadata.author, runtime: 'server', ...getDistributionInfo() };
       case 'showNotification': this.app.publish({ type: 'notification', message: String(data.message), severity: data.type }); return { success: true };
       case 'conversation.createConversation': {
@@ -651,12 +649,6 @@ export class ProductUi {
         ui.workspaceId = typeof created.workspaceId === 'string' ? created.workspaceId : undefined;
         return { success: true, workspaceId: created.workspaceId, workspaceUri: created.workspaceUri };
       }
-      case 'conversation.listConversations': {
-        const hidden = this.app.subagents.childConversationIds();
-        return (await this.conversations.listConversations()).filter(id => !hidden.has(id));
-      }
-      case 'conversation.getConversationMetadata': return this.conversations.getMetadata(data.conversationId);
-      case 'conversation.getConversationMetadataBatch': return this.conversations.getConversationMetadataBatch(data.conversationIds);
       case 'conversation.getMessageMarkers': {
         await this.app.conversation(client.actorId, data.conversationId);
         return this.conversations.getMessageMarkers(data.conversationId);
@@ -668,8 +660,6 @@ export class ProductUi {
       case 'conversation.getMessages': return this.conversations.getHistory(data.conversationId);
       case 'conversation.getMessagesPaged': return this.conversations.getMessagesPaged(data.conversationId,
         { beforeIndex: data.beforeIndex, offset: data.offset, limit: data.limit });
-      case 'conversation.getCustomMetadata': return this.conversations.getCustomMetadata(data.conversationId, data.key);
-      case 'conversation.setCustomMetadata': await this.conversations.setCustomMetadata(data.conversationId, data.key, data.value); return { success: true };
       case 'conversation.setTitle': return new ConversationNavigation(this.app).rename(client.actorId, data.conversationId, data.title);
       case 'conversation.updateSummary': await this.conversations.updateSummary(data.conversationId, data); return { success: true };
       case 'getOpenTabs': return { tabs: this.app.files.editorContext(client.clientId, workspace).openFiles };

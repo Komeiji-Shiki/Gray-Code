@@ -18,6 +18,8 @@ export * from './channels';
 export * from './subagents';
 export * from './contextManagement';
 export * from './uiRequests';
+export * from './subagentRequests';
+export * from './conversationMetadata';
 export * from './externalAgents';
 export * from './backups';
 export * from './automations';
@@ -47,6 +49,7 @@ export interface PlatformConversation {
   createdAt: number;
   updatedAt: number;
   workspaceUri?: string;
+  custom?: import('./conversationMetadata').ConversationCustomMetadata;
   [key: string]: unknown;
 }
 

@@ -3,6 +3,7 @@
  */
 
 import type { VSCodeMessage } from '../types'
+import type { UiRequestArguments, UiRequestName, UiRequestResult } from '../../../packages/contracts/src/uiRequests'
 import { handleSoundEvent } from '../services/soundEventController'
 import { routeExtensionMessage, type PendingRequestHandler } from './extensionMessageRouting'
 // B1：超时豁免名单迁入 shared/protocol.ts 单一来源（与 NON_BLOCKING_MESSAGE_TYPES 语义不同，勿合并）
@@ -36,7 +37,16 @@ export function generateRequestId(): string {
  */
 const DEFAULT_REQUEST_TIMEOUT_MS = 180_000
 
-export function sendToExtension<T = any>(type: string, data: any, options?: { timeoutMs?: number }): Promise<T> {
+interface ExtensionRequestOptions { timeoutMs?: number }
+
+// 稳定请求从同一份 UI 契约推导；旧调用的显式结果泛型及动态扩展入口继续兼容。
+export function sendToExtension<M extends UiRequestName>(
+  type: M, ...args: [...UiRequestArguments<M>, options?: ExtensionRequestOptions]
+): Promise<UiRequestResult<M>>
+export function sendToExtension<T = any, const M extends string = string>(
+  type: M & (M extends UiRequestName ? never : unknown), data: any, options?: ExtensionRequestOptions
+): Promise<T>
+export function sendToExtension<T = any>(type: string, data?: any, options?: ExtensionRequestOptions): Promise<T> {
   return new Promise((resolve, reject) => {
     const requestId = generateRequestId()
     const vscode = getVSCodeAPI()

@@ -1,6 +1,8 @@
 import type { CharacterChatConfig, CharacterDefinition, CharacterResource, CharacterResourceDetail, CharacterResourceKind,
   CharacterResourceRow, CharacterConversationSettings } from './characters';
 import type { ConversationNavigationCursor, ConversationNavigationResult, NavigationOrdering, NavigationOrderKind } from './navigation';
+import type { ConversationSubagentPendingRequests, SubagentControlResult, SubagentPendingRequests } from './subagentRequests';
+import type { ConversationUiMetadata, ConversationUiSummary } from './conversationMetadata';
 
 type Request<P, R> = { params: P; result: R };
 type Empty = Record<string, never>;
@@ -12,6 +14,19 @@ export type NavigationScope = 'personal' | 'bots';
 
 /** 稳定 UI 操作的参数和结果在这里关联，沿用 ui.request 的 type/data 传输。 */
 export interface UiRequests {
+  'subagents.monitor.requests': Request<{ runId: string }, SubagentPendingRequests>;
+  'subagents.pendingRequests': Request<{ conversationId: string }, ConversationSubagentPendingRequests>;
+  'subagents.resolveApproval': Request<{ runId: string; id: string; accepted: boolean; choiceId?: string }, Success>;
+  'subagents.answerQuestion': Request<{ runId: string; id: string; answers: string[] }, Success>;
+  'subagents.pauseRun': Request<{ runId: string }, SubagentControlResult>;
+  'subagents.resumeRun': Request<{ runId: string }, SubagentControlResult>;
+  'subagents.exitRun': Request<{ runId: string }, SubagentControlResult>;
+  'platform.questions.answer': Request<{ id: string; answers: string[] }, Success>;
+  'conversation.listConversations': Request<Empty, string[]>;
+  'conversation.getConversationMetadata': Request<{ conversationId: string }, ConversationUiMetadata | null>;
+  'conversation.getConversationMetadataBatch': Request<{ conversationIds: string[] }, ConversationUiSummary[]>;
+  'conversation.getCustomMetadata': Request<{ conversationId: string; key: string }, unknown>;
+  'conversation.setCustomMetadata': Request<{ conversationId: string; key: string; value: unknown }, Success>;
   'characters.list': Request<Empty, CharacterResourceRow[]>;
   'characters.original': Request<Id, CharacterResource['source']>;
   'characters.definition': Request<Id, CharacterDefinition>;

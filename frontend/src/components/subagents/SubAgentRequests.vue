@@ -1,8 +1,7 @@
 <script setup lang="ts">
 import { onBeforeUnmount, ref, watch } from 'vue';
 import { sendToExtension, onMessageFromExtension } from '../../utils/vscode';
-import type { ApprovalRequest as Approval } from '../../../../packages/contracts/src/runtime';
-interface Question { id: string; questions: { title: string; options?: string[] }[] }
+import type { ApprovalRequest as Approval, QuestionRequest as Question } from '../../../../packages/contracts/src/runtime';
 const props = defineProps<{ runId: string }>();
 const approvals = ref<Approval[]>([]); const questions = ref<Question[]>([]);
 const answers = ref<Record<string, string[]>>({}); const busy = ref(''); const error = ref('');
@@ -10,7 +9,7 @@ let requestSequence = 0;
 async function load() {
   const sequence = ++requestSequence; const id = props.runId;
   try {
-    const result = await sendToExtension<{ approvals: Approval[]; questions: Question[] }>('subagents.monitor.requests', { runId: id });
+    const result = await sendToExtension('subagents.monitor.requests', { runId: id });
     if (sequence !== requestSequence || id !== props.runId) return;
     approvals.value = result.approvals; questions.value = result.questions;
     for (const question of result.questions) answers.value[question.id] ??= question.questions.map(() => '');
@@ -19,9 +18,11 @@ async function load() {
 async function submit(id: string, accepted?: boolean, choiceId?: string) {
   if (busy.value) return; busy.value = id; error.value = '';
   try {
-    await sendToExtension(accepted === undefined ? 'subagents.answerQuestion' : 'subagents.resolveApproval', {
-      runId: props.runId, id, ...(accepted === undefined ? { answers: answers.value[id] } : { accepted, choiceId }),
-    });
+    if (accepted === undefined) {
+      await sendToExtension('subagents.answerQuestion', { runId: props.runId, id, answers: answers.value[id] });
+    } else {
+      await sendToExtension('subagents.resolveApproval', { runId: props.runId, id, accepted, choiceId });
+    }
     await load();
   } catch (cause) { error.value = (cause as Error).message; }
   finally { busy.value = ''; }
