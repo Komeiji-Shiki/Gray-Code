@@ -249,7 +249,8 @@ export class ScreenSenseService {
         return;
       }
       await this.validateChat(session.client, config);
-      await this.target(session.client, config.target, true);
+      // 窗口身份由下面的实际观察核对；显示器仍需提前检查缩放和范围。
+      if (config.target.kind === 'display') await this.target(session.client, config.target, true);
       session.abort.signal.throwIfAborted();
       const identity = { ...session.client, signal: session.abort.signal };
       let capture: ComputerCapture;

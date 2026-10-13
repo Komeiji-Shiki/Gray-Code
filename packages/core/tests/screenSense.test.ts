@@ -1,7 +1,13 @@
-import type { ComputerCapture, ComputerObservation, ComputerWindow, ModelInput, PlatformMessage, ScreenSenseConfiguration, ScreenSenseSnapshot } from '@graycode/contracts';
+import type {
+  ComputerCapture, ComputerObservation, ComputerWindow, ModelInput, PlatformMessage,
+  ScreenSenseConfiguration, ScreenSenseRecord, ScreenSenseSnapshot,
+} from '@graycode/contracts';
 import { PlatformApplication } from '../../../apps/server/src/application';
+import { screenRecords, screenSenseHistory } from '../../../apps/server/src/pets/screenSenseHistory';
 import type { ComputerNativePort, ComputerScreenPort } from '../../../apps/server/src/computer/port';
-import { fixture } from './fixtures';
+import { PlatformDatabase } from '../src/storage/database';
+import type { StorageOperations } from '../src/storage/protocol';
+import { fixture, metadata } from './fixtures';
 import sharp from 'sharp';
 const client = { actorId: 'owner', clientId: 'screen-client' };
 // 只验证采集边界与真实运行器存储；Windows 截图另由专用测试窗口验收。
@@ -44,7 +50,10 @@ describe('屏幕感知独立开启、范围与用量', () => {
   test('保存不采集，显式预览不发送，重启后保持关闭', async () => {
     await save(); expect(native.captures).toBe(0); expect(app.screenSense.status().active).toBe(false);
     await expect(rpc('screenSense.capture')).rejects.toThrow('开启'); await rpc('screenSense.start');
+    const requests = jest.spyOn(native, 'request');
     const preview = await rpc('screenSense.capture') as ScreenSenseSnapshot; expect(preview.preview?.target).toBe('测试画面'); expect(native.captures).toBe(1); expect(native.nativeCaptures).toBe(0); expect(inputs).toHaveLength(0);
+    expect(requests.mock.calls.some(([method]) => method === 'windows')).toBe(false);
+    expect(requests.mock.calls.some(([method]) => method === 'observe')).toBe(true);
     await app.close(); app = await open(); expect((await app.screenSense.snapshot()).configuration?.maxCaptures).toBe(2); expect(app.screenSense.status().active).toBe(false); expect((await app.screenSense.snapshot()).preview).toBeUndefined();
   });
   test('停止期间未完成的截图被丢弃，窗口被其他进程复用时停止采集', async () => {
@@ -78,4 +87,88 @@ describe('屏幕感知独立开启、范围与用量', () => {
     expect(history[0]!.usage.estimatedCost).toBeCloseTo(0.00025);
     await expect(app.screenSense.call({ actorId: 'stranger', clientId: 'x' }, 'screenSense.get', {})).rejects.toThrow();
   });
+});
+
+test('最近感知记录通过源码倒序分页，用量令牌覆盖追加、替换、删除和会话淘汰', async () => {
+  const f = await fixture();
+  await f.store.close();
+  // 分页与 usage 都直接执行当前源码，避免旧 dist worker 掩盖新查询的行为。
+  const database = new PlatformDatabase(f.data);
+  type RecordPageOptions = Omit<StorageOperations['readRecordPage']['input'], 'namespace' | 'ownerId'>;
+  const readRecordPage = jest.fn(async (namespace: string, ownerId: string | undefined, options: RecordPageOptions) =>
+    database.execute('readRecordPage', { namespace, ownerId, ...options }));
+  const usageReads: { id: string; since?: string; keep: number; added: number }[] = [];
+  const readUsageState = jest.fn(async (id: string, records: StorageOperations['readUsageState']['input']['records'] = [], since?: string) => {
+    const state = database.execute('readUsageState', { id, records, since });
+    usageReads.push({ id, since, keep: state.keep, added: state.messages.length });
+    return state;
+  });
+  const app = { storage: { readRecordPage, readUsageState,
+    getRun: async (id: string) => ({ id, status: 'completed' }),
+    getRunByRequestKey: async () => null,
+  } } as unknown as PlatformApplication;
+  const record = (id: string, conversationId = 'main'): ScreenSenseRecord => ({
+    id, sessionId: 'session', createdAt: 1, target: '窗口', conversationId, providerId: 'provider', runId: 'main-run',
+    prices: { currency: 'TEST', input: 2, output: 4, cacheRead: 1, cacheWrite: 3 },
+  });
+  const message: PlatformMessage = { id: 'reply', runId: 'main-run', role: 'model', parts: [{ text: '原始回复' }],
+    usageMetadata: { promptTokenCount: 100, candidatesTokenCount: 20, cachedContentTokenCount: 30 } };
+  try {
+    for (const id of ['a', 'b', 'c', '𐐀']) database.execute('putRecord', {
+      namespace: 'ordering', id, ownerId: id === 'b' ? 'second' : 'first', value: { kept: id, hidden: '不读取' },
+    });
+    expect(database.execute('readRecordPage', { namespace: 'ordering', limit: 2 }).map(entry => entry.id)).toEqual(['a', 'b']);
+    const descending = database.execute('readRecordPage', {
+      namespace: 'ordering', ownerId: 'first', limit: 2, order: 'desc', projection: { fields: ['kept'] },
+    });
+    expect(descending.map(entry => entry.id)).toEqual(['𐐀', 'c']);
+    expect(descending[0]!.value).toEqual({ kept: '𐐀' });
+    expect(database.execute('readRecordPage', {
+      namespace: 'ordering', ownerId: 'first', limit: 2, order: 'desc', afterId: 'c',
+    }).map(entry => entry.id)).toEqual(['a']);
+
+    database.execute('createConversation', metadata('main'));
+    database.execute('appendHistory', { id: 'main', messages: [message] });
+    for (let index = 0; index < 30; index++) {
+      const id = String(index).padStart(3, '0');
+      database.execute('putRecord', { namespace: screenRecords, id, value: record(id) });
+    }
+    database.execute('putRecord', { namespace: screenRecords, id: '029', value: { ...record('029'),
+      visionUsage: { inputTokens: 7, outputTokens: 2, cacheReadTokens: 1, cacheWriteTokens: 0, requests: 1, unknownRequests: 0 },
+    } });
+    const first = await screenSenseHistory(app);
+    expect(first.map(entry => entry.id)).toEqual(Array.from({ length: 20 }, (_, index) => String(29 - index).padStart(3, '0')));
+    expect(first[0]).toMatchObject({ usage: { inputTokens: 7 }, mainUsage: { inputTokens: 100, outputTokens: 20 } });
+    expect(first[1]!.usage.estimatedCost).toBeCloseTo(0.00025);
+    expect(usageReads).toEqual([{ id: 'main', since: undefined, keep: 0, added: 1 }]);
+
+    await Promise.all([screenSenseHistory(app), screenSenseHistory(app)]);
+    expect(usageReads.slice(1).every(read => typeof read.since === 'string' && read.keep === 1 && read.added === 0)).toBe(true);
+    database.execute('appendHistory', { id: 'main', messages: [{ ...message, id: 'next',
+      usageMetadata: { promptTokenCount: 20, candidatesTokenCount: 3 } }] });
+    expect((await screenSenseHistory(app))[1]!.usage.inputTokens).toBe(120);
+    expect(usageReads.at(-1)).toMatchObject({ keep: 1, added: 1 });
+    database.execute('replaceHistory', { id: 'main', messages: [message] });
+    expect((await screenSenseHistory(app))[1]!.usage.inputTokens).toBe(100);
+    database.execute('replaceHistory', { id: 'main', messages: [{ ...message,
+      usageMetadata: { promptTokenCount: 11, candidatesTokenCount: 1 } }] });
+    expect((await screenSenseHistory(app))[1]!.usage.inputTokens).toBe(11);
+
+    database.execute('createConversation', metadata('other'));
+    for (let index = 30; index < 50; index++) {
+      const id = String(index).padStart(3, '0');
+      database.execute('putRecord', { namespace: screenRecords, id, value: record(id, 'other') });
+    }
+    expect((await screenSenseHistory(app)).every(entry => entry.conversationId === 'other')).toBe(true);
+    for (let index = 30; index < 50; index++) database.execute('deleteRecord', { namespace: screenRecords, id: String(index).padStart(3, '0') });
+    await screenSenseHistory(app);
+    expect(usageReads.at(-1)).toMatchObject({ id: 'main', since: undefined });
+    database.execute('deleteConversation', { id: 'main' });
+    expect((await screenSenseHistory(app))[1]!.usage).toMatchObject({ inputTokens: 0, requests: 0, unknownRequests: 1 });
+    database.execute('createConversation', metadata('main'));
+    database.execute('appendHistory', { id: 'main', messages: [message] });
+    expect((await screenSenseHistory(app))[1]!.usage.inputTokens).toBe(100);
+    expect(usageReads.at(-1)).toMatchObject({ id: 'main', since: undefined });
+    expect(readRecordPage.mock.calls.every(([, , options]) => options.limit === 20 && options.order === 'desc')).toBe(true);
+  } finally { database.execute('close', undefined); await f.cleanup(); }
 });

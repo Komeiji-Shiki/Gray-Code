@@ -1,6 +1,9 @@
 import sharp from 'sharp';
-import type { PetConfiguration, PetImport, PetSnapshot } from '@graycode/contracts';
+import type { PetConfiguration, PetImport, PetResource, PetSnapshot, RecordMutation, StoredRecord } from '@graycode/contracts';
+import type { PlatformStorage } from '@graycode/core';
 import { PlatformApplication } from '../../../apps/server/src/application';
+import { PetResources } from '../../../apps/server/src/pets/resources';
+import { PlatformDatabase } from '../src/storage/database';
 import { petAnimations } from '../../../shared/petFormat';
 import { fixture } from './fixtures';
 
@@ -17,6 +20,105 @@ async function atlas(version: 1 | 2 = 2): Promise<PetImport> {
   const png = await sharp(pixels, { raw: { width, height, channels: 4 } }).png().toBuffer();
   return { entry: 'pet.json', files: [{ path: 'pet.json', data: encode({ id: 'fixture', displayName: '合同测试桌宠', spriteVersionNumber: version, spritesheetPath: 'art/atlas.png' }) }, { path: 'art/atlas.png', data: png.toString('base64') }] };
 }
+
+test('资源定义合并并发读取，独立副本与写入失效保持一致，缓存按最近访问淘汰', async () => {
+  const f = await fixture();
+  await f.store.close();
+  const database = new PlatformDatabase(f.data);
+  const info = (id: string): PetResource => ({
+    id, kind: 'live2d', name: id, entry: 'pet.model3.json', sha256: 'fixture', createdAt: 1,
+    files: [], actions: [], expressions: [],
+  });
+  const getRecord = jest.fn(async (namespace: string, id: string) => database.execute('getRecord', { namespace, id }));
+  // structuredClone 来自 Node realm；实际 Worker 会重建普通对象，直连源码端口也保持同样的边界。
+  const putRecord = jest.fn(async (record: StoredRecord) => database.execute('putRecord', {
+    ...record, value: JSON.parse(JSON.stringify(record.value)),
+  }));
+  const commitRecords = jest.fn(async (values: RecordMutation[]) => database.execute('commitRecords', values));
+  const resources = new PetResources({ getRecord, putRecord, commitRecords } as unknown as PlatformStorage);
+  try {
+    database.execute('putRecord', { namespace: 'pet-resource', id: 'selected', value: info('selected') });
+    const [first, second] = await Promise.all([resources.get('selected'), resources.get('selected')]);
+    expect(getRecord).toHaveBeenCalledTimes(1);
+    first.name = '外部修改';
+    expect(second.name).toBe('selected');
+    expect((await resources.get('selected')).name).toBe('selected');
+    const annotated = await resources.annotate({ id: 'selected', description: '更新描述' });
+    annotated.description = '外部修改';
+    expect((await resources.get('selected')).description).toBe('更新描述');
+    putRecord.mockRejectedValueOnce(new Error('写入失败'));
+    await expect(resources.annotate({ id: 'selected', description: '失败的更新' })).rejects.toThrow('写入失败');
+    expect((await resources.get('selected')).description).toBe('更新描述');
+
+    for (let index = 0; index < 32; index++) {
+      const id = `other-${index}`;
+      database.execute('putRecord', { namespace: 'pet-resource', id, value: info(id) });
+      await resources.get(id);
+      if (index === 20) await resources.get('selected');
+    }
+    getRecord.mockClear();
+    await resources.get('selected');
+    expect(getRecord).not.toHaveBeenCalled();
+    await resources.get('other-0');
+    expect(getRecord).toHaveBeenCalledTimes(1);
+
+    const texture = await sharp({ create: { width: 2, height: 2, channels: 4, background: '#ffffffff' } }).png().toBuffer();
+    const imported = await resources.import({ entry: 'pet.model3.json', files: [
+      { path: 'pet.model3.json', data: encode({ Version: 3, FileReferences: { Moc: 'body.moc3', Textures: ['texture.png'] } }) },
+      { path: 'body.moc3', data: Buffer.from('MOC3-fixture-not-a-real-model').toString('base64') },
+      { path: 'texture.png', data: texture.toString('base64') },
+    ] });
+    getRecord.mockClear();
+    await resources.get(imported.id);
+    expect(getRecord).not.toHaveBeenCalled();
+    await resources.remove(imported.id);
+    await expect(resources.get(imported.id)).rejects.toThrow('不存在');
+  } finally { database.execute('close', undefined); await f.cleanup(); }
+});
+
+test('资源写入后迟到的旧读取不能覆盖新缓存', async () => {
+  const f = await fixture();
+  await f.store.close();
+  const database = new PlatformDatabase(f.data);
+  const value: PetResource = { id: 'selected', kind: 'live2d', name: '原始资源', entry: 'pet.model3.json',
+    sha256: 'fixture', createdAt: 1, files: [], actions: [], expressions: [] };
+  let releaseWrite!: () => void, releaseRead!: () => void, writing!: () => void, reading!: () => void;
+  const writeStarted = new Promise<void>(resolve => { writing = resolve; });
+  const readStarted = new Promise<void>(resolve => { reading = resolve; });
+  const writeGate = new Promise<void>(resolve => { releaseWrite = resolve; });
+  const readGate = new Promise<void>(resolve => { releaseRead = resolve; });
+  let holdSelected = false;
+  const getRecord = async (namespace: string, id: string) => {
+    const result = database.execute('getRecord', { namespace, id });
+    if (holdSelected && id === value.id) { reading(); await readGate; }
+    return result;
+  };
+  const putRecord = async (record: StoredRecord) => {
+    writing();
+    await writeGate;
+    database.execute('putRecord', { ...record, value: JSON.parse(JSON.stringify(record.value)) });
+  };
+  const resources = new PetResources({ getRecord, putRecord } as unknown as PlatformStorage);
+  try {
+    database.execute('putRecord', { namespace: 'pet-resource', id: value.id, value });
+    await resources.get(value.id);
+    const annotation = resources.annotate({ id: value.id, description: '新描述' });
+    await writeStarted;
+    for (let index = 0; index < 32; index++) {
+      const id = `other-${index}`;
+      database.execute('putRecord', { namespace: 'pet-resource', id, value: { ...value, id } });
+      await resources.get(id);
+    }
+    holdSelected = true;
+    const oldRead = resources.get(value.id);
+    await readStarted;
+    releaseWrite();
+    await annotation;
+    releaseRead();
+    expect((await oldRead).description).toBeUndefined();
+    expect((await resources.get(value.id)).description).toBe('新描述');
+  } finally { releaseWrite(); releaseRead(); database.execute('close', undefined); await f.cleanup(); }
+});
 describe('桌宠资源与统一控制', () => {
   let f: Awaited<ReturnType<typeof fixture>>, app: PlatformApplication, bundle: PetImport;
   const open = () => PlatformApplication.open({ dataDirectory: f.data, documentsDirectory: f.root, models: { generate: async () => ({ role: 'model', parts: [{ text: '这条回复属于桌宠选择的同一段对话。' }] }) } });

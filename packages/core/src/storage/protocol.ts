@@ -115,7 +115,10 @@ export interface StorageOperations {
   commitRecords: { input: RecordMutation[]; output: { namespace: string; id: string; revision: number | null }[] };
   getRecord: { input: { namespace: string; id: string }; output: unknown | null };
   listRecords: { input: { namespace: string; ownerId?: string }; output: string[] };
-  readRecordPage: { input: { namespace: string; ownerId?: string; afterId?: string; limit: number; projection?: ValueProjection }; output: StoredRecord[] };
+  readRecordPage: {
+    input: { namespace: string; ownerId?: string; afterId?: string; limit: number; order?: 'asc' | 'desc'; projection?: ValueProjection };
+    output: StoredRecord[];
+  };
   deleteRecord: { input: { namespace: string; id: string }; output: boolean };
   migrationBegin: { input: { sourceKey: string; fingerprint: string; metadata: PlatformConversation }; output: MigrationState };
   migrationAppend: { input: { sourceKey: string; offset: number; messages: PlatformMessage[] }; output: MigrationState };

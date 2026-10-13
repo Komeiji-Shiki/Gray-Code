@@ -278,15 +278,18 @@ export class PlatformDatabase {
         : this.db.prepare('SELECT id FROM records WHERE namespace=? AND owner_id=? ORDER BY id').all(namespace, ownerId);
       return (rows as { id: string }[]).map(row => row.id);
     } },
-    readRecordPage: { concurrentRead: true, execute: ({ namespace, ownerId, afterId, limit, projection }) => {
+    readRecordPage: { concurrentRead: true, execute: ({ namespace, ownerId, afterId, limit, order = 'asc', projection }) => {
       assertIdentifier(namespace); if (ownerId !== undefined) assertIdentifier(ownerId);
       if (afterId !== undefined) assertIdentifier(afterId);
       if (!Number.isInteger(limit) || limit < 1 || limit > 200) invalid('A record page must contain between 1 and 200 entries.');
-      // 按所有者复用索引；未指定所有者时按主键分页，兼容没有 owner_id 的旧记录。
-      const rows = (ownerId === undefined
-        ? this.db.prepare('SELECT id,owner_id,value_hash FROM records WHERE namespace=? AND id>? ORDER BY id LIMIT ?').all(namespace, afterId ?? '', limit)
-        : this.db.prepare('SELECT id,owner_id,value_hash FROM records WHERE namespace=? AND owner_id=? AND id>? ORDER BY id LIMIT ?').all(namespace, ownerId, afterId ?? '', limit)
-      ) as { id: string; owner_id: string | null; value_hash: Buffer }[];
+      if (order !== 'asc' && order !== 'desc') invalid('Record page order must be asc or desc.');
+      // 默认升序保持旧游标语义；倒序按更小 ID 续页，首屏不使用可能遗漏 Unicode ID 的哨兵。
+      const owner = ownerId === undefined ? '' : ' AND owner_id=?';
+      const cursor = afterId === undefined ? '' : ` AND id${order === 'desc' ? '<' : '>'}?`;
+      const direction = order === 'desc' ? 'DESC' : 'ASC';
+      const args = [namespace, ...(ownerId === undefined ? [] : [ownerId]), ...(afterId === undefined ? [] : [afterId]), limit];
+      const rows = this.db.prepare(`SELECT id,owner_id,value_hash FROM records WHERE namespace=?${owner}${cursor}
+        ORDER BY id ${direction} LIMIT ?`).all(...args) as { id: string; owner_id: string | null; value_hash: Buffer }[];
       return rows.map(row => ({ namespace, id: row.id, ownerId: row.owner_id ?? undefined, value: this.objects.getValue(row.value_hash, projection) }));
     } },
     deleteRecord: { concurrentRead: false, execute: ({ namespace, id }) => {

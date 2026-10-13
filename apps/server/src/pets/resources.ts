@@ -9,6 +9,8 @@ import { live2dReferences, petAnimations, petAssetPath } from '../../../../share
 
 const infoNamespace = 'pet-resource';
 const fileNamespace = 'pet-resource-file';
+const RESOURCE_CACHE_ENTRIES = 32;
+const RESOURCE_CACHE_BYTES = 8 * 1024 * 1024;
 const hash = (bytes: Uint8Array) => createHash('sha256').update(bytes).digest('hex');
 const mimeTypes: Record<string, string> = {
   png: 'image/png', webp: 'image/webp', jpg: 'image/jpeg', jpeg: 'image/jpeg',
@@ -24,16 +26,62 @@ function json(bytes: Uint8Array, name: string): Record<string, any> {
   }
 }
 export class PetResources {
+  private readonly resourceCache = new Map<string, { info: PetResource; bytes: number }>();
+  private readonly resourceReads = new Map<string, Promise<PetResource | null>>();
+  private resourceCacheBytes = 0;
   constructor(private readonly storage: PlatformStorage) {}
+
+  private forget(id: string): void {
+    const cached = this.resourceCache.get(id);
+    if (!cached) return;
+    this.resourceCacheBytes -= cached.bytes;
+    this.resourceCache.delete(id);
+  }
+
+  private remember(info: PetResource): void {
+    // 对外仍返回独立副本，导入或标注的调用方不能改写缓存中的资源定义。
+    this.forget(info.id);
+    const bytes = Buffer.byteLength(JSON.stringify(info));
+    if (bytes > RESOURCE_CACHE_BYTES) return;
+    this.resourceCache.set(info.id, { info: structuredClone(info), bytes });
+    this.resourceCacheBytes += bytes;
+    // 资源定义也可能带大量文件名或动作名，同时限制条目数与序列化体积。
+    while (this.resourceCache.size > RESOURCE_CACHE_ENTRIES || this.resourceCacheBytes > RESOURCE_CACHE_BYTES) {
+      this.forget(this.resourceCache.keys().next().value!);
+    }
+  }
+
+  private async readResource(id: string): Promise<PetResource | null> {
+    const cached = this.resourceCache.get(id);
+    if (cached) {
+      this.resourceCache.delete(id);
+      this.resourceCache.set(id, cached);
+      return cached.info;
+    }
+    let pending = this.resourceReads.get(id);
+    if (!pending) {
+      pending = this.storage.getRecord(infoNamespace, id).then(value => {
+        const info = value as PetResource | null;
+        // 成功写入/删除会摘掉旧读取，迟到的结果不得重新填入缓存。
+        if (info && this.resourceReads.get(id) === pending) this.remember(info);
+        return info;
+      }).finally(() => {
+        if (this.resourceReads.get(id) === pending) this.resourceReads.delete(id);
+      });
+      this.resourceReads.set(id, pending);
+    }
+    return pending;
+  }
+
   async list(): Promise<PetResource[]> {
     const ids = await this.storage.listRecords(infoNamespace);
-    const records = await Promise.all(ids.map(id => this.storage.getRecord(infoNamespace, id)));
-    return records.filter(Boolean) as PetResource[];
+    const records = await Promise.all(ids.map(id => this.readResource(id)));
+    return records.filter((info): info is PetResource => info !== null).map(info => structuredClone(info));
   }
   async get(id: string): Promise<PetResource> {
-    const info = await this.storage.getRecord(infoNamespace, id) as PetResource | null;
+    const info = await this.readResource(id);
     if (!info) throw new Error('桌宠资源不存在。');
-    return info;
+    return structuredClone(info);
   }
   async file(id: string, name: string) {
     const info = await this.get(id);
@@ -53,7 +101,7 @@ export class PetResources {
     };
   }
   async annotate(input: PetResourceAnnotation): Promise<PetResource> {
-    const info = structuredClone(await this.get(input.id));
+    const info = await this.get(input.id);
     const description = (value: string, limit = 1000) => {
       if (typeof value !== 'string' || value.length > limit) throw new Error(`描述最多 ${limit} 个字符。`);
       return value.trim();
@@ -85,6 +133,8 @@ export class PetResources {
       }
     }
     await this.storage.putRecord({ namespace: infoNamespace, id: info.id, value: info });
+    this.remember(info);
+    this.resourceReads.delete(info.id);
     return info;
   }
   async import(input: PetImport) {
@@ -206,6 +256,8 @@ export class PetResources {
     }));
     records.push({ namespace: infoNamespace, id: info.id, expectedRevision: null, value: info });
     await this.storage.commitRecords(records);
+    this.remember(info);
+    this.resourceReads.delete(info.id);
     return info;
   }
   async remove(id: string) {
@@ -214,5 +266,7 @@ export class PetResources {
       { namespace: infoNamespace, id, delete: true },
       ...info.files.map(file => ({ namespace: fileNamespace, id: `${id}/${file.path}`, delete: true as const })),
     ]);
+    this.forget(id);
+    this.resourceReads.delete(id);
   }
 }
