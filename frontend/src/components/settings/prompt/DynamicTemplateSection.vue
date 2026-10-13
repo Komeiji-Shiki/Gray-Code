@@ -7,6 +7,7 @@
  *   自身不持有任何响应式状态（状态仍由 PromptSettings.vue 持有）。
  */
 import { t } from '@/i18n'
+import { CustomSwitch } from '../../common'
 import DynamicStrategyBlock from './DynamicStrategyBlock.vue'
 import type { DynamicContextStrategy } from './types'
 
@@ -36,14 +37,13 @@ const emit = defineEmits<{
       </label>
       <div class="section-header-actions">
         <!-- 启用开关 -->
-        <label class="toggle-switch" :title="t('components.settings.promptSettings.dynamicSection.enableTooltip')">
-          <input
-            type="checkbox"
-            :checked="enabled"
-            @change="emit('update:enabled', ($event.target as HTMLInputElement).checked)"
-          />
-          <span class="toggle-slider"></span>
-        </label>
+        <CustomSwitch
+          compact
+          :model-value="enabled"
+          :title="t('components.settings.promptSettings.dynamicSection.enableTooltip')"
+          :aria-label="t('components.settings.promptSettings.dynamicSection.enableTooltip')"
+          @update:model-value="emit('update:enabled', $event)"
+        />
         <button class="reset-btn" @click="emit('reset')" :disabled="!enabled">
           <i class="codicon codicon-discard"></i>
           {{ t('components.settings.promptSettings.templateSection.resetButton') }}
@@ -195,60 +195,6 @@ const emit = defineEmits<{
 .dynamic-strategy-inline .section-label {
   font-size: 12px;
   margin-bottom: 8px;
-}
-
-/* 开关样式 */
-.toggle-switch {
-  position: relative;
-  display: inline-block;
-  width: 36px;
-  height: 20px;
-  cursor: pointer;
-}
-
-.toggle-switch input {
-  opacity: 0;
-  width: 0;
-  height: 0;
-}
-
-.toggle-slider {
-  position: absolute;
-  top: 0;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  background-color: var(--gc-surface-input);
-  border: 1px solid var(--gc-border-control);
-  border-radius: var(--gc-radius-md);
-  transition: 0.2s;
-}
-
-.toggle-slider::before {
-  position: absolute;
-  content: "";
-  height: 14px;
-  width: 14px;
-  left: 2px;
-  bottom: 2px;
-  background-color: var(--gc-text-primary);
-  border-radius: var(--gc-radius-xs);
-  transition: 0.2s;
-}
-
-.toggle-switch input:checked + .toggle-slider {
-  background-color: var(--gc-button-primary);
-  border-color: var(--gc-button-primary);
-}
-
-.toggle-switch input:checked + .toggle-slider::before {
-  transform: translateX(16px);
-  background-color: var(--gc-text-on-primary);
-}
-
-.toggle-switch:hover input:not(:disabled) + .toggle-slider,
-.toggle-switch input:focus + .toggle-slider {
-  border-color: var(--gc-focus-border);
 }
 
 /* 禁用提示 */

@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed } from 'vue'
-import { CustomSelect, type SelectOption } from '../../common'
+import { CustomSelect, CustomSwitch, type SelectOption } from '../../common'
 import { useI18n } from '../../../i18n'
 import { useDeferredNumberInput } from '../../../composables/useDeferredNumberInput'
 import { useChannelOptions } from './useChannelOptions'
@@ -87,14 +87,13 @@ function onSendThoughtsChange(e: any) {
           <i class="codicon codicon-key"></i>
           {{ t('components.channels.openai.deepSeekUserId.title') }}
         </span>
-        <label class="toggle-switch" :title="t('components.channels.openai.deepSeekUserId.toggleHint')">
-          <input
-            type="checkbox"
-            :checked="config.deepSeekUserIdEnabled ?? false"
-            @change="(e: any) => emit('update:field', 'deepSeekUserIdEnabled', e.target.checked)"
-          />
-          <span class="toggle-slider"></span>
-        </label>
+        <CustomSwitch
+          compact
+          :model-value="config.deepSeekUserIdEnabled ?? false"
+          :title="t('components.channels.openai.deepSeekUserId.toggleHint')"
+          :aria-label="t('components.channels.openai.deepSeekUserId.toggleHint')"
+          @update:model-value="(value: boolean) => emit('update:field', 'deepSeekUserIdEnabled', value)"
+        />
       </div>
       <div class="option-section-content">
         <span class="option-hint">{{ t('components.channels.openai.deepSeekUserId.hint') }}</span>
@@ -108,14 +107,13 @@ function onSendThoughtsChange(e: any) {
           <i class="codicon codicon-eye"></i>
           {{ t('components.channels.openai.deepSeekVision.title') }}
         </span>
-        <label class="toggle-switch" :title="t('components.channels.openai.deepSeekVision.toggleHint')">
-          <input
-            type="checkbox"
-            :checked="config.deepSeekVisionEnabled ?? false"
-            @change="(e: any) => emit('update:field', 'deepSeekVisionEnabled', e.target.checked)"
-          />
-          <span class="toggle-slider"></span>
-        </label>
+        <CustomSwitch
+          compact
+          :model-value="config.deepSeekVisionEnabled ?? false"
+          :title="t('components.channels.openai.deepSeekVision.toggleHint')"
+          :aria-label="t('components.channels.openai.deepSeekVision.toggleHint')"
+          @update:model-value="(value: boolean) => emit('update:field', 'deepSeekVisionEnabled', value)"
+        />
       </div>
       <div class="option-section-content">
         <span class="option-hint">{{ t('components.channels.openai.deepSeekVision.hint') }}</span>
@@ -129,14 +127,13 @@ function onSendThoughtsChange(e: any) {
           <i class="codicon codicon-file-pdf"></i>
           {{ t('components.channels.openai.pdfAttachment.title') }}
         </span>
-        <label class="toggle-switch" :title="t('components.channels.openai.pdfAttachment.toggleHint')">
-          <input
-            type="checkbox"
-            :checked="config.pdfAttachmentEnabled ?? false"
-            @change="(e: any) => emit('update:field', 'pdfAttachmentEnabled', e.target.checked)"
-          />
-          <span class="toggle-slider"></span>
-        </label>
+        <CustomSwitch
+          compact
+          :model-value="config.pdfAttachmentEnabled ?? false"
+          :title="t('components.channels.openai.pdfAttachment.toggleHint')"
+          :aria-label="t('components.channels.openai.pdfAttachment.toggleHint')"
+          @update:model-value="(value: boolean) => emit('update:field', 'pdfAttachmentEnabled', value)"
+        />
       </div>
       <div class="option-section-content">
         <span class="option-hint">{{ t('components.channels.openai.pdfAttachment.hint') }}</span>
@@ -148,14 +145,13 @@ function onSendThoughtsChange(e: any) {
     <div class="option-item option-with-toggle">
       <div class="option-header">
         <label>{{ t('components.channels.common.temperature.label') }}</label>
-        <label class="toggle-switch" :title="t('components.channels.common.temperature.toggleHint')">
-          <input
-            type="checkbox"
-            :checked="isOptionEnabled('temperature')"
-            @change="(e: any) => handleOptionEnabledChange('temperature', e.target.checked)"
-          />
-          <span class="toggle-slider"></span>
-        </label>
+        <CustomSwitch
+          compact
+          :model-value="isOptionEnabled('temperature')"
+          :title="t('components.channels.common.temperature.toggleHint')"
+          :aria-label="t('components.channels.common.temperature.toggleHint')"
+          @update:model-value="(value: boolean) => handleOptionEnabledChange('temperature', value)"
+        />
       </div>
       <input
         type="number"
@@ -175,14 +171,13 @@ function onSendThoughtsChange(e: any) {
     <div class="option-item option-with-toggle">
       <div class="option-header">
         <label>{{ t('components.channels.common.maxTokens.label') }}</label>
-        <label class="toggle-switch" :title="t('components.channels.common.maxTokens.toggleHint')">
-          <input
-            type="checkbox"
-            :checked="isOptionEnabled('max_tokens')"
-            @change="(e: any) => handleOptionEnabledChange('max_tokens', e.target.checked)"
-          />
-          <span class="toggle-slider"></span>
-        </label>
+        <CustomSwitch
+          compact
+          :model-value="isOptionEnabled('max_tokens')"
+          :title="t('components.channels.common.maxTokens.toggleHint')"
+          :aria-label="t('components.channels.common.maxTokens.toggleHint')"
+          @update:model-value="(value: boolean) => handleOptionEnabledChange('max_tokens', value)"
+        />
       </div>
       <input
         type="number"
@@ -198,14 +193,13 @@ function onSendThoughtsChange(e: any) {
     <div class="option-item option-with-toggle">
       <div class="option-header">
         <label>{{ t('components.channels.common.topP.label') }}</label>
-        <label class="toggle-switch" :title="t('components.channels.common.topP.toggleHint')">
-          <input
-            type="checkbox"
-            :checked="isOptionEnabled('top_p')"
-            @change="(e: any) => handleOptionEnabledChange('top_p', e.target.checked)"
-          />
-          <span class="toggle-slider"></span>
-        </label>
+        <CustomSwitch
+          compact
+          :model-value="isOptionEnabled('top_p')"
+          :title="t('components.channels.common.topP.toggleHint')"
+          :aria-label="t('components.channels.common.topP.toggleHint')"
+          @update:model-value="(value: boolean) => handleOptionEnabledChange('top_p', value)"
+        />
       </div>
       <input
         type="number"
@@ -225,14 +219,13 @@ function onSendThoughtsChange(e: any) {
     <div class="option-item option-with-toggle">
       <div class="option-header">
         <label>{{ t('components.channels.openai.frequencyPenalty.label') }}</label>
-        <label class="toggle-switch" :title="t('components.channels.openai.frequencyPenalty.toggleHint')">
-          <input
-            type="checkbox"
-            :checked="isOptionEnabled('frequency_penalty')"
-            @change="(e: any) => handleOptionEnabledChange('frequency_penalty', e.target.checked)"
-          />
-          <span class="toggle-slider"></span>
-        </label>
+        <CustomSwitch
+          compact
+          :model-value="isOptionEnabled('frequency_penalty')"
+          :title="t('components.channels.openai.frequencyPenalty.toggleHint')"
+          :aria-label="t('components.channels.openai.frequencyPenalty.toggleHint')"
+          @update:model-value="(value: boolean) => handleOptionEnabledChange('frequency_penalty', value)"
+        />
       </div>
       <input
         type="number"
@@ -252,14 +245,13 @@ function onSendThoughtsChange(e: any) {
     <div class="option-item option-with-toggle">
       <div class="option-header">
         <label>{{ t('components.channels.openai.presencePenalty.label') }}</label>
-        <label class="toggle-switch" :title="t('components.channels.openai.presencePenalty.toggleHint')">
-          <input
-            type="checkbox"
-            :checked="isOptionEnabled('presence_penalty')"
-            @change="(e: any) => handleOptionEnabledChange('presence_penalty', e.target.checked)"
-          />
-          <span class="toggle-slider"></span>
-        </label>
+        <CustomSwitch
+          compact
+          :model-value="isOptionEnabled('presence_penalty')"
+          :title="t('components.channels.openai.presencePenalty.toggleHint')"
+          :aria-label="t('components.channels.openai.presencePenalty.toggleHint')"
+          @update:model-value="(value: boolean) => handleOptionEnabledChange('presence_penalty', value)"
+        />
       </div>
       <input
         type="number"
@@ -282,14 +274,13 @@ function onSendThoughtsChange(e: any) {
           <i class="codicon codicon-lightbulb"></i>
           {{ t('components.channels.common.thinking.title') }}
         </span>
-        <label class="toggle-switch" :title="t('components.channels.common.thinking.toggleHint')">
-          <input
-            type="checkbox"
-            :checked="isOptionEnabled('reasoning')"
-            @change="(e: any) => handleOptionEnabledChange('reasoning', e.target.checked)"
-          />
-          <span class="toggle-slider"></span>
-        </label>
+        <CustomSwitch
+          compact
+          :model-value="isOptionEnabled('reasoning')"
+          :title="t('components.channels.common.thinking.toggleHint')"
+          :aria-label="t('components.channels.common.thinking.toggleHint')"
+          @update:model-value="(value: boolean) => handleOptionEnabledChange('reasoning', value)"
+        />
       </div>
       
       <div class="option-section-content" :class="{ disabled: !isOptionEnabled('reasoning') }">
@@ -521,82 +512,6 @@ function onSendThoughtsChange(e: any) {
 .option-section-content.disabled {
   opacity: 0.5;
   pointer-events: none;
-}
-
-/* 开关样式 */
-.toggle-switch {
-  position: relative;
-  display: inline-block;
-  width: 32px;
-  height: 16px;
-  cursor: pointer;
-}
-
-.toggle-switch input {
-  opacity: 0;
-  width: 0;
-  height: 0;
-}
-
-.toggle-slider {
-  position: absolute;
-  top: 0;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  background-color: var(--gc-surface-input);
-  border: 1px solid var(--gc-border-control);
-  border-radius: var(--gc-radius-md);
-  transition: all 0.2s;
-}
-
-.toggle-slider::before {
-  position: absolute;
-  content: "";
-  height: 10px;
-  width: 10px;
-  left: 2px;
-  bottom: 2px;
-  background-color: var(--gc-text-primary);
-  opacity: 0.6;
-  border-radius: var(--gc-radius-xs);
-  transition: all 0.2s;
-}
-
-.toggle-switch input:checked + .toggle-slider {
-  background-color: var(--gc-button-primary);
-  border-color: var(--gc-button-primary);
-}
-
-.toggle-switch input:checked + .toggle-slider::before {
-  transform: translateX(16px);
-  background-color: var(--gc-text-on-primary);
-  opacity: 1;
-}
-
-.toggle-switch:hover input:not(:disabled) + .toggle-slider {
-  border-color: var(--gc-focus-border);
-}
-
-/* 小号开关 */
-.toggle-switch.small {
-  width: 28px;
-  height: 14px;
-}
-
-.toggle-switch.small .toggle-slider {
-  border-radius: var(--gc-radius-md);
-}
-
-.toggle-switch.small .toggle-slider::before {
-  height: 8px;
-  width: 8px;
-  left: 2px;
-  bottom: 2px;
-}
-
-.toggle-switch.small input:checked + .toggle-slider::before {
-  transform: translateX(14px);
 }
 
 /* 带开关的配置项 */

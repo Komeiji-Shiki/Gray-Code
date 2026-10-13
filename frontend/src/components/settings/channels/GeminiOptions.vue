@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, watch } from 'vue'
-import { CustomSelect, type SelectOption } from '../../common'
+import { CustomSelect, CustomSwitch, type SelectOption } from '../../common'
 import { useI18n } from '../../../i18n'
 import { useDeferredNumberInput } from '../../../composables/useDeferredNumberInput'
 import { useChannelOptions } from './useChannelOptions'
@@ -102,14 +102,13 @@ watch(
     <div class="option-item option-with-toggle">
       <div class="option-header">
         <label>{{ t('components.channels.common.temperature.label') }}</label>
-        <label class="toggle-switch" :title="t('components.channels.common.temperature.toggleHint')">
-          <input
-            type="checkbox"
-            :checked="isOptionEnabled('temperature')"
-            @change="(e: any) => handleOptionEnabledChange('temperature', e.target.checked)"
-          />
-          <span class="toggle-slider"></span>
-        </label>
+        <CustomSwitch
+          compact
+          :model-value="isOptionEnabled('temperature')"
+          :title="t('components.channels.common.temperature.toggleHint')"
+          :aria-label="t('components.channels.common.temperature.toggleHint')"
+          @update:model-value="(value: boolean) => handleOptionEnabledChange('temperature', value)"
+        />
       </div>
       <input
         type="number"
@@ -129,14 +128,13 @@ watch(
     <div class="option-item option-with-toggle">
       <div class="option-header">
         <label>{{ t('components.channels.common.maxTokens.label') }}</label>
-        <label class="toggle-switch" :title="t('components.channels.common.maxTokens.toggleHint')">
-          <input
-            type="checkbox"
-            :checked="isOptionEnabled('maxOutputTokens')"
-            @change="(e: any) => handleOptionEnabledChange('maxOutputTokens', e.target.checked)"
-          />
-          <span class="toggle-slider"></span>
-        </label>
+        <CustomSwitch
+          compact
+          :model-value="isOptionEnabled('maxOutputTokens')"
+          :title="t('components.channels.common.maxTokens.toggleHint')"
+          :aria-label="t('components.channels.common.maxTokens.toggleHint')"
+          @update:model-value="(value: boolean) => handleOptionEnabledChange('maxOutputTokens', value)"
+        />
       </div>
       <input
         type="number"
@@ -155,14 +153,13 @@ watch(
           <i class="codicon codicon-lightbulb"></i>
           {{ t('components.channels.common.thinking.title') }}
         </span>
-        <label class="toggle-switch" :title="t('components.channels.common.thinking.toggleHint')">
-          <input
-            type="checkbox"
-            :checked="isOptionEnabled('thinkingConfig')"
-            @change="(e: any) => handleOptionEnabledChange('thinkingConfig', e.target.checked)"
-          />
-          <span class="toggle-slider"></span>
-        </label>
+        <CustomSwitch
+          compact
+          :model-value="isOptionEnabled('thinkingConfig')"
+          :title="t('components.channels.common.thinking.toggleHint')"
+          :aria-label="t('components.channels.common.thinking.toggleHint')"
+          @update:model-value="(value: boolean) => handleOptionEnabledChange('thinkingConfig', value)"
+        />
       </div>
       
       <div class="option-section-content" :class="{ disabled: !isOptionEnabled('thinkingConfig') }">
@@ -429,61 +426,6 @@ watch(
   font-weight: 500;
   color: var(--gc-text-primary);
   opacity: 0.9;
-}
-
-/* 开关样式 */
-.toggle-switch {
-  position: relative;
-  display: inline-block;
-  width: 32px;
-  height: 16px;
-  cursor: pointer;
-}
-
-.toggle-switch input {
-  opacity: 0;
-  width: 0;
-  height: 0;
-}
-
-.toggle-slider {
-  position: absolute;
-  top: 0;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  background-color: var(--gc-surface-input);
-  border: 1px solid var(--gc-border-control);
-  border-radius: var(--gc-radius-md);
-  transition: all 0.2s;
-}
-
-.toggle-slider::before {
-  position: absolute;
-  content: "";
-  height: 10px;
-  width: 10px;
-  left: 2px;
-  bottom: 2px;
-  background-color: var(--gc-text-primary);
-  opacity: 0.6;
-  border-radius: var(--gc-radius-xs);
-  transition: all 0.2s;
-}
-
-.toggle-switch input:checked + .toggle-slider {
-  background-color: var(--gc-button-primary);
-  border-color: var(--gc-button-primary);
-}
-
-.toggle-switch input:checked + .toggle-slider::before {
-  transform: translateX(16px);
-  background-color: var(--gc-text-on-primary);
-  opacity: 1;
-}
-
-.toggle-switch:hover input:not(:disabled) + .toggle-slider {
-  border-color: var(--gc-focus-border);
 }
 
 /* 选项分组 */

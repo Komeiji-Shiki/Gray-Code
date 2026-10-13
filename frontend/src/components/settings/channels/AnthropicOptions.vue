@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed } from 'vue'
-import { CustomSelect, type SelectOption } from '../../common'
+import { CustomSelect, CustomSwitch, type SelectOption } from '../../common'
 import { useI18n } from '../../../i18n'
 import { useDeferredNumberInput } from '../../../composables/useDeferredNumberInput'
 import { useChannelOptions } from './useChannelOptions'
@@ -157,14 +157,13 @@ function handleThinkingNumberChange(field: string, event: any) {
     <div class="option-item option-with-toggle">
       <div class="option-header">
         <label>{{ t('components.channels.common.temperature.label') }}</label>
-        <label class="toggle-switch" :title="t('components.channels.common.temperature.toggleHint')">
-          <input
-            type="checkbox"
-            :checked="isOptionEnabled('temperature')"
-            @change="(e: any) => handleOptionEnabledChange('temperature', e.target.checked)"
-          />
-          <span class="toggle-slider"></span>
-        </label>
+        <CustomSwitch
+          compact
+          :model-value="isOptionEnabled('temperature')"
+          :title="t('components.channels.common.temperature.toggleHint')"
+          :aria-label="t('components.channels.common.temperature.toggleHint')"
+          @update:model-value="(value: boolean) => handleOptionEnabledChange('temperature', value)"
+        />
       </div>
       <input
         type="number"
@@ -184,14 +183,13 @@ function handleThinkingNumberChange(field: string, event: any) {
     <div class="option-item option-with-toggle">
       <div class="option-header">
         <label>{{ t('components.channels.common.maxTokens.label') }}</label>
-        <label class="toggle-switch" :title="t('components.channels.common.maxTokens.toggleHint')">
-          <input
-            type="checkbox"
-           :checked="isOptionEnabled('max_tokens')"
-            @change="(e: any) => handleOptionEnabledChange('max_tokens', e.target.checked)"
-          />
-          <span class="toggle-slider"></span>
-        </label>
+        <CustomSwitch
+          compact
+          :model-value="isOptionEnabled('max_tokens')"
+          :title="t('components.channels.common.maxTokens.toggleHint')"
+          :aria-label="t('components.channels.common.maxTokens.toggleHint')"
+          @update:model-value="(value: boolean) => handleOptionEnabledChange('max_tokens', value)"
+        />
       </div>
       <input
         type="number"
@@ -207,14 +205,13 @@ function handleThinkingNumberChange(field: string, event: any) {
     <div class="option-item option-with-toggle">
       <div class="option-header">
         <label>{{ t('components.channels.common.topP.label') }}</label>
-        <label class="toggle-switch" :title="t('components.channels.common.topP.toggleHint')">
-          <input
-            type="checkbox"
-            :checked="isOptionEnabled('top_p')"
-            @change="(e: any) => handleOptionEnabledChange('top_p', e.target.checked)"
-          />
-          <span class="toggle-slider"></span>
-        </label>
+        <CustomSwitch
+          compact
+          :model-value="isOptionEnabled('top_p')"
+          :title="t('components.channels.common.topP.toggleHint')"
+          :aria-label="t('components.channels.common.topP.toggleHint')"
+          @update:model-value="(value: boolean) => handleOptionEnabledChange('top_p', value)"
+        />
       </div>
       <input
         type="number"
@@ -234,14 +231,13 @@ function handleThinkingNumberChange(field: string, event: any) {
     <div class="option-item option-with-toggle">
       <div class="option-header">
         <label>{{ t('components.channels.common.topK.label') }}</label>
-        <label class="toggle-switch" :title="t('components.channels.common.topK.toggleHint')">
-          <input
-            type="checkbox"
-            :checked="isOptionEnabled('top_k')"
-            @change="(e: any) => handleOptionEnabledChange('top_k', e.target.checked)"
-          />
-          <span class="toggle-slider"></span>
-        </label>
+        <CustomSwitch
+          compact
+          :model-value="isOptionEnabled('top_k')"
+          :title="t('components.channels.common.topK.toggleHint')"
+          :aria-label="t('components.channels.common.topK.toggleHint')"
+          @update:model-value="(value: boolean) => handleOptionEnabledChange('top_k', value)"
+        />
       </div>
       <input
         type="number"
@@ -260,14 +256,13 @@ function handleThinkingNumberChange(field: string, event: any) {
           <i class="codicon codicon-lightbulb"></i>
           {{ t('components.channels.common.thinking.title') }}
         </span>
-        <label class="toggle-switch" :title="t('components.channels.common.thinking.toggleHint')">
-          <input
-            type="checkbox"
-            :checked="isOptionEnabled('thinking')"
-            @change="(e: any) => handleOptionEnabledChange('thinking', e.target.checked)"
-          />
-          <span class="toggle-slider"></span>
-        </label>
+        <CustomSwitch
+          compact
+          :model-value="isOptionEnabled('thinking')"
+          :title="t('components.channels.common.thinking.toggleHint')"
+          :aria-label="t('components.channels.common.thinking.toggleHint')"
+          @update:model-value="(value: boolean) => handleOptionEnabledChange('thinking', value)"
+        />
       </div>
       
       <div class="option-section-content" :class="{ disabled: !isOptionEnabled('thinking') }">
@@ -425,14 +420,13 @@ function handleThinkingNumberChange(field: string, event: any) {
           <i class="codicon codicon-database"></i>
           {{ t('components.channels.anthropic.promptCaching.title') }}
         </span>
-        <label class="toggle-switch" :title="t('components.channels.anthropic.promptCaching.enable')">
-          <input
-            type="checkbox"
-            :checked="config.promptCachingEnabled ?? false"
-            @change="(e: any) => emit('update:field', 'promptCachingEnabled', e.target.checked)"
-          />
-          <span class="toggle-slider"></span>
-        </label>
+        <CustomSwitch
+          compact
+          :model-value="config.promptCachingEnabled ?? false"
+          :title="t('components.channels.anthropic.promptCaching.enable')"
+          :aria-label="t('components.channels.anthropic.promptCaching.enable')"
+          @update:model-value="(value: boolean) => emit('update:field', 'promptCachingEnabled', value)"
+        />
       </div>
       
       <div class="option-section-content" :class="{ disabled: !(config.promptCachingEnabled ?? false) }">
@@ -472,14 +466,13 @@ function handleThinkingNumberChange(field: string, event: any) {
           <i class="codicon codicon-person"></i>
           {{ t('components.channels.anthropic.userId.title') }}
         </span>
-        <label class="toggle-switch" :title="t('components.channels.anthropic.userId.enable')">
-          <input
-            type="checkbox"
-            :checked="config.anthropicUserIdEnabled ?? false"
-            @change="(e: any) => emit('update:field', 'anthropicUserIdEnabled', e.target.checked)"
-          />
-          <span class="toggle-slider"></span>
-        </label>
+        <CustomSwitch
+          compact
+          :model-value="config.anthropicUserIdEnabled ?? false"
+          :title="t('components.channels.anthropic.userId.enable')"
+          :aria-label="t('components.channels.anthropic.userId.enable')"
+          @update:model-value="(value: boolean) => emit('update:field', 'anthropicUserIdEnabled', value)"
+        />
       </div>
       <div class="option-section-content">
         <span class="option-hint">{{ t('components.channels.anthropic.userId.hint') }}</span>
@@ -493,14 +486,13 @@ function handleThinkingNumberChange(field: string, event: any) {
           <i class="codicon codicon-eye"></i>
           {{ t('components.channels.anthropic.deepSeekVision.title') }}
         </span>
-        <label class="toggle-switch" :title="t('components.channels.anthropic.deepSeekVision.toggleHint')">
-          <input
-            type="checkbox"
-            :checked="config.deepSeekVisionEnabled ?? false"
-            @change="(e: any) => emit('update:field', 'deepSeekVisionEnabled', e.target.checked)"
-          />
-          <span class="toggle-slider"></span>
-        </label>
+        <CustomSwitch
+          compact
+          :model-value="config.deepSeekVisionEnabled ?? false"
+          :title="t('components.channels.anthropic.deepSeekVision.toggleHint')"
+          :aria-label="t('components.channels.anthropic.deepSeekVision.toggleHint')"
+          @update:model-value="(value: boolean) => emit('update:field', 'deepSeekVisionEnabled', value)"
+        />
       </div>
       <div class="option-section-content">
         <span class="option-hint">{{ t('components.channels.anthropic.deepSeekVision.hint') }}</span>
@@ -656,61 +648,6 @@ function handleThinkingNumberChange(field: string, event: any) {
 .option-section-content.disabled {
   opacity: 0.5;
   pointer-events: none;
-}
-
-/* 开关样式 */
-.toggle-switch {
-  position: relative;
-  display: inline-block;
-  width: 32px;
-  height: 16px;
-  cursor: pointer;
-}
-
-.toggle-switch input {
-  opacity: 0;
-  width: 0;
-  height: 0;
-}
-
-.toggle-slider {
-  position: absolute;
-  top: 0;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  background-color: var(--gc-surface-input);
-  border: 1px solid var(--gc-border-control);
-  border-radius: var(--gc-radius-md);
-  transition: all 0.2s;
-}
-
-.toggle-slider::before {
-  position: absolute;
-  content: "";
-  height: 10px;
-  width: 10px;
-  left: 2px;
-  bottom: 2px;
-  background-color: var(--gc-text-primary);
-  opacity: 0.6;
-  border-radius: var(--gc-radius-xs);
-  transition: all 0.2s;
-}
-
-.toggle-switch input:checked + .toggle-slider {
-  background-color: var(--gc-button-primary);
-  border-color: var(--gc-button-primary);
-}
-
-.toggle-switch input:checked + .toggle-slider::before {
-  transform: translateX(16px);
-  background-color: var(--gc-text-on-primary);
-  opacity: 1;
-}
-
-.toggle-switch:hover input:not(:disabled) + .toggle-slider {
-  border-color: var(--gc-focus-border);
 }
 
 .option-section-content {

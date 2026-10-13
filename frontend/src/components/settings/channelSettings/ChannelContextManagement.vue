@@ -8,6 +8,7 @@
 import { CustomSelect, Tooltip, type SelectOption } from '../../common'
 import { computed } from 'vue'
 import { t } from '@/i18n'
+import { CustomSwitch } from '../../common'
 import type { ContextManagementMethod } from '@shared/contextManagement'
 
 interface ContextBudgetInfo {
@@ -150,14 +151,15 @@ const thresholdHelp = computed(() => {
     <button class="advanced-toggle" @click="emit('update:show', !show)">
       <i :class="['codicon', show ? 'codicon-chevron-down' : 'codicon-chevron-right']"></i>
       <span>{{ t('components.settings.contextPage.channelOverridesTitle') }}</span>
-      <label class="toggle-switch header-toggle" :title="t('components.settings.channelSettings.form.contextManagement.enableTitle')" @click.stop>
-        <input
-          type="checkbox"
-          :checked="contextManagementEnabled"
-          @change="(e: any) => emit('update:enabled', e.target.checked)"
-        />
-        <span class="toggle-slider"></span>
-      </label>
+      <CustomSwitch
+        class="header-toggle"
+        compact
+        :model-value="contextManagementEnabled"
+        :title="t('components.settings.channelSettings.form.contextManagement.enableTitle')"
+        :aria-label="t('components.settings.channelSettings.form.contextManagement.enableTitle')"
+        @click.stop
+        @update:model-value="(value: boolean) => emit('update:enabled', value)"
+      />
     </button>
 
     <div v-if="show" class="custom-panel-wrapper">
@@ -391,61 +393,6 @@ const thresholdHelp = computed(() => {
   font-weight: 500;
   color: var(--gc-text-primary);
   opacity: 0.9;
-}
-
-/* 开关样式 */
-.toggle-switch {
-  position: relative;
-  display: inline-block;
-  width: 32px;
-  height: 16px;
-  cursor: pointer;
-}
-
-.toggle-switch input {
-  opacity: 0;
-  width: 0;
-  height: 0;
-}
-
-.toggle-slider {
-  position: absolute;
-  top: 0;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  background-color: var(--gc-surface-input);
-  border: 1px solid var(--gc-border-control);
-  border-radius: var(--gc-radius-md);
-  transition: all 0.2s;
-}
-
-.toggle-slider::before {
-  position: absolute;
-  content: "";
-  height: 10px;
-  width: 10px;
-  left: 2px;
-  bottom: 2px;
-  background-color: var(--gc-text-primary);
-  opacity: 0.6;
-  border-radius: var(--gc-radius-xs);
-  transition: all 0.2s;
-}
-
-.toggle-switch input:checked + .toggle-slider {
-  background-color: var(--gc-button-primary);
-  border-color: var(--gc-button-primary);
-}
-
-.toggle-switch input:checked + .toggle-slider::before {
-  transform: translateX(16px);
-  background-color: var(--gc-text-on-primary);
-  opacity: 1;
-}
-
-.toggle-switch:hover input:not(:disabled) + .toggle-slider {
-  border-color: var(--gc-focus-border);
 }
 
 /* 禁用状态的输入框 */

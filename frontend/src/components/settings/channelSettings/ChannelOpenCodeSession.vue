@@ -5,6 +5,7 @@
  * 该选项属于渠道级传输行为，不依赖某一种请求格式；由后端在统一推理出口处理。
  */
 import { t } from '@/i18n'
+import { CustomSwitch } from '../../common'
 
 defineProps<{
   enabled: boolean
@@ -25,14 +26,13 @@ const emit = defineEmits<{
         </div>
         <span class="session-hint">{{ t('components.settings.channelSettings.form.openCodeSession.hint') }}</span>
       </div>
-      <label class="toggle-switch" :title="t('components.settings.channelSettings.form.openCodeSession.enableTitle')">
-        <input
-          type="checkbox"
-          :checked="enabled"
-          @change="(e: any) => emit('update:enabled', e.target.checked)"
-        />
-        <span class="toggle-slider"></span>
-      </label>
+      <CustomSwitch
+        compact
+        :model-value="enabled"
+        :title="t('components.settings.channelSettings.form.openCodeSession.enableTitle')"
+        :aria-label="t('components.settings.channelSettings.form.openCodeSession.enableTitle')"
+        @update:model-value="(value: boolean) => emit('update:enabled', value)"
+      />
     </div>
   </div>
 </template>
@@ -83,56 +83,4 @@ const emit = defineEmits<{
   color: var(--gc-text-muted);
 }
 
-.toggle-switch {
-  position: relative;
-  display: inline-block;
-  flex: 0 0 auto;
-  width: 32px;
-  height: 16px;
-  margin-top: 2px;
-  cursor: pointer;
-}
-
-.toggle-switch input {
-  width: 0;
-  height: 0;
-  opacity: 0;
-}
-
-.toggle-slider {
-  position: absolute;
-  inset: 0;
-  background-color: var(--gc-surface-input);
-  border: 1px solid var(--gc-border-control);
-  border-radius: var(--gc-radius-md);
-  transition: all 0.2s;
-}
-
-.toggle-slider::before {
-  position: absolute;
-  bottom: 2px;
-  left: 2px;
-  width: 10px;
-  height: 10px;
-  content: '';
-  background-color: var(--gc-text-primary);
-  border-radius: var(--gc-radius-xs);
-  opacity: 0.6;
-  transition: all 0.2s;
-}
-
-.toggle-switch input:checked + .toggle-slider {
-  background-color: var(--gc-button-primary);
-  border-color: var(--gc-button-primary);
-}
-
-.toggle-switch input:checked + .toggle-slider::before {
-  background-color: var(--gc-text-on-primary);
-  transform: translateX(16px);
-  opacity: 1;
-}
-
-.toggle-switch:hover input:not(:disabled) + .toggle-slider {
-  border-color: var(--gc-focus-border);
-}
 </style>
