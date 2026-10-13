@@ -10,12 +10,11 @@
  */
 
 import { computed, ref, watch } from 'vue'
-import CustomScrollbar from '../../common/CustomScrollbar.vue'
+import SearchMatchList from './SearchMatchList.vue'
 import VirtualDiffLines from '../../common/VirtualDiffLines.vue'
 import { useI18n } from '../../../composables/useI18n'
 import { computeLineDiffCached, type LineDiffEntry, type LineDiffResult } from '@/utils/lineDiff'
 import { useToolDiffPreviews, type ToolDiffContent as DiffContent } from '../common/useToolDiffPreviews'
-import { escapeHtml } from '../../common/markdownUtils'
 import { useOpenWorkspaceFile } from '../../../composables/useOpenWorkspaceFile'
 import ToolResultValue from '../common/ToolResultValue.vue'
 
@@ -177,16 +176,6 @@ const needsExpand = computed(() => searchResults.value.length > previewMatchCoun
 // 切换展开状态
 function toggleExpand() {
   expanded.value = !expanded.value
-}
-
-// 高亮匹配文本
-function highlightMatch(context: string | undefined, match: string | undefined): string {
-  if (!context) return ''
-  if (!match) return escapeHtml(context)
-  // 在原文中划分命中片段后分别转义，保留大小写和 HTML 字符的原貌。
-  const escaped = match.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
-  return context.split(new RegExp(`(${escaped})`, 'gi'))
-    .map((part, index) => index % 2 ? `<mark>${escapeHtml(part)}</mark>` : escapeHtml(part)).join('')
 }
 
 // ============ Diff 相关 ============
@@ -495,42 +484,14 @@ function isDiffExpanded(path: string): boolean {
         
         <!-- 匹配列表视图 -->
         <div v-else class="matches-view">
-          <CustomScrollbar :max-height="200">
-            <div class="match-items">
-              <div
-                v-for="(match, index) in matchesByFile.get(replaceResult.file) || EMPTY_MATCHES"
-                :key="`${match.line}-${index}`"
-                class="match-item-compact"
-              >
-                <span class="line-info">:{{ match.line }}:{{ match.column }}</span>
-                <code class="match-text">{{ match.match }}</code>
-              </div>
-            </div>
-          </CustomScrollbar>
+          <SearchMatchList :matches="matchesByFile.get(replaceResult.file) || EMPTY_MATCHES" compact :max-height="200" />
         </div>
       </div>
     </div>
     
     <!-- 仅搜索模式：结果列表 -->
     <div v-else-if="!isReplaceMode && searchResults.length" class="results-list">
-      <CustomScrollbar :max-height="300">
-        <div class="match-items">
-          <div
-            v-for="(match, index) in displayResults"
-            :key="`${match?.file || ''}-${match?.line || 0}-${index}`"
-            class="match-item"
-          >
-            <div class="match-header">
-              <span class="codicon codicon-file file-icon"></span>
-              <button type="button" class="file-path file-link gc-link-button" :title="match.file" @click="openFileAt(match.file, match.line)">{{ match.file }}</button>
-              <button type="button" class="line-info file-link gc-link-button" @click="openFileAt(match.file, match.line)">:{{ match.line }}:{{ match.column }}</button>
-            </div>
-            <div class="match-context">
-              <pre><code v-html="highlightMatch(match?.context, match?.match)"></code></pre>
-            </div>
-          </div>
-        </div>
-      </CustomScrollbar>
+      <SearchMatchList :matches="displayResults" :max-height="300" />
       
       <!-- 展开/收起按钮 -->
       <div v-if="needsExpand" class="expand-section">
@@ -966,38 +927,6 @@ function isDiffExpanded(path: string): boolean {
   background: var(--gc-surface-base);
 }
 
-.match-items {
-  display: flex;
-  flex-direction: column;
-}
-
-.match-item-compact {
-  display: flex;
-  align-items: center;
-  gap: var(--spacing-sm, 8px);
-  padding: var(--spacing-xs, 4px) var(--spacing-sm, 8px);
-  border-bottom: 1px solid var(--gc-border-subtle);
-  font-size: 11px;
-}
-
-.match-item-compact:last-child {
-  border-bottom: none;
-}
-
-.match-item-compact .line-info {
-  color: var(--gc-chart-orange);
-  font-family: var(--gc-font-code);
-  flex-shrink: 0;
-}
-
-.match-item-compact .match-text {
-  font-family: var(--gc-font-code);
-  color: var(--gc-text-primary);
-  background: var(--gc-highlight-bg);
-  padding: 0 4px;
-  border-radius: var(--gc-radius-xs);
-}
-
 /* 结果列表 */
 .results-list {
   border: 1px solid var(--gc-border-subtle);
@@ -1016,55 +945,6 @@ function isDiffExpanded(path: string): boolean {
 .results-list :deep(.scroll-container) {
   height: auto !important;
   min-height: 0;
-}
-
-.match-item {
-  border-bottom: 1px solid var(--gc-border-subtle);
-}
-
-.match-item:last-child {
-  border-bottom: none;
-}
-
-.match-header {
-  display: flex;
-  align-items: center;
-  gap: var(--spacing-xs, 4px);
-  padding: var(--spacing-xs, 4px) var(--spacing-sm, 8px);
-  background: var(--gc-surface-muted);
-  font-size: 11px;
-}
-
-.line-info {
-  color: var(--gc-chart-orange);
-  font-family: var(--gc-font-code);
-  margin-left: auto;
-  flex-shrink: 0;
-}
-
-.match-context {
-  padding: var(--spacing-xs, 4px) var(--spacing-sm, 8px);
-  background: var(--gc-surface-base);
-}
-
-.match-context pre {
-  margin: 0;
-  font-size: 11px;
-  font-family: var(--gc-font-code);
-  line-height: 1.4;
-  white-space: pre-wrap;
-  word-break: break-all;
-}
-
-.match-context code {
-  font-family: inherit;
-}
-
-.match-context :deep(mark) {
-  background: var(--gc-highlight-bg);
-  color: inherit;
-  padding: 0 2px;
-  border-radius: var(--gc-radius-xs);
 }
 
 /* 展开区域 */

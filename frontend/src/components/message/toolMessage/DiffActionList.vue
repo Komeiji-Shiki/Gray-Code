@@ -48,7 +48,7 @@ async function openPreview(diff: PendingDiffView) {
       <div class="footer-top" v-if="globalApplyDiffConfig.autoSave">
         <template v-if="pendingDiff.autoSaveAt !== undefined">
           <div class="timer-container">
-            <div class="timer-bar" :style="{ width: pendingDiff.progress + '%' }"></div>
+            <div class="timer-bar" :style="{ transform: `scaleX(${pendingDiff.progress / 100})` }"></div>
           </div>
           <span class="timer-text">{{ (pendingDiff.timeLeft / 1000).toFixed(1) }}s</span>
         </template>
@@ -140,8 +140,10 @@ async function openPreview(diff: PendingDiffView) {
   top: 0;
   left: 0;
   height: 100%;
+  width: 100%;
   background: var(--gc-chart-blue);
-  transition: width 0.05s linear;
+  transform-origin: left;
+  transition: transform 0.05s linear;
 }
 
 .timer-text {
@@ -149,6 +151,10 @@ async function openPreview(diff: PendingDiffView) {
   color: var(--gc-text-muted);
   min-width: 24px;
   text-align: right;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .timer-bar { transition: none; }
 }
 
 .footer-buttons {

@@ -1,4 +1,4 @@
-import { defineComponent, h } from 'vue'
+import { defineComponent, h, ref } from 'vue'
 import { mount, flushPromises } from '@vue/test-utils'
 import { afterEach, beforeEach, expect, test, vi } from 'vitest'
 import SearchInFilesPanel from '../search_in_files.vue'
@@ -7,17 +7,37 @@ import { setLanguage } from '../../../../i18n'
 const { load, send } = vi.hoisted(() => ({ load: vi.fn(), send: vi.fn() }))
 vi.mock('../../../../utils/vscode', () => ({ loadDiffContent: load, sendToExtension: send, showNotification: vi.fn() }))
 const wrappers: ReturnType<typeof mount>[] = []
-beforeEach(() => { setLanguage('zh-CN'); load.mockReset(); send.mockReset().mockResolvedValue({ success: true }) })
-afterEach(() => { wrappers.splice(0).forEach(wrapper => wrapper.unmount()); setLanguage('auto') })
+beforeEach(() => {
+  setLanguage('zh-CN'); load.mockReset(); send.mockReset().mockResolvedValue({ success: true })
+  vi.stubGlobal('ResizeObserver', class { observe() {} unobserve() {} disconnect() {} })
+})
+afterEach(() => { wrappers.splice(0).forEach(wrapper => wrapper.unmount()); setLanguage('auto'); vi.unstubAllGlobals() })
 const render = (args: Record<string, unknown>, result?: Record<string, unknown>) => {
   const wrapper = mount(SearchInFilesPanel, { props: { args, result }, global: { stubs: {
-    CustomScrollbar: { template: '<div><slot /></div>' },
+    CustomScrollbar: defineComponent({ setup(_, { slots, expose }) {
+      const element = ref<HTMLElement>()
+      expose({ getContainer: () => element.value })
+      return () => h('div', { ref: element, class: 'test-scroll-container' }, slots.default?.())
+    } }),
     VirtualDiffLines: defineComponent({ props: ['lines'], setup: props => () => h('pre', { class: 'diff-lines' }, JSON.stringify(props.lines)) })
   } } })
   wrappers.push(wrapper); return wrapper
 }
 const replacement = (diffContentId?: string) => ({ success: true, data: { results: [{ file: 'source.txt', replacements: 1, diffContentId }],
   matches: [{ file: 'source.txt', line: 1, column: 1, match: 'old', context: 'old' }], filesModified: 1, totalReplacements: 1 } })
+
+test('展开大量匹配只挂载附近行，滚动后保留原文件和行号跳转', async () => {
+  const results = Array.from({ length: 120 }, (_, index) => ({ file: `file-${index}.ts`, line: index + 1, column: 1, match: 'text', context: 'text' }))
+  const wrapper = render({ query: 'text' }, { success: true, data: { results, count: results.length } })
+  await wrapper.get('.expand-btn').trigger('click')
+  expect(wrapper.findAll('.match-item').length).toBeLessThan(20)
+  const viewport = wrapper.get<HTMLElement>('.test-scroll-container')
+  viewport.element.scrollTop = 8000
+  await viewport.trigger('scroll')
+  const target = wrapper.get('[data-match-index="100"] .file-path')
+  await target.trigger('click')
+  expect(send).toHaveBeenLastCalledWith('openWorkspaceFileAt', { path: 'file-100.ts', startLine: 101 })
+})
 
 test('原型同名的合法文件也能显示结果与文件数量', () => {
   const results = ['constructor', '__proto__'].map(file => ({ file, line: 1, column: 1, match: 'text', context: 'text' }))
