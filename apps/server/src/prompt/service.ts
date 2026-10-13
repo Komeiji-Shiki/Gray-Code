@@ -8,6 +8,7 @@ import { stat } from 'node:fs/promises';
 import { pathToFileURL } from 'node:url';
 import type { ActorIdentity, AgentDefinition, PlatformMessage, PlatformConversation, StartRunInput, ContinueRunInput, WorkspaceDefinition } from '@graycode/contracts';
 import { PromptAssembler, type PromptAssemblyHost } from '../../../../backend/modules/prompt/PromptAssembler';
+import { StaticPromptCache } from '../../../../backend/modules/prompt/staticPromptCache';
 import { generateContextBadgeFormatSection, generateMemorySection, wrapPromptSection } from '../../../../backend/modules/prompt/commonSections';
 import { getSingleWorkspaceFileTree } from '../../../../backend/modules/prompt/workspaceFileTree';
 import { normalizePinnedFiles, readPinnedFileCapped, PINNED_FILE_MAX_TOTAL_BYTES } from '../../../../backend/modules/prompt/pinnedFiles';
@@ -36,6 +37,7 @@ function hasApprovedPlanExecution(history: readonly PlatformMessage[]): boolean 
 
 /** Capture each turn once. Tool iterations reuse the captured prompt; history retains prior snapshots. */
 export class PlatformPromptService {
+  private readonly staticPrompts = new StaticPromptCache();
   constructor(private readonly app: PlatformApplication) {}
   async prepare(input: { request: StartRunInput | ContinueRunInput; agent: AgentDefinition; actor: ActorIdentity; workspace?: WorkspaceDefinition;
     history: PlatformMessage[]; conversation: PlatformConversation; previousTurn?: PlatformMessage; clientId?: string; signal?: AbortSignal;
@@ -143,7 +145,8 @@ export class PlatformPromptService {
       generatePinnedFilesSection: () => pinnedFiles.join('\n\n'),
       getContext: () => ({ workspaceRoot: workspace?.directory, os: os.platform(), timezone: Intl.DateTimeFormat().resolvedOptions().timeZone, currentTime: new Date().toISOString() }),
     };
-    const assembler = new PromptAssembler({ settings: () => settings, workspacePaths: () => workspace ? workspaceRoots(workspace).map(root => root.directory) : [], sections });
+    const assembler = new PromptAssembler({ settings: () => settings,
+      workspacePaths: () => workspace ? workspaceRoots(workspace).map(root => root.directory) : [], sections }, {}, this.staticPrompts);
     const previous = input.history.findLast(message => message.isUserInput && typeof message.turnDynamicContext === 'string');
     const cache = previous ? deserializePromptContextCache(previous.turnDynamicContext as string) : undefined;
     const skills = input.agent.toolNames.includes('read_skill') && (input.actor.role === 'owner' || input.actor.effects.includes('workspace_read'))

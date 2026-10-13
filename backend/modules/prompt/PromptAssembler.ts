@@ -1,4 +1,5 @@
 import { PromptTemplateRenderer } from './PromptTemplateRenderer'
+import { StaticPromptCache } from './staticPromptCache'
 import type { DynamicRuntimeContext, PromptContextBundle, DynamicContextDiffBase, PromptAssemblyHost } from './promptAssemblyTypes'
 export type { DynamicRuntimeContext, PromptContextBundle, DynamicContextDiffBase, PromptAssemblyHost } from './promptAssemblyTypes'
 
@@ -41,20 +42,11 @@ export { getGlobIgnoreRegexCacheStats } from './ignorePatterns'
 export class PromptAssembler {
     private readonly renderer: PromptTemplateRenderer
     private config: PromptConfig
-    private cachedPromptValue: string | null = null
-    private lastGeneratedAt: number = 0
-    private cachedPromptKey: string | null = null
-    /** entries 模式下纯静态 system 提示词缓存（含动态占位符的 entry 不缓存，见 getSystemPrompt） */
-    private cachedEntriesPromptValue: string | null = null
-    private cachedEntriesPromptKey: string | null = null
-    private lastEntriesGeneratedAt: number = 0
     /** 段落生成器（VSCode 副作用读取集中于此） */
     private readonly sections: PromptAssemblyHost['sections']
     
-    // 缓存有效期（毫秒）- 1分钟
-    private static readonly CACHE_TTL = 60000
-    
-    constructor(private readonly host: PromptAssemblyHost, config: Partial<PromptConfig> = {}) {
+    constructor(private readonly host: PromptAssemblyHost, config: Partial<PromptConfig> = {},
+        private readonly staticCache = new StaticPromptCache()) {
         this.sections = host.sections
         this.renderer = new PromptTemplateRenderer(host, () => this.config)
         this.config = {
@@ -77,12 +69,7 @@ export class PromptAssembler {
      * 使缓存失效
      */
     invalidateCache(): void {
-        this.cachedPromptValue = null
-        this.cachedPromptKey = null
-        this.lastGeneratedAt = 0
-        this.cachedEntriesPromptValue = null
-        this.cachedEntriesPromptKey = null
-        this.lastEntriesGeneratedAt = 0
+        this.staticCache.clear()
     }
 
     private resolvePromptModeSnapshot(modeSnapshot?: ResolvedPromptModeSnapshot): ResolvedPromptModeSnapshot | undefined {
@@ -99,7 +86,7 @@ export class PromptAssembler {
         return settingsManager?.resolvePromptMode()
     }
 
-    private buildPromptCacheKey(modeSnapshot?: ResolvedPromptModeSnapshot): string {
+    private buildPromptCacheKey(modeSnapshot?: ResolvedPromptModeSnapshot, runtime?: DynamicRuntimeContext): string {
         const settingsManager = this.host.settings()
         const promptConfig = settingsManager?.getSystemPromptConfig()
         const resolvedMode = this.resolvePromptModeSnapshot(modeSnapshot)
@@ -122,7 +109,22 @@ export class PromptAssembler {
                 .join('\u0000')
         )
         const language = this.getUserLanguage()
-        return `${resolvedMode?.id || 'default'}::${prefix}::${suffix}::template=${fingerprint(template)}::memory=${memoryEnabled}::${memoryPrompt}::ws=${workspaceFingerprint}::lang=${language}`
+        return `${resolvedMode?.id || 'default'}::${prefix}::${suffix}::template=${fingerprint(template)}`
+            + `::memory=${memoryEnabled}::${memoryPrompt}::ws=${workspaceFingerprint}::lang=${language}`
+            + `::host=${this.staticHostKey(template, runtime)}`
+    }
+
+    private staticHostKey(template: string, runtime?: DynamicRuntimeContext): string {
+        // 平台静态段还受根目录名称/顺序、时区与工具权限影响，仅用工作区路径和设置值不足以共享。
+        // 只读取模板实际引用的段落；角色宏虽不使用 {{$KEY}} 语法，也必须随当前角色变化。
+        const macros = [...template.matchAll(/\{\{\s*(char|user|persona)\s*\}\}/gi)]
+            .map(match => runtime?.characterMacros?.[match[1].toLowerCase()] ?? match[0])
+        return JSON.stringify([
+            template.includes('{{$ENVIRONMENT}}') ? this.sections.generateStaticEnvironmentSection() : null,
+            template.includes('{{$MEMORY}}') ? this.sections.generateMemorySection() : null,
+            template.includes('{{$CONTEXT_BADGE_FORMAT}}') ? this.sections.generateContextBadgeFormatSection() : null,
+            macros,
+        ])
     }
 
     /**
@@ -137,7 +139,7 @@ export class PromptAssembler {
      * 修正：旧实现取 vscode.env.language，显式设置语言时键与渲染脱节），引用 {{$MEMORY}}
      * 时追加 memoryConfig 指纹；两者都未引用时键保持原样。
      */
-    private buildEntriesStaticCacheKey(mode?: ResolvedPromptModeSnapshot): string | null {
+    private buildEntriesStaticCacheKey(mode?: ResolvedPromptModeSnapshot, runtime?: DynamicRuntimeContext): string | null {
         if (!this.renderer.usesPromptEntries(mode)) {
             return null
         }
@@ -173,7 +175,7 @@ export class PromptAssembler {
                 key += `::memory=${memoryEnabled}::${memoryPrompt}`
             }
         }
-        return key
+        return `${key}::host=${this.staticHostKey(entries.map(entry => entry.content).join('\n'), runtime)}`
     }
     
     /**
@@ -181,47 +183,12 @@ export class PromptAssembler {
      */
     getSystemPrompt(modeSnapshot?: ResolvedPromptModeSnapshot, forceRefresh: boolean = false, runtime?: DynamicRuntimeContext): string {
         const resolvedMode = this.resolvePromptModeSnapshot(modeSnapshot)
-        if (this.renderer.usesPromptEntries(resolvedMode)) {
-            // 预设条目允许 system 条目引用动态占位符，不能复用旧静态缓存。
-            // 但全部 system entry 为纯静态（不含动态占位符）时，结果与 runtime 无关：
-            // 按「模式 id + 启用集合 + 顺序 + 内容指纹」做 TTL 缓存，避免每条消息全量重渲染
-            // （04 批 LOW：entries 组装模式下系统提示词完全不缓存）。
-            const entriesCacheKey = this.buildEntriesStaticCacheKey(resolvedMode)
-            if (entriesCacheKey) {
-                const now = Date.now()
-                if (!forceRefresh &&
-                    this.cachedEntriesPromptValue !== null &&
-                    this.cachedEntriesPromptKey === entriesCacheKey &&
-                    (now - this.lastEntriesGeneratedAt) < PromptAssembler.CACHE_TTL) {
-                    return this.cachedEntriesPromptValue
-                }
-                const value = this.generatePrompt(modeSnapshot, runtime)
-                this.cachedEntriesPromptValue = value
-                this.cachedEntriesPromptKey = entriesCacheKey
-                this.lastEntriesGeneratedAt = now
-                return value
-            }
-            // 含动态占位符：结果依赖 runtime，每次按请求重渲染
-            return this.generatePrompt(modeSnapshot, runtime)
-        }
-
-        const now = Date.now()
-        const cacheKey = this.buildPromptCacheKey(modeSnapshot)
-        
-        // 检查缓存是否有效
-        if (!forceRefresh && 
-            this.cachedPromptValue !== null &&
-            this.cachedPromptKey === cacheKey &&
-            (now - this.lastGeneratedAt) < PromptAssembler.CACHE_TTL) {
-            return this.cachedPromptValue
-        }
-        
-        // 生成新的提示词
-        this.cachedPromptValue = this.generatePrompt(modeSnapshot, runtime)
-        this.cachedPromptKey = cacheKey
-        this.lastGeneratedAt = now
-        
-        return this.cachedPromptValue
+        const key = this.renderer.usesPromptEntries(resolvedMode)
+            ? this.buildEntriesStaticCacheKey(resolvedMode, runtime)
+            : this.buildPromptCacheKey(resolvedMode, runtime)
+        // 动态条目继续使用本轮宿主；共享缓存仅保存已完整标识输入的静态结果。
+        return key === null ? this.generatePrompt(resolvedMode, runtime)
+            : this.staticCache.read(key, () => this.generatePrompt(resolvedMode, runtime), forceRefresh)
     }
     
     /**
