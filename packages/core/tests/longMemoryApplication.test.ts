@@ -133,13 +133,15 @@ describe('长期记忆沿聊天、工具和请求视图接入',()=>{
     let iteration=0;generate=async()=>++iteration<3?{role:'model',parts:[{functionCall:{id:'boundary-'+iteration,name:'memory_boundary_fixture',args:{step:iteration}}}]}:{role:'model',parts:[{text:'完成。'}]};
     await run('memory-chat','部署端口是什么？');expect(seen).toHaveLength(3);
     const memory=(input:ModelInput)=>input.messages.find(message=>message.memoryContext)?.parts[0].text;
-    expect(memory(seen[0])).toContain('4300');expect(memory(seen[1])).toBe(memory(seen[0]));expect(memory(seen[2])).toBe(memory(seen[0]));
+    expect(memory(seen[0])).toContain('部署端口为 4300。');expect(memory(seen[1])).toBe(memory(seen[0]));expect(memory(seen[2])).toBe(memory(seen[0]));
     expect(recalls).toHaveBeenCalledTimes(1);
     await run('memory-chat','再次确认部署端口。');
     const latest=seen.at(-1)!,blocks=latest.messages.filter(message=>message.memoryContext);
     expect(blocks).toHaveLength(2);
     expect(blocks[0]).toEqual(seen[0].messages.find(message=>message.memoryContext));
-    expect(blocks[1].parts[0].text).toContain('4400');expect(blocks[1].parts[0].text).not.toContain('4300');
+    // 请求正文也含随机记录 ID 和时间，不能把其中偶然出现的端口数字当成旧记忆。
+    expect(blocks[1].parts[0].text).toContain('部署端口为 4400。');
+    expect(blocks[1].parts[0].text).not.toContain('部署端口为 4300。');
     for(const block of blocks){
       const next=latest.messages[latest.messages.indexOf(block)+1];
       expect(next.isUserInput).toBe(true);expect(block.id).toBe('long-memory:'+next.id);
