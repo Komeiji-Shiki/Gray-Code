@@ -11,6 +11,7 @@ import { shellText as t, setShellLanguage } from './i18n';
 import { applyAppearanceVariables } from '../../../shared/appearanceTokens';
 const { navigate, newConversation, selectWorkspace } = useConversationNavigation(finishNavigation);
 import { readWorkspacePanelMessage } from '../../../shared/workspacePanelNavigation';
+import { useFrameValue } from './useFrameValue';
 import Workbench from './components/Workbench.vue';
 import ErrorBanner from './components/ErrorBanner.vue';
 import ContentPreview from './components/ContentPreview.vue';
@@ -294,37 +295,63 @@ watch(
       state.panelMenuOpen;
   },
 );
+const splitResizeFrame = useFrameValue(clientX => {
+  if (!container.value) return;
+  const bounds = container.value.getBoundingClientRect();
+  split.value = Math.max(25, Math.min(75, ((clientX - bounds.left) / bounds.width) * 100));
+});
+const sidebarResizeFrame = useFrameValue(clientX => {
+  if (!navigation.value) return;
+  sidebarWidth.value = Math.max(200, Math.min(sidebarMaximum.value, clientX - navigation.value.getBoundingClientRect().left));
+});
 function dragSplit(event: PointerEvent) {
   if (event.button !== 0) return;
   const target = event.currentTarget as HTMLElement;
+  splitResizeFrame.cancel();
   target.setPointerCapture(event.pointerId);
   resizing.value = true;
   state.panelResizing = true;
 }
 function moveSplit(event: PointerEvent) {
-  if (!resizing.value || !container.value) return;
-  const bounds = container.value.getBoundingClientRect();
-  split.value = Math.max(25, Math.min(75, ((event.clientX - bounds.left) / bounds.width) * 100));
+  if (resizing.value) splitResizeFrame.schedule(event.clientX);
 }
-function endSplit() {
+function endSplit(event?: PointerEvent) {
+  if (event && !resizing.value) return;
+  if (resizing.value) {
+    if (event) splitResizeFrame.flush(event.type === 'pointerup' ? event.clientX : undefined);
+    else splitResizeFrame.cancel();
+  }
   resizing.value = false;
   state.panelResizing = false;
+  const target = event?.currentTarget as HTMLElement | undefined;
+  if (event && target?.hasPointerCapture(event.pointerId)) target.releasePointerCapture(event.pointerId);
   localStorage.setItem('graycode.chatWidth', String(split.value));
+}
+function resetSplit() {
+  splitResizeFrame.cancel();
+  resizing.value = false;
+  split.value = 48;
+  endSplit();
 }
 function dragSidebar(event: PointerEvent) {
   if (event.button !== 0) return;
+  sidebarResizeFrame.cancel();
   (event.currentTarget as HTMLElement).setPointerCapture(event.pointerId);
   sidebarResizing.value = true;
   state.panelResizing = true;
 }
 function moveSidebar(event: PointerEvent) {
-  if (!sidebarResizing.value || !navigation.value) return;
-  sidebarWidth.value = Math.max(200, Math.min(sidebarMaximum.value, event.clientX - navigation.value.getBoundingClientRect().left));
+  if (sidebarResizing.value) sidebarResizeFrame.schedule(event.clientX);
 }
 function endSidebar(event?: PointerEvent) {
+  if (event && !sidebarResizing.value) return;
+  if (sidebarResizing.value) {
+    if (event) sidebarResizeFrame.flush(event.type === 'pointerup' ? event.clientX : undefined);
+    else sidebarResizeFrame.cancel();
+  }
+  sidebarResizing.value = false;
   const target = event?.currentTarget as HTMLElement | undefined;
   if (event && target?.hasPointerCapture(event.pointerId)) target.releasePointerCapture(event.pointerId);
-  sidebarResizing.value = false;
   state.panelResizing = false;
   sidebarWidth.value = visibleSidebarWidth.value;
   localStorage.setItem('graycode.sidebarWidth', String(sidebarWidth.value));
@@ -643,6 +670,7 @@ onUnmounted(() => {
           @pointerup="endSplit"
           @pointercancel="endSplit"
           @lostpointercapture="endSplit"
+          @dblclick="resetSplit"
           @keydown.left.prevent="
             split = Math.max(25, split - 2);
             endSplit();

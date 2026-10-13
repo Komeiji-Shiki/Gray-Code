@@ -97,7 +97,7 @@
   background: var(--gc-surface-hover);
 }
 
-/* 内联徽章样式：浅蓝色背景（使用 :deep 以应用到动态创建的元素） */
+/* 内联徽章跟随主题强调色；:deep 用于编辑器动态创建的节点。 */
 .input-editor :deep(.context-chip) {
   display: inline-flex;
   align-items: center;
@@ -109,8 +109,8 @@
   margin: 0 2px;
   border-radius: var(--gc-radius-sm);
 
-  background: rgba(0, 122, 204, 0.16);
-  border: 1px solid rgba(0, 122, 204, 0.28);
+  background: color-mix(in srgb, var(--gc-accent) 16%, transparent);
+  border: 1px solid color-mix(in srgb, var(--gc-accent) 28%, transparent);
   color: var(--gc-text-primary);
 
   user-select: none;
@@ -119,8 +119,8 @@
 }
 
 .input-editor :deep(.context-chip:hover) {
-  background: rgba(0, 122, 204, 0.24);
-  border-color: rgba(0, 122, 204, 0.4);
+  background: color-mix(in srgb, var(--gc-accent) 24%, transparent);
+  border-color: color-mix(in srgb, var(--gc-accent) 40%, transparent);
 }
 
 .input-editor :deep(.context-chip .codicon),
@@ -182,12 +182,12 @@
 
 .scroll-thumb {
   position: absolute;
+  top: 0;
   left: 0;
   width: 100%;
   border-radius: var(--gc-radius-pill);
   cursor: grab;
-  transition: background 0.18s ease, top 0.06s linear;
-  will-change: top;
+  transition: background var(--gc-duration-fast) var(--gc-ease-standard), transform 0.06s linear;
   background: var(--gc-scrollbar);
 }
 
@@ -198,6 +198,9 @@
 .scroll-thumb:active {
   cursor: grabbing;
   background: var(--gc-scrollbar-hover);
+  /* 拖动时位置立即跟随，结束后释放合成提示。 */
+  transition: background var(--gc-duration-fast) var(--gc-ease-standard);
+  will-change: transform;
 }
 
 .char-count {

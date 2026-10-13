@@ -12,6 +12,7 @@ import FileTree from './FileTree.vue';
 import { useWorkbenchDocuments, workbenchDocumentKey } from '../useWorkbenchDocuments';
 import type { WorkbenchDocumentModels } from '../workbenchModels';
 import { useNavigationIntent } from '../navigationIntent';
+import { useFrameValue } from '../useFrameValue';
 import GitPanel from './GitPanel.vue';
 import ProblemsPanel from './ProblemsPanel.vue';
 import SearchPanel from './SearchPanel.vue';
@@ -68,21 +69,38 @@ const panel = ref<HTMLElement>();
 const markdownPreview = ref(true);
 const markdown = new MarkdownIt({ html: false, linkify: true });
 const renderedMarkdown = computed(() => markdown.render(active.value?.text ?? ''));
+const treeResizeFrame = useFrameValue(clientX => {
+  if (!panel.value) return;
+  const rect = panel.value.getBoundingClientRect();
+  treeWidth.value = Math.max(140, Math.min(450, rect.width - 220, clientX - rect.left));
+});
 function startTreeResize(event: PointerEvent) {
   if (event.button !== 0) return;
+  treeResizeFrame.cancel();
   (event.currentTarget as HTMLElement).setPointerCapture(event.pointerId);
   treeResizing.value = true;
   state.panelResizing = true;
 }
 function moveTreeResize(event: PointerEvent) {
-  if (!treeResizing.value || !panel.value) return;
-  const rect = panel.value.getBoundingClientRect();
-  treeWidth.value = Math.max(140, Math.min(450, rect.width - 220, event.clientX - rect.left));
+  if (treeResizing.value) treeResizeFrame.schedule(event.clientX);
 }
-function endTreeResize() {
+function endTreeResize(event?: PointerEvent) {
+  if (event && !treeResizing.value) return;
+  if (treeResizing.value) {
+    if (event) treeResizeFrame.flush(event.type === 'pointerup' ? event.clientX : undefined);
+    else treeResizeFrame.cancel();
+  }
   treeResizing.value = false;
   state.panelResizing = false;
+  const target = event?.currentTarget as HTMLElement | undefined;
+  if (event && target?.hasPointerCapture(event.pointerId)) target.releasePointerCapture(event.pointerId);
   localStorage.setItem('graycode.fileTreeWidth', String(treeWidth.value));
+}
+function resetTreeWidth() {
+  treeResizeFrame.cancel();
+  treeResizing.value = false;
+  treeWidth.value = 220;
+  endTreeResize();
 }
 watch(treeVisible, (value) => localStorage.setItem('graycode.fileTreeVisible', String(value)));
 watch(pane, (value) => {
@@ -540,6 +558,7 @@ onUnmounted(() => {
       @pointerup="endTreeResize"
       @pointercancel="endTreeResize"
       @lostpointercapture="endTreeResize"
+      @dblclick="resetTreeWidth"
       @keydown.left.prevent="
         treeWidth = Math.max(140, treeWidth - 10);
         endTreeResize();

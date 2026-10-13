@@ -233,7 +233,7 @@ export function useEditorGeometry(editorRef: Ref<HTMLDivElement | undefined>, pr
 
   const thumbStyle = computed(() => ({
     height: `${thumbHeight.value}px`,
-    top: `${thumbTop.value}px`
+    transform: `translateY(${thumbTop.value}px)`
   }))
   return { currentRows, manualEditorHeight, thumbHeight, thumbTop, showScrollbar, ensureCaretVisible, adjustHeight, handleEditorResizeMouseDown, handleEditorResizeMouseMove, handleEditorResizeMouseUp, resetEditorHeight, handleEditorResizeKeydown, updateScrollbar, handleScroll, handleThumbMouseDown, handleMouseMove, handleMouseUp, thumbStyle }
 }

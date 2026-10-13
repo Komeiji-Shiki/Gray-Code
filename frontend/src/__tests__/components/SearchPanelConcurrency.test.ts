@@ -18,6 +18,7 @@ const rpc = async (method: string, params: any) => {
 };
 beforeEach(() => {
   mocks.call.mockReset().mockImplementation(rpc);
+  vi.stubGlobal('ResizeObserver', class { observe() {} disconnect() {} });
   let id = 0; vi.stubGlobal('crypto', { randomUUID: () => 'query-' + (++id) });
 });
 afterEach(() => { wrappers.splice(0).forEach(wrapper => wrapper.unmount()); vi.unstubAllGlobals(); });
@@ -34,6 +35,33 @@ async function searched(value: ReturnType<typeof panel>) {
   await value.wrapper.get('input[aria-label="替换内容"]').setValue('replacement');
   await value.wrapper.get('form').trigger('submit'); await flushPromises();
 }
+
+test('搜索窗口只挂载附近命中，滚动定位保留原 range，屏幕外勾选仍参与替换', async () => {
+  const files = Array.from({ length: 50 }, (_, index) => ({
+    ...result().files[0], path: `f${index}.txt`,
+    matches: [{ ...result().files[0].matches[0], range: {
+      start: { line: index, character: 0 }, end: { line: index, character: 6 },
+    } }],
+  }));
+  mocks.call.mockImplementation((method, params) => method === 'files.search'
+    ? Promise.resolve({ ...result(), count: 50, files }) : rpc(method, params));
+  const value = panel();
+  await searched(value);
+  expect(value.wrapper.findAll('.search-match').length).toBeLessThan(50);
+  await value.wrapper.get('input[aria-label="选择替换 f0.txt"]').setValue(false);
+  await value.wrapper.findAll('.search-file-toggle')[0].trigger('click');
+  expect(value.wrapper.find('.search-match[title="f0.txt:1:1"]').exists()).toBe(false);
+
+  const viewport = value.wrapper.get('.search-results');
+  (viewport.element as HTMLElement).scrollTop = 32 * 70;
+  await viewport.trigger('scroll');
+  await value.wrapper.findAll('.search-match')[0].trigger('click');
+  expect(value.wrapper.emitted('open')?.[0]).toEqual(['f31.txt', files[31].matches[0].range, 'first']);
+  await value.replaceButton().trigger('click');
+  await flushPromises();
+  const preview = mocks.call.mock.calls.find(([method]) => method === 'files.replacePreview')!;
+  expect(preview[1].files.map((file: { path: string }) => file.path)).toEqual(files.slice(1).map(file => file.path));
+});
 
 test('替换固定点击时的查询、替换文本与勾选文件，等待同步时的输入不会改变操作', async () => {
   const value = panel(); await searched(value);

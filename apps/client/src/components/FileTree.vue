@@ -45,7 +45,8 @@ const nodes = computed(() => {
 });
 // 固定行高只渲染视口附近的目录项，展开状态和选择状态仍属于完整文件树。
 const startRow = computed(() => Math.max(0, Math.floor(scrollTop.value / rowHeight.value) - 8));
-const visibleNodes = computed(() => nodes.value.slice(startRow.value, Math.ceil((scrollTop.value + viewportHeight.value) / rowHeight.value) + 8));
+const visibleRowCount = computed(() => Math.ceil(viewportHeight.value / rowHeight.value) + 17);
+const visibleNodes = computed(() => nodes.value.slice(startRow.value, startRow.value + visibleRowCount.value));
 function measure() {
   rowHeight.value = compactScreen.matches ? 38 : 28;
   viewportHeight.value = viewport.value?.clientHeight ?? 0;
@@ -56,28 +57,45 @@ onMounted(() => {
   if (viewport.value) resizeObserver.observe(viewport.value);
   compactScreen.addEventListener('change', measure);
 });
-async function load(directory = '.') {
+async function loadDirectories(directories: string[]) {
   const workspaceId = state.workspaceId;
   const epoch = treeEpoch;
   if (!workspaceId) return;
-  const version = (loadVersions.get(directory) ?? 0) + 1;
-  loadVersions.set(directory, version);
-  try {
-    const entries = await call('files.list', { workspaceId, path: directory });
-    if (epoch === treeEpoch && workspaceId === state.workspaceId && loadVersions.get(directory) === version) {
-      children.value[directory] = entries;
-      return true;
+  const replies = await Promise.all(directories.map(async directory => {
+    const version = (loadVersions.get(directory) ?? 0) + 1;
+    loadVersions.set(directory, version);
+    try {
+      return { directory, version, entries: await call('files.list', { workspaceId, path: directory }) };
+    } catch (error) {
+      return { directory, version, error };
     }
-  } catch (error) {
-    if (epoch !== treeEpoch || workspaceId !== state.workspaceId || loadVersions.get(directory) !== version) return;
-    if (directory !== '.') {
-      expanded.value.delete(directory);
-      delete children.value[directory];
-    } else throw error;
+  }));
+  if (epoch !== treeEpoch || workspaceId !== state.workspaceId) return;
+  const next = { ...children.value };
+  const failures: unknown[] = [];
+  let applied = false;
+  // 整批返回后只发布一次树状态；逐目录版本仍阻止旧读取覆盖较新的展开或刷新。
+  for (const reply of replies) {
+    if (loadVersions.get(reply.directory) !== reply.version) continue;
+    if ('error' in reply) {
+      if (reply.directory === '.') failures.push(reply.error);
+      else {
+        expanded.value.delete(reply.directory);
+        delete next[reply.directory];
+        applied = true;
+      }
+    } else {
+      next[reply.directory] = reply.entries;
+      applied = true;
+    }
   }
+  if (applied) children.value = next;
+  if (failures.length) throw failures[0];
+  return applied;
 }
+const load = (directory = '.') => loadDirectories([directory]);
 async function refresh() {
-  await Promise.all([...expanded.value].map((directory) => load(directory)));
+  await loadDirectories([...expanded.value]);
 }
 const parentDirectory = (path: string) => path.split('/').slice(0, -1).join('/') || '.';
 function scheduleRefresh(directories: Iterable<string>) {
@@ -87,7 +105,7 @@ function scheduleRefresh(directories: Iterable<string>) {
     const pending = [...refreshDirectories];
     refreshDirectories.clear();
     try {
-      await guard(() => Promise.all(pending.map((directory) => load(directory))));
+      await guard(() => loadDirectories(pending));
     } finally {
       refreshTimer = undefined;
       scheduleRefresh([]);

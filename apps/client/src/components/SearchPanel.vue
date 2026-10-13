@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { shellText as t } from '../i18n';
-import { computed, onUnmounted, reactive, ref, watch } from 'vue';
+import { computed, nextTick, onMounted, onUnmounted, reactive, ref, watch } from 'vue';
 import type { ProjectReplacement, ProjectSearchQuery, ProjectSearchResult, SourceRange } from '@graycode/contracts';
 import type { EditBatchHandle } from '../../../../shared/editorBatchHistory';
 import { call } from '../api';
@@ -18,13 +18,77 @@ const busy = ref(false);
 const notice = ref('');
 const error = ref('');
 const result = ref<ProjectSearchResult>();
-const selected = ref<string[]>([]);
+const selected = ref(new Set<string>());
+const collapsedFiles = ref(new Set<string>());
+const skippedExpanded = ref(false);
 const searched = ref('');
 let requestId: string | undefined;
 let generation = 0;
 let lastBatch: EditBatchHandle | undefined;
 const batchAvailable = ref(false);
 const stale = computed(() => searched.value !== JSON.stringify(options));
+type SearchFile = ProjectSearchResult['files'][number];
+type SearchRow = { kind: 'file'; key: string; file: SearchFile }
+  | { kind: 'match'; key: string; file: SearchFile; match: SearchFile['matches'][number] };
+const rowHeight = 32;
+const viewport = ref<HTMLElement>();
+const resultList = ref<HTMLElement>();
+const viewportHeight = ref(0);
+const listOffset = ref(0);
+const scrollTop = ref(0);
+let resizeObserver: ResizeObserver | undefined;
+// 路径和命中预览都是单行；折叠与勾选保存完整状态，DOM 只挂载视口附近的行。
+const rows = computed<SearchRow[]>(() => {
+  const values: SearchRow[] = [];
+  for (const file of result.value?.files ?? []) {
+    values.push({ kind: 'file', key: `${file.path}:file`, file });
+    if (!collapsedFiles.value.has(file.path)) {
+      file.matches.forEach((match, index) => values.push({ kind: 'match', key: `${file.path}:match:${index}`, file, match }));
+    }
+  }
+  return values;
+});
+const startRow = computed(() => Math.max(0, Math.floor(Math.max(0, scrollTop.value - listOffset.value) / rowHeight) - 8));
+const rowCount = computed(() => Math.ceil(viewportHeight.value / rowHeight) + 17);
+const visibleRows = computed(() => rows.value.slice(startRow.value, startRow.value + rowCount.value));
+function measureResults() {
+  viewportHeight.value = viewport.value?.clientHeight ?? 0;
+  listOffset.value = resultList.value?.offsetTop ?? 0;
+}
+function toggleFile(path: string) {
+  if (collapsedFiles.value.has(path)) collapsedFiles.value.delete(path);
+  else collapsedFiles.value.add(path);
+}
+async function navigateResults(event: KeyboardEvent, index: number) {
+  if (!['ArrowUp', 'ArrowDown', 'Home', 'End'].includes(event.key) || !viewport.value) return;
+  event.preventDefault();
+  const next = event.key === 'Home' ? 0 : event.key === 'End' ? rows.value.length - 1
+    : index + (event.key === 'ArrowUp' ? -1 : 1);
+  const row = rows.value[next];
+  if (!row) return;
+  const top = listOffset.value + next * rowHeight;
+  if (top < scrollTop.value) viewport.value.scrollTop = top;
+  else if (top + rowHeight > scrollTop.value + viewportHeight.value) {
+    viewport.value.scrollTop = top + rowHeight - viewportHeight.value;
+  }
+  scrollTop.value = viewport.value.scrollTop;
+  await nextTick();
+  const target = [...(resultList.value?.querySelectorAll<HTMLElement>('[data-search-row]') ?? [])]
+    .find(element => element.dataset.searchRow === row.key);
+  (target?.matches('button') ? target : target?.querySelector<HTMLElement>('.search-file-toggle'))?.focus();
+}
+onMounted(() => {
+  resizeObserver = new ResizeObserver(measureResults);
+  if (viewport.value) resizeObserver.observe(viewport.value);
+  measureResults();
+});
+watch([() => rows.value.length, stale], () => { void nextTick(measureResults); });
+watch(result, () => {
+  collapsedFiles.value = new Set();
+  skippedExpanded.value = false;
+  scrollTop.value = 0;
+  if (viewport.value) viewport.value.scrollTop = 0;
+});
 function cancel() {
   generation++;
   busy.value = false;
@@ -51,7 +115,7 @@ async function search() {
     const value = await call<ProjectSearchResult>('files.search', { workspaceId, requestId, options: query });
     if (current !== generation) return;
     result.value = value;
-    selected.value = value.files.map((file) => file.path);
+    selected.value = new Set(value.files.map((file) => file.path));
     searched.value = JSON.stringify(query);
   } catch (cause) {
     if (current === generation) error.value = String(cause);
@@ -71,7 +135,7 @@ async function replace() {
     workspaceId,
     options: structuredClone({ ...options }),
     replacement: replacement.value,
-    files: result.value.files.filter((file) => selected.value.includes(file.path)).map(({ path, hash }) => ({ path, hash })),
+    files: result.value.files.filter((file) => selected.value.has(file.path)).map(({ path, hash }) => ({ path, hash })),
   };
   busy.value = true;
   error.value = '';
@@ -134,7 +198,7 @@ watch(
     error.value = '';
   },
 );
-onUnmounted(cancel);
+onUnmounted(() => { cancel(); resizeObserver?.disconnect(); });
 </script>
 <template>
   <section class="search-panel">
@@ -174,7 +238,7 @@ onUnmounted(cancel);
           :aria-label="t('uiSearchPanelReplacementText')"
           :placeholder="options.regex ? t('uiSearchPanelReplacementCaptureHelp') : t('uiSearchPanelReplacementPlaceholder')"
         />
-        <button type="button" :disabled="busy || stale || !selected.length || !result || result.truncated" @click="replace">
+        <button type="button" :disabled="busy || stale || !selected.size || !result || result.truncated" @click="replace">
           {{ t('uiSearchPanelReplaceSelectedFiles') }}
         </button>
       </div>
@@ -187,43 +251,46 @@ onUnmounted(cancel);
       <button :disabled="busy" @click="batch(false)">{{ t('uiSearchPanelRedoReplacement') }}</button>
       <button :disabled="busy" @click="save">{{ t('uiGitPanelSaveAll') }}</button>
     </div>
-    <div class="search-results">
+    <div ref="viewport" class="search-results" :style="{ '--gc-search-row-height': rowHeight + 'px' }"
+      @scroll="scrollTop = ($event.currentTarget as HTMLElement).scrollTop">
       <template v-if="result">
         <p class="search-notice">
           {{ result.count }} {{ t('uiSearchPanelMatchCountSuffix') }}{{ result.files.length }} {{ t('uiSearchPanelFileCountSuffix') }}
           <span v-if="stale">{{ t('uiSearchPanelSearchConditionsChanged') }}</span>
         </p>
         <p v-if="result.truncated" class="search-notice">{{ t('uiSearchPanelSearchLimitReached') }}</p>
-        <details v-for="file in result.files" :key="file.path" open class="search-file">
-          <summary>
-            <input
-              v-if="replacing"
-              v-model="selected"
-              type="checkbox"
-              :value="file.path"
-              :aria-label="t('uiSearchPanelSelectReplacementPrefix') + file.path"
-              @click.stop
-            />
-            <span>{{ file.path }}</span>
-            <small>
-              {{ file.matches.length }}
-              <span v-if="file.draft">{{ t('uiSearchPanelUnsavedSuffix') }}</span>
-            </small>
-          </summary>
-          <button
-            v-for="(match, index) in file.matches"
-            :key="index"
-            class="search-match"
-            :title="`${file.path}:${match.range.start.line + 1}:${match.range.start.character + 1}`"
-            @click="emit('open', file.path, match.range, workspaceId)"
-          >
-            <span>{{ match.range.start.line + 1 }}</span>
-            <code>{{ match.preview }}</code>
-          </button>
-        </details>
-        <details v-if="result.skipped.length" class="search-skipped">
+        <div ref="resultList" class="search-result-list" :style="{ height: rows.length * rowHeight + 'px' }">
+          <div class="search-visible-rows" :style="{ transform: `translateY(${startRow * rowHeight}px)` }">
+            <template v-for="(row, index) in visibleRows" :key="row.key">
+              <div v-if="row.kind === 'file'" class="search-file" :data-search-row="row.key"
+                @keydown="navigateResults($event, startRow + index)">
+                <input v-if="replacing" v-model="selected" type="checkbox" :value="row.file.path"
+                  :aria-label="t('uiSearchPanelSelectReplacementPrefix') + row.file.path" />
+                <button type="button" class="search-file-toggle" :aria-expanded="!collapsedFiles.has(row.file.path)"
+                  @click="toggleFile(row.file.path)">
+                  <span aria-hidden="true">{{ collapsedFiles.has(row.file.path) ? '›' : '⌄' }}</span>
+                  <span class="search-file-path">{{ row.file.path }}</span>
+                  <small>{{ row.file.matches.length }}
+                    <span v-if="row.file.draft">{{ t('uiSearchPanelUnsavedSuffix') }}</span>
+                  </small>
+                </button>
+              </div>
+              <button v-else type="button" class="search-match" :data-search-row="row.key"
+                :title="`${row.file.path}:${row.match.range.start.line + 1}:${row.match.range.start.character + 1}`"
+                @keydown="navigateResults($event, startRow + index)"
+                @click="emit('open', row.file.path, row.match.range, workspaceId)">
+                <span>{{ row.match.range.start.line + 1 }}</span>
+                <code>{{ row.match.preview }}</code>
+              </button>
+            </template>
+          </div>
+        </div>
+        <details v-if="result.skipped.length" class="search-skipped" :open="skippedExpanded"
+          @toggle="skippedExpanded = ($event.target as HTMLDetailsElement).open">
           <summary>{{ result.skipped.length }} {{ t('uiSearchPanelUnsearchableFilesCount') }}</summary>
-          <p v-for="file in result.skipped" :key="file.path">{{ file.path }} · {{ file.reason }}</p>
+          <template v-if="skippedExpanded">
+            <p v-for="file in result.skipped" :key="file.path">{{ file.path }} · {{ file.reason }}</p>
+          </template>
         </details>
       </template>
       <p v-else-if="!busy && !notice" class="search-notice">{{ t('uiSearchPanelSearchHelp') }}</p>
@@ -320,22 +387,32 @@ input:not([type='checkbox']) {
   flex-wrap: wrap;
 }
 .search-results {
+  position: relative;
   flex: 1;
   min-height: 0;
   overflow: auto;
 }
 .search-file {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: var(--gc-search-row-height);
+  padding: 0 14px;
   border-bottom: 1px solid var(--gc-border-subtle);
 }
-.search-file summary {
+.search-file-toggle {
   display: flex;
+  flex: 1;
+  min-width: 0;
+  height: 100%;
   gap: 6px;
   align-items: center;
-  padding: 9px 14px;
+  padding: 0;
+  border: 0;
   cursor: pointer;
   font-size: 12px;
 }
-.search-file summary > span {
+.search-file-path {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -346,6 +423,7 @@ input:not([type='checkbox']) {
   margin-left: auto;
 }
 .search-match {
+  height: var(--gc-search-row-height);
   display: flex;
   width: 100%;
   text-align: left;
@@ -354,6 +432,8 @@ input:not([type='checkbox']) {
   gap: 10px;
   overflow: hidden;
 }
+.search-result-list { position: relative; }
+.search-visible-rows { position: absolute; inset: 0 0 auto; }
 .search-match > span {
   min-width: 30px;
   color: var(--gc-text-muted);

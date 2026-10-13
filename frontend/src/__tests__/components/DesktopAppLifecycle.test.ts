@@ -1,6 +1,6 @@
 import { shallowMount, flushPromises } from '@vue/test-utils';
 import { afterEach, beforeEach, expect, test, vi } from 'vitest';
-import { ref } from 'vue';
+import { nextTick, ref } from 'vue';
 import App from '../../../../apps/client/src/App.vue';
 import { state } from '../../../../apps/client/src/state';
 
@@ -34,6 +34,41 @@ beforeEach(() => {
   mocks.initialize.mockImplementation(async () => { state.ready = true; mocks.listener?.({ type: 'ui.ready' }); });
 });
 afterEach(() => { wrapper?.unmount(); wrapper = undefined; localStorage.clear(); vi.unstubAllGlobals(); });
+
+test('主分栏合并帧内坐标，抬起时应用最后位置，双击恢复默认宽度', async () => {
+  const frames = new Map<number, FrameRequestCallback>();
+  let frameId = 0;
+  vi.stubGlobal('requestAnimationFrame', (callback: FrameRequestCallback) => {
+    frames.set(++frameId, callback);
+    return frameId;
+  });
+  vi.stubGlobal('cancelAnimationFrame', (id: number) => { frames.delete(id); });
+  wrapper = shallowMount(App);
+  await flushPromises();
+  const area = wrapper.get('.desktop-workspace');
+  const splitter = wrapper.get('.split-handle');
+  Object.defineProperty(area.element, 'getBoundingClientRect', { value: () => ({ left: 0, width: 1000 }) });
+  Object.defineProperties(splitter.element, {
+    setPointerCapture: { value: vi.fn() }, hasPointerCapture: { value: () => false },
+  });
+  async function pointer(type: string, clientX: number) {
+    const event = new MouseEvent(type, { bubbles: true, button: 0, clientX });
+    Object.defineProperty(event, 'pointerId', { value: 1 });
+    splitter.element.dispatchEvent(event);
+    await nextTick();
+  }
+  frames.clear();
+  await pointer('pointerdown', 480);
+  await pointer('pointermove', 570);
+  await pointer('pointermove', 590);
+  expect(frames.size).toBe(1);
+  expect((area.element as HTMLElement).style.getPropertyValue('--gc-chat-width')).toBe('48%');
+  await pointer('pointerup', 620);
+  expect(frames.size).toBe(0);
+  expect(localStorage.getItem('graycode.chatWidth')).toBe('62');
+  await splitter.trigger('dblclick');
+  expect(localStorage.getItem('graycode.chatWidth')).toBe('48');
+});
 
 test('初始化期间发出的聊天就绪事件仍可解除侧栏禁用', async () => {
   wrapper = shallowMount(App); await flushPromises();
