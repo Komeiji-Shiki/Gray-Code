@@ -1,6 +1,6 @@
-import type { Ref } from 'vue'
+import { toRaw, type Ref } from 'vue'
 import type { SubAgentRunEvent, SubAgentRunContentWindow, SubAgentRunManifest } from './monitorTypes'
-import { applyStreamChunkToContents } from '@/stores/agentRun/contentDelta'
+import { applyStreamUpdatesToContents } from '@/stores/agentRun/contentDelta'
 import { appendMonitorFloorIndices } from './monitorMessages'
 import { isRunWindowTailAuthoritative } from './monitorWindowState'
 import { DEFAULT_MONITOR_LIVE_DELTA_BUFFER_LIMIT, enqueueMonitorLiveDelta, getMonitorLiveDeltaRevision, getMonitorLiveDeltaSequence, hasRenderableMonitorLiveDelta, selectReplayableMonitorLiveDeltas, type MonitorLiveDeltaEvent } from './monitorLiveDeltaBuffer'
@@ -44,32 +44,47 @@ export function createMonitorLiveReplay(windowsByRunId: Ref<Record<string, SubAg
     contentWindow: SubAgentRunContentWindow,
     manifest?: MonitorLiveDeltaFreshness
   ): SubAgentRunContentWindow | undefined {
-    if (!event.runId || !hasRenderableMonitorLiveDelta(event)) return contentWindow
-    const eventRevision = getMonitorLiveDeltaRevision(event)
+    const result = applyLiveDeltaBatch([event], contentWindow, manifest)
+    return result.blocked.length ? undefined : result.window
+  }
+
+  function applyLiveDeltaBatch<T extends MonitorLiveDeltaEvent>(
+    events: readonly T[],
+    contentWindow: SubAgentRunContentWindow,
+    manifest?: MonitorLiveDeltaFreshness
+  ): { window: SubAgentRunContentWindow; blocked: T[] } {
     const windowRevision = typeof contentWindow.contentRevision === 'number' ? contentWindow.contentRevision : 0
-    if (eventRevision < windowRevision) return contentWindow
-
-    const freshness = {
-      contentCount: manifest?.contentCount ?? contentWindow.totalCount,
-      contentRevision: eventRevision,
-      eventSequence: getMonitorLiveDeltaSequence(event) ?? manifest?.eventSequence ?? contentWindow.eventSequence
+    const accepted: T[] = []
+    const blocked: T[] = []
+    for (const event of events) {
+      if (!event.runId || !hasRenderableMonitorLiveDelta(event)) continue
+      const revision = getMonitorLiveDeltaRevision(event)
+      if (revision < windowRevision) continue
+      if (!isRunWindowTailAuthoritative(contentWindow, {
+        contentCount: manifest?.contentCount ?? contentWindow.totalCount,
+        contentRevision: revision,
+      })) blocked.push(event)
+      else accepted.push(event)
     }
-    if (!isRunWindowTailAuthoritative(contentWindow, freshness)) return undefined
+    if (!accepted.length) return { window: contentWindow, blocked }
 
-    // 修改原因：后端不再为每个 SubAgent llm_delta 附带完整 snapshot，否则大输出会造成 postMessage 与事件数组 O(n²) 膨胀。
-    // 修改方式：当事件仍携带轻量可渲染 delta 且窗口已确认是同 revision 尾部时，Monitor 前端用共享 Content[] delta reducer 本地更新已加载 run。
-    // 修改目的：兼容旧协议实时输出，同时新瘦身协议不会把大正文塞进 event。
-    const timestamp = event.timestamp || Date.now()
-    const nextContents = applyStreamChunkToContents(contentWindow.contents || [], event.payload, timestamp, contentWindow.startIndex || 0)
-    const sequence = getMonitorLiveDeltaSequence(event)
+    // 同一版本的片段合批后只复制一次尾消息，顺序、参数最终快照和 usage 仍逐事件应用。
+    const nextContents = applyStreamUpdatesToContents(toRaw(contentWindow.contents), accepted.map(event => ({
+      chunk: event.payload, timestamp: event.timestamp || Date.now(),
+    })), contentWindow.startIndex)
+    const sequence = accepted.reduce((latest, event) => Math.max(latest,
+      getMonitorLiveDeltaSequence(event) ?? manifest?.eventSequence ?? 0), contentWindow.eventSequence || 0)
     return {
-      ...contentWindow,
-      contents: nextContents,
-      floorIndices: appendMonitorFloorIndices(contentWindow, nextContents),
-      endIndex: Math.max(contentWindow.endIndex, contentWindow.startIndex + nextContents.length),
-      totalCount: Math.max(contentWindow.totalCount, contentWindow.startIndex + nextContents.length),
-      contentRevision: eventRevision,
-      eventSequence: Math.max(contentWindow.eventSequence || 0, sequence ?? manifest?.eventSequence ?? 0)
+      blocked,
+      window: {
+        ...contentWindow,
+        contents: nextContents,
+        floorIndices: appendMonitorFloorIndices(contentWindow, nextContents),
+        endIndex: Math.max(contentWindow.endIndex, contentWindow.startIndex + nextContents.length),
+        totalCount: Math.max(contentWindow.totalCount, contentWindow.startIndex + nextContents.length),
+        contentRevision: windowRevision,
+        eventSequence: sequence,
+      },
     }
   }
 
@@ -84,27 +99,15 @@ export function createMonitorLiveReplay(windowsByRunId: Ref<Record<string, SubAg
       return
     }
 
-    let workingWindow = currentWindow
-    const stillBlocked: MonitorLiveDeltaEvent[] = []
-    for (const event of replayable) {
-      const nextWindow = applyLiveDeltaToWindow(event, workingWindow, {
-        contentCount: workingWindow.totalCount,
-        eventSequence: getMonitorLiveDeltaSequence(event) ?? workingWindow.eventSequence
-      })
-      if (!nextWindow) {
-        stillBlocked.push(event)
-        continue
-      }
-      workingWindow = nextWindow
-    }
+    const result = applyLiveDeltaBatch(replayable, currentWindow, { contentCount: currentWindow.totalCount })
 
     windowsByRunId.value = {
       ...windowsByRunId.value,
-      [runId]: workingWindow
+      [runId]: result.window
     }
-    setLiveDeltaBuffer(runId, [...stillBlocked, ...remaining])
+    setLiveDeltaBuffer(runId, [...result.blocked, ...remaining])
   }
 
 
-  return { bufferLiveDeltaEvent, clearSupersededLiveDeltaBuffer, applyLiveDeltaToWindow, replayBufferedLiveDeltas }
+  return { bufferLiveDeltaEvent, clearSupersededLiveDeltaBuffer, applyLiveDeltaToWindow, applyLiveDeltaBatch, replayBufferedLiveDeltas }
 }

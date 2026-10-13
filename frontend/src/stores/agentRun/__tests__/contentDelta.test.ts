@@ -8,8 +8,19 @@
  * - delta 路径：尾部是非 model 楼层时新建 model 楼层（ensureLastModelContent）。
  */
 import { describe, expect } from 'vitest'
+import { reactive, toRaw } from 'vue'
 import type { Content } from '../../../types'
-import { applyStreamChunkToContents } from '../contentDelta'
+import { applyStreamChunkToContents, applyStreamUpdatesToContents, getStreamContentChangeStart } from '../contentDelta'
+
+test('响应式窗口与原始索引共享追加片段的变化边界', () => {
+  const before = reactive([makeModelContent(0), makeModelContent(1)])
+  const after = applyStreamChunkToContents(before, { delta: [{ text: ' a' }] })
+  const latest = applyStreamChunkToContents(reactive(after), { delta: [{ text: ' b' }] })
+  expect(getStreamContentChangeStart(toRaw(before), after)).toBe(1)
+  expect(getStreamContentChangeStart(after, latest)).toBe(1)
+  expect(latest[0]).toBe(toRaw(before)[0])
+  expect(latest[1].parts[0].text).toBe('model-1 a b')
+})
 
 function makeModelContent(index: number, text = `model-${index}`): Content {
   return {
@@ -43,6 +54,21 @@ function makeSnapshot(text: string, index?: number): Record<string, unknown> {
 }
 
 describe('applyStreamChunkToContents contentSnapshot', () => {
+  test('同批 delta、权威快照和后续delta按顺序合并，工具结果后的新楼层不覆盖旧回复', () => {
+    const contents = [makeModelContent(10, '已完成调用'), makeToolResultContent(11)]
+    const next = applyStreamUpdatesToContents(contents, [
+      { chunk: { delta: [{ text: '临时前缀' }] }, timestamp: 2000 },
+      { chunk: makeSnapshot('权威正文') as { contentSnapshot: Content }, timestamp: 2001 },
+      { chunk: { delta: [{ text: '，继续输出' }], usage: { candidatesTokenCount: 12 } }, timestamp: 2002 },
+    ], 10)
+    expect(next).toHaveLength(3)
+    expect(next[0]).toBe(contents[0])
+    expect(next[1]).toBe(contents[1])
+    expect(next[2]).toMatchObject({ index: 12, parts: [{ text: '权威正文，继续输出' }],
+      usageMetadata: { candidatesTokenCount: 12 } })
+    expect(contents[0].parts[0].text).toBe('已完成调用')
+  })
+
   test('尾部就是 model 消息时原位替换（结构校准）', () => {
     const contents: Content[] = [
       { role: 'user', parts: [{ text: 'task' }], index: 0, timestamp: 1000 } as Content,

@@ -1,43 +1,12 @@
-import { ref, watch, onBeforeUnmount, type Ref } from 'vue'
+import { ref, onBeforeUnmount, type Ref } from 'vue'
 import { useI18n } from '@/i18n'
 import { sendToExtension } from '@/utils/vscode'
 import type { MonitorRunStatus as RunStatus } from './monitorSoundCues'
 
-/** 控制回执与耗时计时器独立于历史窗口加载；操作始终保留发起时的 runId。 */
+/** 控制回执独立于历史窗口加载；操作始终保留发起时的 runId。 */
 export function useMonitorControls(focusedRun: Readonly<Ref<{ runId: string } | undefined>>, focusedRunIsActive: Readonly<Ref<boolean>>, activeRunIds: Ref<Set<string>>) {
   const { t } = useI18n()
   let disposed = false
-  const now = ref(Date.now())
-  let elapsedTicker: ReturnType<typeof setInterval> | undefined
-
-  function formatElapsed(startMs?: number, endMs?: number): string {
-    if (!startMs) return ''
-    const end = endMs ?? now.value
-    const seconds = Math.max(0, Math.floor((end - startMs) / 1000))
-    if (seconds < 60) return `${seconds}s`
-    const minutes = Math.floor(seconds / 60)
-    if (minutes < 60) return `${minutes}m${seconds % 60}s`
-    const hours = Math.floor(minutes / 60)
-    return `${hours}h${minutes % 60}m`
-  }
-
-  // 有活跃 run 时每秒刷新一次耗时显示（空闲时不跑 ticker，避免周期性开销）
-  watch(() => activeRunIds.value.size, (size) => {
-    if (size > 0 && !elapsedTicker) {
-      now.value = Date.now()
-      elapsedTicker = setInterval(() => { now.value = Date.now() }, 1000)
-    } else if (size === 0 && elapsedTicker) {
-      clearInterval(elapsedTicker)
-      elapsedTicker = undefined
-    }
-  }, { immediate: true })
-
-  function runElapsed(run: { createdAt: number; updatedAt: number; status: RunStatus }): string {
-    const isActive = run.status === 'queued' || run.status === 'running'
-      || run.status === 'paused' || run.status === 'awaiting_monitor_action'
-    return formatElapsed(run.createdAt, isActive ? undefined : run.updatedAt)
-  }
-
   const controlNotice = ref('')
   let controlNoticeTimer: ReturnType<typeof setTimeout> | undefined
 
@@ -96,6 +65,6 @@ export function useMonitorControls(focusedRun: Readonly<Ref<{ runId: string } | 
   }
 
 
-  onBeforeUnmount(() => { disposed = true; clearInterval(elapsedTicker); clearTimeout(controlNoticeTimer) })
-  return { formatElapsed, runElapsed, controlNotice, showControlNotice, pauseFocusedRun, resumeFocusedRun, exitFocusedRun }
+  onBeforeUnmount(() => { disposed = true; clearTimeout(controlNoticeTimer) })
+  return { controlNotice, showControlNotice, pauseFocusedRun, resumeFocusedRun, exitFocusedRun }
 }

@@ -48,7 +48,7 @@ function makeWindow(runId = 'a', startIndex = 40, endIndex = 60, totalCount = 60
     hasMoreBefore: startIndex > 0,
     hasMoreAfter: endIndex < totalCount,
     contents: Array.from({ length: endIndex - startIndex }, (_, offset) => ({
-      role: 'model', index: startIndex + offset, timestamp: startIndex + offset,
+      id: `${runId}-content-${startIndex + offset}`, role: 'model', index: startIndex + offset, timestamp: startIndex + offset,
       parts: [{ text: `${runId} message ${startIndex + offset}` }]
     } as Content))
   }
@@ -56,16 +56,17 @@ function makeWindow(runId = 'a', startIndex = 40, endIndex = 60, totalCount = 60
 
 const wrappers: VueWrapper[] = []
 
-async function mountMonitor(options: { height?: number; hasMore?: boolean } = {}) {
+async function mountMonitor(options: { height?: number; hasMore?: boolean; initialWindow?: SubAgentRunContentWindowState } = {}) {
   const pages: PendingPage[] = []
   const tails = new Map(['a', 'b'].map(runId => [runId, makeWindow(runId)]))
+  if (options.initialWindow) tails.set('a', options.initialWindow)
   if (options.hasMore === false) tails.get('a')!.hasMoreBefore = false
   bridge.send.mockImplementation((type: string, data: { runId: string; options: PendingPage['options'] & { fromTail?: boolean } }) => {
     if (type === MESSAGE_NAMES['subagents.monitorReady']) {
       return Promise.resolve({
         manifests: ['a', 'b'].map((runId, index) => ({
           runId, agentName: `Agent ${runId}`, status: 'completed', createdAt: 1000 + index,
-          updatedAt: 2000, contentCount: 60, eventCount: 0, contentRevision: 1,
+          updatedAt: 2000, contentCount: tails.get(runId)!.totalCount, eventCount: 0, contentRevision: 1,
           conversationId: `conversation-${runId}`
         })),
         focusRunId: 'a', activeRunIds: []
@@ -132,14 +133,72 @@ async function mountMonitor(options: { height?: number; hasMore?: boolean } = {}
 beforeEach(() => {
   vi.clearAllMocks()
   bridge.listener = undefined
+  // jsdom 没有 ResizeObserver；真实矩形仍由本文件的滚动夹具提供。
+  vi.stubGlobal('ResizeObserver', class {
+    observe() {}
+    unobserve() {}
+    disconnect() {}
+  })
 })
 afterEach(() => {
   for (const wrapper of wrappers.splice(0)) wrapper.unmount()
   vi.restoreAllMocks()
+  vi.unstubAllGlobals()
   document.body.innerHTML = ''
 })
 
 describe('SubAgentMonitor 历史上翻分页', () => {
+  test('历史删除导致索引重排时，阅读锚点仍定位到同一条持久消息', async () => {
+    const original = makeWindow('a', 0, 260, 260)
+    const view = await mountMonitor({ initialWindow: original })
+    view.scrollTo(5000)
+    const anchor = view.anchor()
+    const oldIndex = Number(anchor.id!.slice(2))
+    const corrected = { ...original, contents: original.contents.filter((_, index) => index !== 80)
+      .map((content, index) => ({ ...content, index })), endIndex: 259, totalCount: 259, contentRevision: 2 }
+    view.tails.set('a', corrected)
+    bridge.listener?.({ type: 'subagentMonitor.event', data: {
+      manifest: { runId: 'a', contentCount: 259, contentRevision: 2 },
+      event: { runId: 'a', type: 'content_snapshot', timestamp: 3000 }, activeRunIds: [],
+    } })
+    await flushPromises()
+    const retained = view.wrapper.get(`.message-item[data-message-id="a_${oldIndex - 1}"]`)
+    expect(retained.text()).toContain(`a message ${oldIndex}`)
+    expect(retained.element.getBoundingClientRect().top - 100).toBe(anchor.offset)
+    expect(view.wrapper.findAll('.message-item')).toHaveLength(200)
+  })
+
+  test('超过200条仍保留已加载历史，双向移动挂载窗口保留锚点并能直接返回最新', async () => {
+    const view = await mountMonitor({ initialWindow: makeWindow('a', 0, 260, 260) })
+    expect(view.wrapper.findAll('.message-item')).toHaveLength(200)
+    expect(view.wrapper.find('.message-item').attributes('data-message-id')).toBe('a_60')
+    view.scrollTo(200)
+    const firstAnchor = view.anchor()
+    await flushPromises()
+    expect(view.wrapper.findAll('.message-item')).toHaveLength(200)
+    expect(view.wrapper.find('.message-item').attributes('data-message-id')).toBe('a_20')
+    view.expectAnchor(firstAnchor)
+    expect(view.pages).toHaveLength(0)
+
+    view.scrollTo(200)
+    const earlierAnchor = view.anchor()
+    await flushPromises()
+    expect(view.wrapper.find('.message-item').attributes('data-message-id')).toBe('a_0')
+    expect(view.wrapper.find('.load-older-btn').exists()).toBe(false)
+    view.expectAnchor(earlierAnchor)
+    view.scrollTo(view.container.scrollHeight)
+    const newerAnchor = view.anchor()
+    await flushPromises()
+    expect(view.wrapper.find('.message-item').attributes('data-message-id')).toBe('a_40')
+    view.expectAnchor(newerAnchor)
+    expect(view.wrapper.findAll('.message-item')).toHaveLength(200)
+    await view.wrapper.get('.return-latest-btn').trigger('click')
+    await flushPromises()
+    expect(view.wrapper.find('.message-item').attributes('data-message-id')).toBe('a_60')
+    expect(view.wrapper.findAll('.message-item').at(-1)!.attributes('data-message-id')).toBe('a_259')
+    expect(view.pages).toHaveLength(0)
+  })
+
   test('上翻到入口附近自动取上一页；滚动、滚轮和按钮共享 inflight 去重', async () => {
     const view = await mountMonitor()
     expect(view.pages).toHaveLength(0)

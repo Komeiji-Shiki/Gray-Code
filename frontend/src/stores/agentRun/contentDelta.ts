@@ -11,6 +11,7 @@
  * 目的：Main Chat 和SubAgent Monitor 共享同一套functionCall 合并规则，后续WP20 统一 reducer 可直接依赖。
  */
 
+import { toRaw } from 'vue'
 import type { Content, ContentPart } from '../../types'
 // WP15: 统一 functionCall merge 纯函数入口。
 // 为什么从独立模块导入：消除与 streamHelpers.ts / parsers.ts 的三份重复。
@@ -128,72 +129,92 @@ export interface AgentRunStreamChunkLike {
   thinkingStartTime?: number
 }
 
-export function applyStreamChunkToContents(contents: Content[], chunk: AgentRunStreamChunkLike | undefined | null, timestamp: number = Date.now(), baseIndex: number = 0): Content[] {
-  // 修改原因：SubAgent Monitor 不能继续依赖每个 llm_delta 附带完整 snapshot，否则events 和contents 都会随输出长度O(n²) 膨胀。
-  // 修改方式：把主聊天流式reducer 的核心语义收敛为 Content[] delta reducer，支持text、thought、functionCall、contentSnapshot 和usage。
-  // 目的：Monitor 实时显示 SubAgent 输出，同时保持后端只发送轻量delta。
-  const source = contents || []
+export interface AgentRunStreamUpdate {
+  chunk: AgentRunStreamChunkLike | undefined | null
+  timestamp: number
+}
+
+// 同一流式基线之前的历史保持不变。只保留身份与变化起点，不串联旧数组以免长期保留每帧快照。
+const streamContentChanges = new WeakMap<Content[], { lineage: object; start: number }>()
+
+export function getStreamContentChangeStart(previous: Content[], next: Content[]): number | undefined {
+  previous = toRaw(previous)
+  next = toRaw(next)
+  if (previous === next) return next.length
+  const before = streamContentChanges.get(previous)
+  const after = streamContentChanges.get(next)
+  return before && after && after.lineage === before.lineage ? after.start : undefined
+}
+
+export function applyStreamChunkToContents(
+  contents: Content[], chunk: AgentRunStreamChunkLike | undefined | null,
+  timestamp: number = Date.now(), baseIndex: number = 0
+): Content[] {
+  return applyStreamUpdatesToContents(contents, [{ chunk, timestamp }], baseIndex)
+}
+
+/** 同一批片段按原顺序应用，已经复制的尾消息可继续写入，快照边界仍保留完整语义。 */
+export function applyStreamUpdatesToContents(contents: Content[], updates: readonly AgentRunStreamUpdate[], baseIndex = 0): Content[] {
+  // Monitor 的窗口来自深响应式 ref，索引读取的是原始数组；两侧必须使用同一个身份。
+  const source = toRaw(contents || [])
   const next = [...source]
-  const snapshot = chunk?.contentSnapshot as Content | undefined
-  if (snapshot?.parts) {
-    // 修改原因：contentSnapshot 是结构边界校准，只需要替换最后一个model content，不应clone 其它未变化楼层。
-    // 修改方式：复制contents 数组并深拷贝 replacement，旧 Content 对象引用保持共享。
-    // 目的：保持快照语义正确，同时避免低频校准也退化成全量 clone。
-    const replacement = cloneContent({
-      ...snapshot,
-      timestamp: snapshot.timestamp || timestamp,
-      index: typeof snapshot.index === 'number' ? snapshot.index : baseIndex + Math.max(0, next.length - 1)
-    } as Content)
-    let lastModelIndex = -1
-    for (let index = next.length - 1; index >= 0; index--) {
-      if (next[index]?.role === 'model') {
-        lastModelIndex = index
-        break
+  const writable = new Set<Content>()
+  const baseline = streamContentChanges.get(source) ?? { lineage: {}, start: source.length }
+  streamContentChanges.set(source, baseline)
+  let changedFrom = baseline.start
+
+  for (const { chunk, timestamp } of updates) {
+    const snapshot = chunk?.contentSnapshot as Content | undefined
+    if (snapshot?.parts) {
+      const replacement = cloneContent({
+        ...snapshot,
+        timestamp: snapshot.timestamp || timestamp,
+        index: typeof snapshot.index === 'number' ? snapshot.index : baseIndex + Math.max(0, next.length - 1)
+      } as Content)
+      let lastModelIndex = -1
+      for (let index = next.length - 1; index >= 0; index--) {
+        if (next[index]?.role === 'model') {
+          lastModelIndex = index
+          break
+        }
       }
+      if (lastModelIndex === next.length - 1 && lastModelIndex >= 0) {
+        // 同一模型消息的结构快照可缺省 ID，继续保留已知身份用于阅读锚点。
+        if (replacement.id === undefined) replacement.id = next[lastModelIndex].id
+        next[lastModelIndex] = replacement
+        changedFrom = Math.min(changedFrom, lastModelIndex)
+      } else {
+        // 工具结果之后的快照属于下一条模型消息，不能覆盖前一条已经完成的调用。
+        replacement.index = baseIndex + next.length
+        changedFrom = Math.min(changedFrom, next.length)
+        next.push(replacement)
+      }
+      writable.add(replacement)
+      continue
     }
-    if (lastModelIndex >= 0 && lastModelIndex === next.length - 1) {
-      // 快照描述的就是当前末尾的 model 消息（如 Anthropic content_block_stop 对正在
-      // 累积的消息做结构校准）：原位替换。
-      next[lastModelIndex] = replacement
-    } else if (lastModelIndex >= 0) {
-      // 末尾已被非 model 消息（工具结果 functionResponse 等）占用：快照描述的是
-      // **下一轮**的 model 消息，必须追加为新楼层——原位替换会把上一轮的模型消息
-      // （工具调用卡/中间输出）覆盖掉，结束后权威 transcript 加载回来时视觉上
-      // 表现为“运行中的内容突然换掉了”。
-      replacement.index = baseIndex + next.length
-      next.push(replacement)
+
+    const lastIndex = next.length - 1
+    let modelContent: Content
+    if (lastIndex >= 0 && next[lastIndex]?.role === 'model') {
+      modelContent = next[lastIndex]
+      if (!writable.has(modelContent)) {
+        modelContent = cloneContent(modelContent)
+        next[lastIndex] = modelContent
+        writable.add(modelContent)
+      }
+      changedFrom = Math.min(changedFrom, lastIndex)
     } else {
-      replacement.index = baseIndex + next.length
-      next.push(replacement)
+      changedFrom = Math.min(changedFrom, next.length)
+      modelContent = ensureLastModelContent(next, timestamp, baseIndex)
+      writable.add(modelContent)
     }
-    return next
+
+    for (const part of chunk?.delta || []) appendContentPart(modelContent, part)
+    if (chunk?.usage) modelContent.usageMetadata = chunk.usage
+    if (chunk?.modelVersion) modelContent.modelVersion = chunk.modelVersion
+    if (chunk?.thinkingStartTime) modelContent.thinkingStartTime = chunk.thinkingStartTime
   }
 
-  const lastIndex = next.length - 1
-  let modelContent: Content
-  if (lastIndex >= 0 && next[lastIndex]?.role === 'model') {
-    // 修改原因：delta 只会改最后一个model Content，旧实现每次克隆所有Content 会让大transcript 本地处理成本随历史长度增长。
-    // 修改方式：只深拷贝最后一个model Content/parts，再原地追加 delta 到这个新对象。
-    // 目的：未被更新的旧content 对象引用保持不变，Vue 也只需要追踪真正变化的尾部消息。
-    modelContent = cloneContent(next[lastIndex])
-    next[lastIndex] = modelContent
-  } else {
-    modelContent = ensureLastModelContent(next, timestamp, baseIndex)
-  }
-
-  for (const part of chunk?.delta || []) {
-    appendContentPart(modelContent, part)
-  }
-
-  if (chunk?.usage) {
-    modelContent.usageMetadata = chunk.usage
-  }
-  if (chunk?.modelVersion) {
-    modelContent.modelVersion = chunk.modelVersion
-  }
-  if (chunk?.thinkingStartTime) {
-    modelContent.thinkingStartTime = chunk.thinkingStartTime
-  }
-
+  streamContentChanges.set(next, { lineage: baseline.lineage, start: changedFrom })
   return next
 }

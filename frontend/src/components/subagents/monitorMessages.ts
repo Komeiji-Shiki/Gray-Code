@@ -24,11 +24,11 @@ export interface MonitorRenderCacheEntry {
   message: Message
 }
 
-function isToolResponse(content: Content): boolean {
+export function isToolResponse(content: Content): boolean {
   return content.isFunctionResponse === true || isOnlyFunctionResponse(content)
 }
 
-function floorMessage(content: Content, runId: string, index: number) {
+export function floorMessage(content: Content, runId: string, index: number) {
   return {
     id: `${runId}_${index}`,
     backendIndex: index,
@@ -68,30 +68,45 @@ function deriveToolStatus(result: unknown): ToolUsage['status'] {
   return 'success'
 }
 
+export interface MonitorRenderScope {
+  offsets: readonly number[]
+  includePlaceholder: boolean
+  responses: ReadonlyMap<string, NonNullable<ContentPart['functionResponse']>>
+  responseParts: ReadonlyMap<string, ContentPart[]>
+}
+
 /** 复用主聊天 MessageItem 的流式正文/Loading，仅把实际运行中的尾部 model 投影为流式态。 */
 export function renderMonitorMessages(
   run: MonitorMessageSource,
   window: SubAgentRunContentWindowState | undefined,
   overlay: MonitorToolStatusOverlay | undefined,
   active: boolean,
-  cache: Map<number, MonitorRenderCacheEntry>
+  cache: Map<number, MonitorRenderCacheEntry>,
+  scope?: MonitorRenderScope
 ): Message[] {
-  const responseMap = new Map<string, NonNullable<ContentPart['functionResponse']>>()
-  const responsePartsMap = new Map<string, ContentPart[]>()
-  for (const content of run.contents) {
-    for (const part of content.parts) {
-      if (part.functionResponse?.id) {
-        responseMap.set(part.functionResponse.id, part.functionResponse)
-        responsePartsMap.set(part.functionResponse.id, content.parts)
+  let responseMap = scope?.responses
+  let responsePartsMap = scope?.responseParts
+  if (!responseMap || !responsePartsMap) {
+    const responses = new Map<string, NonNullable<ContentPart['functionResponse']>>()
+    const partsById = new Map<string, ContentPart[]>()
+    for (const content of run.contents) {
+      for (const part of content.parts) {
+        if (part.functionResponse?.id) {
+          responses.set(part.functionResponse.id, part.functionResponse)
+          partsById.set(part.functionResponse.id, content.parts)
+        }
       }
     }
+    responseMap = responses
+    responsePartsMap = partsById
   }
   const streaming = active && run.status === 'running' && typeof run.streamingContentIndex === 'number' && window?.hasMoreAfter === false
   const tailIndex = (window?.totalCount ?? 0) - 1
   const messages: Message[] = []
-  for (let offset = 0; offset < run.contents.length; offset++) {
+  for (let position = 0; position < (scope?.offsets.length ?? run.contents.length); position++) {
+    const offset = scope?.offsets[position] ?? position
     const content = run.contents[offset]
-    if (isToolResponse(content)) continue
+    if (!scope && isToolResponse(content)) continue
     const index = content.index ?? (window?.startIndex ?? 0) + offset
     const shouldStream = streaming && content.role === 'model' && index === tailIndex && index === run.streamingContentIndex
     const cached = cache.get(index)
@@ -119,7 +134,7 @@ export function renderMonitorMessages(
     cache.set(index, { contentRef: content, overlayRef: overlay, responses, responseParts, message })
     messages.push(message)
   }
-  if (streaming && run.streamingContentIndex === window?.totalCount && window.endIndex === window.totalCount) {
+  if ((scope?.includePlaceholder ?? true) && streaming && run.streamingContentIndex === window?.totalCount && window.endIndex === window.totalCount) {
     // 使用与首个 delta 相同的楼层身份，但不伪造已持久化 backendIndex/时间或消息操作。
     messages.push({ id: `${run.runId}_${run.streamingContentIndex}`, role: 'assistant', content: '', parts: [], timestamp: 0, streaming: true })
   }

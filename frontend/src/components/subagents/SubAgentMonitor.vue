@@ -2,6 +2,9 @@
 import { createMonitorLiveReplay } from './monitorLiveReplay'
 import type { SubAgentRunEvent, SubAgentRunManifest, SubAgentRunContentWindow, SubAgentRunSnapshot } from './monitorTypes'
 import { useMonitorControls } from './useMonitorControls'
+import { useMonitorMessageProjection } from './useMonitorMessageProjection'
+import { useMonitorMessageWindow } from './useMonitorMessageWindow'
+import MonitorElapsed from './MonitorElapsed.vue'
 import type { SubAgentContextCompactionRecord } from '@shared/subAgentContextCompaction'
 import { computed, nextTick, onMounted, onBeforeUnmount, provide, ref, watch } from 'vue'
 import { MESSAGE_NAMES } from '@shared/protocol'
@@ -36,8 +39,6 @@ import {
 import {
   hasRenderableMonitorLiveDelta
 } from './monitorLiveDeltaBuffer'
-import type { Message } from '@/types'
-import { computeMonitorMessageFloorMap, renderMonitorMessages, type MonitorRenderCacheEntry } from './monitorMessages'
 import {
   getRunRetryEventCue,
   getRunStatusTransitionCue,
@@ -53,11 +54,6 @@ type RunStatus = MonitorRunStatus
 const { t } = useI18n()
 
 const DEFAULT_RUN_WINDOW_LIMIT = 20
-
-/** 距底部多少像素以内视为"贴着底部"，用于决定是否自动跟随新内容 */
-const AUTO_FOLLOW_THRESHOLD_PX = 80
-/** 上翻时，加载入口进入视口前预留少量距离。只由滚动/滚轮意图触发，不循环填满视口。 */
-const LOAD_OLDER_THRESHOLD_PX = 120
 
 // 修改原因：Monitor 首屏不再接收完整 snapshots，否则大输出会卡在传输、反序列化、Vue state 和 Markdown 渲染。
 // 修改方式：状态拆成轻量 manifests 与按 run 缓存的 transcript window，只有聚焦 run 才加载 Content[]。
@@ -82,7 +78,7 @@ const pendingForcedRunWindowRefreshes = new Set<string>()
 // 修改原因：Monitor 在流式中途打开时，llm_delta 可能早于 getRunWindow 响应到达，旧逻辑会直接丢弃这些正文增量。
 // 修改方式：为每个 run 维护有界 live delta 缓冲；窗口可用且 revision 匹配后按 eventSequence 回放。
 // 修改目的：不恢复 full snapshot 传输，也能让实时打开 Monitor 的显示最终追上同一轮流式输出。
-const { bufferLiveDeltaEvent, clearSupersededLiveDeltaBuffer, applyLiveDeltaToWindow, replayBufferedLiveDeltas } = createMonitorLiveReplay(windowsByRunId)
+const { bufferLiveDeltaEvent, clearSupersededLiveDeltaBuffer, applyLiveDeltaBatch, replayBufferedLiveDeltas } = createMonitorLiveReplay(windowsByRunId)
 const latestRunWindowRequestSeq = new Map<string, number>()
 let runWindowRequestSeq = 0
 const focusedRunId = ref<string | undefined>((window as any).__GRAYCODE_INITIAL_RUN_ID || undefined)
@@ -155,8 +151,10 @@ function upsertManifest(manifest: SubAgentRunManifest | undefined) {
     const next = [...manifests.value]
     next[index] = { ...next[index], ...manifest }
     manifests.value = next
+    observeRunStatus(next[index])
   } else {
     manifests.value = [manifest, ...manifests.value]
+    observeRunStatus(manifest)
   }
 }
 
@@ -168,45 +166,14 @@ function upsertManifest(manifest: SubAgentRunManifest | undefined) {
 // 修改目的：状态迁移语义与事件回放天然幂等——重同步不会重复响铃；
 //          续跑（completed → running → completed）是第二次真实完成，会再次响铃，符合预期。
 const lastSeenRunStatus = new Map<string, MonitorRunStatus>()
-let runStatusSoundSeeded = false
-
-watch(
-  () => manifests.value,
-  (list) => {
-    const nextStatuses = new Map<string, MonitorRunStatus>()
-    for (const manifest of list) {
-      if (manifest?.runId) nextStatuses.set(manifest.runId, manifest.status)
-    }
-
-    if (!runStatusSoundSeeded) {
-      runStatusSoundSeeded = true
-      for (const [runId, status] of nextStatuses) {
-        lastSeenRunStatus.set(runId, status)
-      }
-      return
-    }
-
-    for (const [runId, status] of nextStatuses) {
-      const prev = lastSeenRunStatus.get(runId)
-      // 首播之后新出现的 run 不播报（可能来自 manifest 重同步的历史 run）
-      if (prev === undefined) {
-        lastSeenRunStatus.set(runId, status)
-        continue
-      }
-      lastSeenRunStatus.set(runId, status)
-      const cue = getRunStatusTransitionCue(prev, status)
-      if (cue) playMonitorSubagentCue(cue)
-    }
-
-    // 容量上限：长会话 run 数无界，Map 不能随 run 数无限增长；只保留仍在 manifests 中的 run
-    if (lastSeenRunStatus.size > 500) {
-      const liveRunIds = new Set(nextStatuses.keys())
-      for (const runId of Array.from(lastSeenRunStatus.keys())) {
-        if (!liveRunIds.has(runId)) lastSeenRunStatus.delete(runId)
-      }
-    }
-  }
-)
+function observeRunStatus(manifest: SubAgentRunManifest) {
+  // 片段只更新该任务的状态记录，避免每帧为全部 manifests 新建 Map；首次出现仍只播种。
+  const previous = lastSeenRunStatus.get(manifest.runId)
+  lastSeenRunStatus.set(manifest.runId, manifest.status)
+  if (previous === undefined) return
+  const cue = getRunStatusTransitionCue(previous, manifest.status)
+  if (cue) playMonitorSubagentCue(cue)
+}
 
 // ============ 子代理提示音：重试事件去重 ============
 
@@ -237,6 +204,11 @@ function applyManifestPayload(data: any) {
   // 修改方式：只接收 manifests，并同步焦点与 activeRunIds；窗口内容保留已有按需缓存。
   // 修改目的：重新打开已有面板时也不会因一次全量替换触发 Markdown 大渲染。
   manifests.value = Array.isArray(data?.manifests) ? data.manifests : []
+  for (const manifest of manifests.value) observeRunStatus(manifest)
+  if (lastSeenRunStatus.size > 500) {
+    const present = new Set(manifests.value.map(manifest => manifest.runId))
+    for (const id of lastSeenRunStatus.keys()) if (!present.has(id)) lastSeenRunStatus.delete(id)
+  }
   if (data?.focusRunId) {
     // 修改原因：manifest/monitorReady 代表打开详情或重新同步，是显式导航事件，应该能覆盖旧选择。
     // 修改方式：应用后端 focusRunId，同时清除“用户已手动选择”标记，让新的显式入口成为默认焦点。
@@ -394,8 +366,12 @@ async function requestRunWindow(runId: string | undefined, force = false) {
 async function loadOlderMessages() {
   const run = focusedRun.value
   if (!run || isDisposed) return
-  const viewGeneration = focusedViewGeneration
+  const viewGeneration = focusedViewGeneration.value
   const isCurrentView = () => isFocusedViewCurrent(run.runId, viewGeneration)
+  if (hasEarlier.value) {
+    await showEarlier()
+    return
+  }
   let currentWindow = windowsByRunId.value[run.runId]
   if (!currentWindow) {
     // 没有真实 startIndex 时只沿用尾部加载，不凭可见消息下标猜测分页锚点。
@@ -404,7 +380,7 @@ async function loadOlderMessages() {
     currentWindow = windowsByRunId.value[run.runId]
   }
   if (!currentWindow?.hasMoreBefore) return
-  shouldAutoFollow.value = false
+  stopFollowing()
   if (loadingOlderRunWindows.value.has(run.runId)) return
 
   const loading = new Set(loadingOlderRunWindows.value)
@@ -437,13 +413,15 @@ async function loadOlderMessages() {
     const container = scrollbarRef.value?.getContainer()
     // 在真正 prepend 前取锚点：网络等待期间用户可能继续滚动，不能恢复到请求发出时的位置。
     const anchor = container ? captureHistoryAnchor(container) : undefined
-    const positionVersion = scrollPositionVersion
+    const positionVersion = scrollPositionVersion.value
+    const previousFirstId = visibleRows.value[0]?.anchorId ?? visibleRows.value[0]?.id
     if (response.manifest?.runId === run.runId) upsertManifest(response.manifest)
     prependWindow(response.window)
+    revealPrepended(previousFirstId)
     updateActiveRunIds(response.activeRunIds)
     await nextTick()
     if (isCurrentView() && container && container === scrollbarRef.value?.getContainer() && anchor
-      && positionVersion === scrollPositionVersion) {
+      && positionVersion === scrollPositionVersion.value) {
       restoreHistoryAnchor(container, anchor)
     }
   } catch (error) {
@@ -524,26 +502,25 @@ function flushPendingLlmDeltas() {
       streamingContentIndex: existingManifest?.streamingContentIndex
     }
 
-    // 窗口应用：在同一个工作副本上依次应用本批全部 delta，最后只提交一次
+    // 同版本片段一次复制尾消息，不能应用的事件仍等待权威窗口校准。
     let workingWindow = windowsByRunId.value[runId]
     let buffered = false
-    for (const event of events) {
-      if (!hasRenderableMonitorLiveDelta(event)) continue
-      if (!workingWindow) {
+    if (!workingWindow) {
+      for (const event of events) {
+        if (!hasRenderableMonitorLiveDelta(event)) continue
         const isFocusedLiveRun = event.runId === focusedRunId.value || event.runId === focusedManifest.value?.runId
         if (isFocusedLiveRun) {
           bufferLiveDeltaEvent(event)
           buffered = true
         }
-        continue
       }
-      const nextWindow = applyLiveDeltaToWindow(event, workingWindow, mergedManifest)
-      if (!nextWindow) {
+    } else {
+      const result = applyLiveDeltaBatch(events, workingWindow, mergedManifest)
+      workingWindow = result.window
+      for (const event of result.blocked) {
         bufferLiveDeltaEvent(event)
         buffered = true
-        continue
       }
-      workingWindow = nextWindow
     }
 
     if (!nextManifests) nextManifests = [...manifests.value]
@@ -553,6 +530,7 @@ function flushPendingLlmDeltas() {
     } else {
       nextManifests.unshift(mergedManifest)
     }
+    observeRunStatus(mergedManifest)
     if (workingWindow) {
       if (!nextWindows) nextWindows = { ...windowsByRunId.value }
       nextWindows[runId] = workingWindow
@@ -567,45 +545,24 @@ function flushPendingLlmDeltas() {
   }
 }
 
-// 按真实 content index 保留未变消息的渲染引用；工具结果与 streaming 状态单独校准。
-const renderMessageCacheByRun = new Map<string, Map<number, MonitorRenderCacheEntry>>()
-const MAX_RENDER_MESSAGE_CACHE_ENTRIES_PER_RUN = 200
-
-// 修改原因：renderMessageCacheByRun 只在单 run 超限（>200 条）时整表删除，run 结束后缓存一直保留，
-//          长期会话内存随 run 数线性增长。
-// 修改方式：run 进入终态（completed/failed/cancelled）且不再被后端持有（不在 activeRunIds）时，
-//          显式删除该 run 的缓存；仍保留单 run 超限的全局容量上限逻辑。
-// 修改目的：终态 run 的 Message 引用不再参与渲染（重新查看时按需重建），及时释放内存。
-const TERMINAL_RUN_STATUSES = new Set<RunStatus>(['completed', 'failed', 'cancelled'])
-const terminalInactiveRunIds = computed(() => {
-  const runIds: string[] = []
-  for (const manifest of manifests.value) {
-    if (TERMINAL_RUN_STATUSES.has(manifest.status) && !activeRunIds.value.has(manifest.runId)) {
-      runIds.push(manifest.runId)
-    }
-  }
-  return runIds
+const focusedRunIsActive = computed(() => !!focusedRun.value && activeRunIds.value.has(focusedRun.value.runId))
+const focusedWindow = computed(() => focusedRun.value ? windowsByRunId.value[focusedRun.value.runId] : undefined)
+const messageProjection = useMonitorMessageProjection(focusedRun, focusedWindow,
+  computed(() => focusedRun.value ? toolStatusOverlaysByRunId.value[focusedRun.value.runId] : undefined), focusedRunIsActive)
+const {
+  scrollbarRef, olderLoadEntryRef, shouldAutoFollow, viewGeneration: focusedViewGeneration, scrollPositionVersion,
+  visibleRows, hasEarlier, hasLater, canLoadOlder, isViewCurrent: isFocusedViewCurrent,
+  captureHistoryAnchor, restoreHistoryAnchor, stopFollowing, showEarlier, revealPrepended,
+  followToBottom: followFocusedRunToBottom, returnToLatest,
+} = useMonitorMessageWindow({
+  rows: messageProjection.rows,
+  runId: computed(() => focusedManifest.value?.runId),
+  hasMoreBefore: computed(() => focusedWindow.value?.hasMoreBefore === true),
+  loadOlder: loadOlderMessages,
+  disposed: () => isDisposed,
 })
-
-watch(terminalInactiveRunIds, runIds => {
-  for (const runId of runIds) {
-    renderMessageCacheByRun.delete(runId)
-  }
-}, { immediate: true })
-
-function toRenderableMessages(run: SubAgentRunSnapshot | undefined): Message[] {
-  if (!run) return []
-  let cache = renderMessageCacheByRun.get(run.runId)
-  if (!cache) {
-    cache = new Map()
-    renderMessageCacheByRun.set(run.runId, cache)
-  }
-  const messages = renderMonitorMessages(run, windowsByRunId.value[run.runId], toolStatusOverlaysByRunId.value[run.runId], activeRunIds.value.has(run.runId), cache)
-  if (cache.size > MAX_RENDER_MESSAGE_CACHE_ENTRIES_PER_RUN) renderMessageCacheByRun.delete(run.runId)
-  return messages
-}
-
-const renderMessages = computed(() => toRenderableMessages(focusedRun.value))
+const floorByMessageId = messageProjection.floorByMessageId
+const renderMessages = computed(() => messageProjection.render(visibleRows.value))
 const focusedContextCompactions = computed(() => {
   const runId = focusedRun.value?.runId
   return runId ? contextCompactionsByRunId.value[runId] || [] : []
@@ -615,83 +572,9 @@ const latestBoundaryCompaction = computed(() => latestContextBoundaryCompaction(
 const renderTimeline = computed(() => buildContextCompactionTimeline(
   renderMessages.value,
   latestBoundaryCompaction.value,
-  focusedWindow.value?.startIndex ?? 0,
-  focusedWindow.value?.endIndex ?? 0
+  visibleRows.value[0]?.backendIndex ?? focusedWindow.value?.startIndex ?? 0,
+  Math.min(focusedWindow.value?.endIndex ?? 0, (visibleRows.value.at(-1)?.backendIndex ?? -1) + 1)
 ))
-
-// 修改原因：Monitor 是实时监视面板，但过去从不跟随新内容，用户必须一直手动往下拖才能看到 SubAgent 正在输出什么。
-// 修改方式：复用主聊天 MessageList 的做法——监听滚动容器判断是否贴底，贴底时随尾部内容增长自动滚到底部。
-// 修改目的：默认跟随实时输出，同时用户一旦向上翻阅历史就不再被强行拽回底部。
-const scrollbarRef = ref<{ getContainer: () => HTMLElement | undefined } | null>(null)
-const olderLoadEntryRef = ref<HTMLElement | null>(null)
-const shouldAutoFollow = ref(true)
-let detachScrollListener: (() => void) | undefined
-let focusedViewGeneration = 0
-let lastScrollTop: number | undefined
-let scrollPositionVersion = 0
-
-function isFocusedViewCurrent(runId: string, generation: number): boolean {
-  return !isDisposed && focusedManifest.value?.runId === runId && focusedViewGeneration === generation
-}
-
-function isNearOlderEntry(container: HTMLElement): boolean {
-  const entry = olderLoadEntryRef.value
-  if (!entry || !focusedWindow.value?.hasMoreBefore) return false
-  const viewport = container.getBoundingClientRect()
-  const rect = entry.getBoundingClientRect()
-  return rect.bottom >= viewport.top - LOAD_OLDER_THRESHOLD_PX && rect.top <= viewport.bottom
-}
-
-function handleScroll() {
-  const container = scrollbarRef.value?.getContainer()
-  if (!container || isDisposed) return
-  const movingUp = lastScrollTop !== undefined && container.scrollTop < lastScrollTop
-  if (container.scrollTop !== lastScrollTop) scrollPositionVersion++
-  lastScrollTop = container.scrollTop
-  const distanceToBottom = container.scrollHeight - container.scrollTop - container.clientHeight
-  shouldAutoFollow.value = distanceToBottom <= AUTO_FOLLOW_THRESHOLD_PX
-  if (movingUp && isNearOlderEntry(container)) void loadOlderMessages()
-}
-
-function handleHistoryWheel(event: WheelEvent) {
-  const container = scrollbarRef.value?.getContainer()
-  if (!container || isDisposed || event.ctrlKey) return
-  scrollPositionVersion++
-  // 顶部/不足一屏时不会产生 scroll；只响应新的向上滚轮意图补一页，不在响应后递归补读。
-  if (event.deltaY < 0 && container.scrollTop <= 0 && isNearOlderEntry(container)) {
-    void loadOlderMessages()
-  }
-}
-
-function captureHistoryAnchor(container: HTMLElement) {
-  const top = container.getBoundingClientRect().top
-  for (const element of container.querySelectorAll<HTMLElement>('.message-item[data-message-id]')) {
-    const rect = element.getBoundingClientRect()
-    if (rect.bottom > top) return { messageId: element.dataset.messageId, offset: rect.top - top }
-  }
-}
-
-function restoreHistoryAnchor(container: HTMLElement, anchor: { messageId?: string; offset: number }) {
-  const element = Array.from(container.querySelectorAll<HTMLElement>('.message-item[data-message-id]'))
-    .find(item => item.dataset.messageId === anchor.messageId)
-  if (!element) return
-  // 与主聊天相同的稳定消息锚点法；不用总高度差，避免把并发尾部增长也算进 prepend。
-  container.scrollTop += element.getBoundingClientRect().top - container.getBoundingClientRect().top - anchor.offset
-  // 浏览器随后派发的程序滚动不能再被误认为用户上翻，尤其是加载按钮消失导致负位移时。
-  lastScrollTop = container.scrollTop
-}
-
-async function followFocusedRunToBottom() {
-  const runId = focusedManifest.value?.runId
-  const generation = focusedViewGeneration
-  await nextTick()
-  if (!runId || !isFocusedViewCurrent(runId, generation) || !shouldAutoFollow.value) return
-  const container = scrollbarRef.value?.getContainer()
-  if (!container) return
-  // CustomScrollbar.scrollToBottom 内部还会排一次 nextTick，无法取消；在身份/跟随校验后直接瞬时滚动。
-  container.scrollTop = container.scrollHeight
-  lastScrollTop = container.scrollTop
-}
 
 /**
  * 尾部内容指纹。
@@ -741,10 +624,6 @@ function statusLabel(status: RunStatus | undefined): string {
   const key = RUN_STATUS_LABEL_KEYS[status]
   return key ? t(`components.subagents.monitor.status.${key}`) : status
 }
-const focusedRunIsActive = computed(() => !!focusedRun.value && activeRunIds.value.has(focusedRun.value.runId))
-const focusedWindow = computed(() => focusedRun.value ? windowsByRunId.value[focusedRun.value.runId] : undefined)
-const floorByMessageId = computed(() => computeMonitorMessageFloorMap(focusedWindow.value,
-  focusedRunIsActive.value && focusedRun.value?.status === 'running' ? focusedRun.value.streamingContentIndex : null))
 const focusedOlderLoading = computed(() => !!focusedRun.value && loadingOlderRunWindows.value.has(focusedRun.value.runId))
 const latestRetryEvent = computed(() => {
   const events = focusedRun.value?.events || []
@@ -755,8 +634,8 @@ const latestRetryEvent = computed(() => {
 })
 
 // P5：运行时间显示改为相对耗时（如「42s / 2m30s」），绝对本地时间戳对用户没有意义。
-// 与 BackgroundTaskBar 的 formatDuration 语义一致：运行中显示已运行时长，结束后显示总耗时。
-const { runElapsed, controlNotice, showControlNotice, pauseFocusedRun, resumeFocusedRun, exitFocusedRun } = useMonitorControls(focusedRun, focusedRunIsActive, activeRunIds)
+// 耗时交给独立组件，秒级变化不再使历史消息列表重新执行渲染。
+const { controlNotice, showControlNotice, pauseFocusedRun, resumeFocusedRun, exitFocusedRun } = useMonitorControls(focusedRun, focusedRunIsActive, activeRunIds)
 
 function selectRun(runId: string) {
   // 修改原因：用户在 Monitor 内点击 run tab 是显式选择，后续 run 事件不应再用旧 focusRunId 覆盖它。
@@ -880,16 +759,6 @@ function noop() {
 
 watch(
   () => focusedManifest.value?.runId,
-  () => {
-    // 同步失效只更新视图代次；请求仍合帧，避免 manifest/focus 同批更新时拉取过渡 run。
-    focusedViewGeneration++
-    lastScrollTop = undefined
-  },
-  { flush: 'sync' }
-)
-
-watch(
-  () => focusedManifest.value?.runId,
   runId => {
     if (!runId) return
     // 切换 run 视为重新进入该会话：恢复跟随并滚到最新一条。
@@ -957,24 +826,13 @@ onMounted(async () => {
     }
   })
 
-  const container = scrollbarRef.value?.getContainer()
-  if (container) {
-    lastScrollTop = container.scrollTop
-    container.addEventListener('scroll', handleScroll, { passive: true })
-    container.addEventListener('wheel', handleHistoryWheel, { passive: true })
-    detachScrollListener = () => {
-      container.removeEventListener('scroll', handleScroll)
-      container.removeEventListener('wheel', handleHistoryWheel)
-    }
-  }
-
   const initial = await sendToExtension<{ manifests: SubAgentRunManifest[]; focusRunId?: string; activeRunIds?: string[] }>(MESSAGE_NAMES['subagents.monitorReady'], {})
   if (isDisposed) return
   applyManifestPayload(initial)
   const initialFocus = initial?.focusRunId || focusedManifest.value?.runId
   if (initialFocus) {
     focusedRunId.value = initialFocus
-    const generation = focusedViewGeneration
+    const generation = focusedViewGeneration.value
     await requestRunWindow(initialFocus)
     if (isFocusedViewCurrent(initialFocus, generation)) await followFocusedRunToBottom()
   }
@@ -982,10 +840,8 @@ onMounted(async () => {
 
 onBeforeUnmount(() => {
   isDisposed = true
-  focusedViewGeneration++
+  focusedViewGeneration.value++
   disposeMessageListener?.()
-  detachScrollListener?.()
-  detachScrollListener = undefined
   if (llmDeltaFlushFallbackTimer) {
     clearTimeout(llmDeltaFlushFallbackTimer)
     llmDeltaFlushFallbackTimer = undefined
@@ -1016,7 +872,10 @@ onBeforeUnmount(() => {
         @click="selectRun(run.runId)"
       >
         <span class="run-name">{{ run.agentName || t('components.subagents.monitor.defaultAgentName') }}</span>
-        <span class="run-meta" :title="t('components.subagents.monitor.elapsedHint')">{{ statusLabel(run.status) }} · {{ runElapsed(run) }}</span>
+        <span class="run-meta" :title="t('components.subagents.monitor.elapsedHint')">
+          {{ statusLabel(run.status) }} · <MonitorElapsed :created-at="run.createdAt" :updated-at="run.updatedAt"
+            :status="run.status" :ticking="activeRunIds.size > 0" />
+        </span>
       </button>
     </div>
 
@@ -1036,7 +895,11 @@ onBeforeUnmount(() => {
         <div class="run-title-row">
           <div class="run-title-info">
             <div class="run-title">{{ focusedRun.agentName || t('components.subagents.monitor.defaultAgentName') }}</div>
-            <div class="run-subtitle" :title="t('components.subagents.monitor.elapsedHint')">{{ focusedRun.runId }} · {{ statusLabel(focusedRun.status) }} · {{ runElapsed(focusedRun) }}</div>
+            <div class="run-subtitle" :title="t('components.subagents.monitor.elapsedHint')">
+              {{ focusedRun.runId }} · {{ statusLabel(focusedRun.status) }} ·
+              <MonitorElapsed :created-at="focusedRun.createdAt" :updated-at="focusedRun.updatedAt"
+                :status="focusedRun.status" :ticking="activeRunIds.size > 0" />
+            </div>
             <div v-if="focusedWindow?.hasMoreBefore" class="run-window-note">
               <!--
                 修改原因：当前窗口可能由多次向前分页拼接而来，文案不能继续暗示只显示“最近”尾部。
@@ -1099,10 +962,10 @@ onBeforeUnmount(() => {
           </div>
         </div>
 
-        <div v-if="focusedWindow?.hasMoreBefore" ref="olderLoadEntryRef" class="load-older-row">
+        <div v-if="canLoadOlder" ref="olderLoadEntryRef" class="load-older-row">
           <!--
             修改原因：默认只加载尾部 20 条时，用户需要可控地向前补齐历史，而不是误以为早期内容丢失。
-            修改方式：按钮调用同一个 getRunWindow 协议，以当前 window.startIndex 为 endIndex 拉取上一页并 prepend。
+            修改方式：先展开本地已加载历史，用尽后再以 window.startIndex 请求上一页。
             修改目的：继续保持 manifest/window 按需加载，不回退到一次性完整 snapshot。
           -->
           <button class="load-older-btn" type="button" :disabled="focusedOlderLoading" @click="loadOlderMessages">
@@ -1139,12 +1002,16 @@ onBeforeUnmount(() => {
 
         <!-- 运行中的总结提示固定出现在当前消息尾部；完成后保留 token 前后统计。 -->
         <SubAgentContextCompactionNotice
-          v-if="latestCompaction"
+          v-if="latestCompaction && !hasLater"
           :record="latestCompaction"
           variant="status"
         />
       </div>
     </CustomScrollbar>
+    <button v-if="focusedRun && (hasLater || !shouldAutoFollow)" type="button" class="return-latest-btn"
+      :title="t('components.common.scrollToBottom')" :aria-label="t('components.common.scrollToBottom')" @click="returnToLatest">
+      <span class="codicon codicon-arrow-down"></span>{{ t('components.common.scrollToBottom') }}
+    </button>
   </div>
 </template>
 
