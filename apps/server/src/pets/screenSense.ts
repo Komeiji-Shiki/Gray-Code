@@ -7,7 +7,7 @@ import type {
 import type { PlatformApplication } from '../application';
 import type { ClientSession } from '../transport/router';
 import { requireOwnChatConversation } from '../conversations/ownChat';
-import { screenRecords, screenSenseHistory } from './screenSenseHistory';
+import { screenRecords, ScreenSenseHistory } from './screenSenseHistory';
 import { recognizeScreen, sameScreen, screenFingerprint } from './screenRecognition';
 import { t } from '../../../../backend/i18n';
 
@@ -41,8 +41,11 @@ export class ScreenSenseService {
   private error?: string;
   private mutation: Promise<unknown> = Promise.resolve();
   private epoch = 0;
+  private readonly history: ScreenSenseHistory;
 
-  constructor(private readonly app: PlatformApplication) {}
+  constructor(private readonly app: PlatformApplication) {
+    this.history = new ScreenSenseHistory(app.storage);
+  }
 
   async initialize() {
     const record = await this.app.storage.getVersionedRecord(configNamespace, 'local');
@@ -359,7 +362,7 @@ export class ScreenSenseService {
   async snapshot(): Promise<ScreenSenseSnapshot> {
     return {
       configuration: this.configuration, visionDefaults: this.visionDefaults, revision: this.revision,
-      status: this.status(), preview: this.preview, history: await screenSenseHistory(this.app),
+      status: this.status(), preview: this.preview, history: await this.history.read(),
     };
   }
 

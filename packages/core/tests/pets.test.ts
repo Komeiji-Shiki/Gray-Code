@@ -21,12 +21,12 @@ async function atlas(version: 1 | 2 = 2): Promise<PetImport> {
   return { entry: 'pet.json', files: [{ path: 'pet.json', data: encode({ id: 'fixture', displayName: '合同测试桌宠', spriteVersionNumber: version, spritesheetPath: 'art/atlas.png' }) }, { path: 'art/atlas.png', data: png.toString('base64') }] };
 }
 
-test('资源定义合并并发读取，独立副本与写入失效保持一致，缓存按最近访问淘汰', async () => {
+test('资源定义合并并发读取，标注隔离写入且缓存按最近访问淘汰', async () => {
   const f = await fixture();
   await f.store.close();
   const database = new PlatformDatabase(f.data);
   const info = (id: string): PetResource => ({
-    id, kind: 'live2d', name: id, entry: 'pet.model3.json', sha256: 'fixture', createdAt: 1,
+    id, kind: 'live2d', name: id, description: '', source: '', license: '', entry: 'pet.model3.json', sha256: 'fixture', createdAt: 1,
     files: [], actions: [], expressions: [],
   });
   const getRecord = jest.fn(async (namespace: string, id: string) => database.execute('getRecord', { namespace, id }));
@@ -40,11 +40,10 @@ test('资源定义合并并发读取，独立副本与写入失效保持一致�
     database.execute('putRecord', { namespace: 'pet-resource', id: 'selected', value: info('selected') });
     const [first, second] = await Promise.all([resources.get('selected'), resources.get('selected')]);
     expect(getRecord).toHaveBeenCalledTimes(1);
-    first.name = '外部修改';
-    expect(second.name).toBe('selected');
-    expect((await resources.get('selected')).name).toBe('selected');
+    expect(second).toBe(first);
     const annotated = await resources.annotate({ id: 'selected', description: '更新描述' });
-    annotated.description = '外部修改';
+    expect(annotated).not.toBe(first);
+    expect(first.description).toBe('');
     expect((await resources.get('selected')).description).toBe('更新描述');
     putRecord.mockRejectedValueOnce(new Error('写入失败'));
     await expect(resources.annotate({ id: 'selected', description: '失败的更新' })).rejects.toThrow('写入失败');
@@ -81,7 +80,7 @@ test('资源写入后迟到的旧读取不能覆盖新缓存', async () => {
   await f.store.close();
   const database = new PlatformDatabase(f.data);
   const value: PetResource = { id: 'selected', kind: 'live2d', name: '原始资源', entry: 'pet.model3.json',
-    sha256: 'fixture', createdAt: 1, files: [], actions: [], expressions: [] };
+    description: '', source: '', license: '', sha256: 'fixture', createdAt: 1, files: [], actions: [], expressions: [] };
   let releaseWrite!: () => void, releaseRead!: () => void, writing!: () => void, reading!: () => void;
   const writeStarted = new Promise<void>(resolve => { writing = resolve; });
   const readStarted = new Promise<void>(resolve => { reading = resolve; });
@@ -115,7 +114,7 @@ test('资源写入后迟到的旧读取不能覆盖新缓存', async () => {
     releaseWrite();
     await annotation;
     releaseRead();
-    expect((await oldRead).description).toBeUndefined();
+    expect((await oldRead).description).toBe('');
     expect((await resources.get(value.id)).description).toBe('新描述');
   } finally { releaseWrite(); releaseRead(); database.execute('close', undefined); await f.cleanup(); }
 });

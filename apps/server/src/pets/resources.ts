@@ -26,8 +26,8 @@ function json(bytes: Uint8Array, name: string): Record<string, any> {
   }
 }
 export class PetResources {
-  private readonly resourceCache = new Map<string, { info: PetResource; bytes: number }>();
-  private readonly resourceReads = new Map<string, Promise<PetResource | null>>();
+  private readonly resourceCache = new Map<string, { info: Readonly<PetResource>; bytes: number }>();
+  private readonly resourceReads = new Map<string, Promise<Readonly<PetResource> | null>>();
   private resourceCacheBytes = 0;
   constructor(private readonly storage: PlatformStorage) {}
 
@@ -39,11 +39,10 @@ export class PetResources {
   }
 
   private remember(info: PetResource): void {
-    // 对外仍返回独立副本，导入或标注的调用方不能改写缓存中的资源定义。
     this.forget(info.id);
     const bytes = Buffer.byteLength(JSON.stringify(info));
     if (bytes > RESOURCE_CACHE_BYTES) return;
-    this.resourceCache.set(info.id, { info: structuredClone(info), bytes });
+    this.resourceCache.set(info.id, { info, bytes });
     this.resourceCacheBytes += bytes;
     // 资源定义也可能带大量文件名或动作名，同时限制条目数与序列化体积。
     while (this.resourceCache.size > RESOURCE_CACHE_ENTRIES || this.resourceCacheBytes > RESOURCE_CACHE_BYTES) {
@@ -51,7 +50,7 @@ export class PetResources {
     }
   }
 
-  private async readResource(id: string): Promise<PetResource | null> {
+  private async readResource(id: string): Promise<Readonly<PetResource> | null> {
     const cached = this.resourceCache.get(id);
     if (cached) {
       this.resourceCache.delete(id);
@@ -73,21 +72,25 @@ export class PetResources {
     return pending;
   }
 
-  async list(): Promise<PetResource[]> {
+  async list(): Promise<Readonly<PetResource>[]> {
     const ids = await this.storage.listRecords(infoNamespace);
     const records = await Promise.all(ids.map(id => this.readResource(id)));
-    return records.filter((info): info is PetResource => info !== null).map(info => structuredClone(info));
+    return records.filter((info): info is Readonly<PetResource> => info !== null);
   }
-  async get(id: string): Promise<PetResource> {
+  async get(id: string): Promise<Readonly<PetResource>> {
     const info = await this.readResource(id);
     if (!info) throw new Error('桌宠资源不存在。');
-    return structuredClone(info);
+    return info;
   }
   async file(id: string, name: string) {
     const info = await this.get(id);
     const meta = info.files.find(file => file.path === name);
     if (!meta) throw new Error('资源文件不存在。');
-    const record = await this.storage.getRecord(fileNamespace, `${id}/${name}`) as { bytes: Uint8Array } | null;
+    return this.readFile(id, meta);
+  }
+
+  private async readFile(id: string, meta: PetResource['files'][number]) {
+    const record = await this.storage.getRecord(fileNamespace, `${id}/${meta.path}`) as { bytes: Uint8Array } | null;
     if (!record || hash(record.bytes) !== meta.sha256) throw new Error('资源文件缺失或校验不一致。');
     return { bytes: record.bytes, mimeType: meta.mimeType };
   }
@@ -96,12 +99,13 @@ export class PetResources {
     return {
       entry: info.entry, name: info.name, source: info.source, license: info.license,
       files: await Promise.all(info.files.map(async file => ({
-        path: file.path, data: Buffer.from((await this.file(id, file.path)).bytes).toString('base64'),
+        path: file.path, data: Buffer.from((await this.readFile(id, file)).bytes).toString('base64'),
       }))),
     };
   }
   async annotate(input: PetResourceAnnotation): Promise<PetResource> {
-    const info = await this.get(input.id);
+    // 读取方共享定义，只有标注这一条写入路径复制后修改。
+    const info: PetResource = structuredClone(await this.get(input.id));
     const description = (value: string, limit = 1000) => {
       if (typeof value !== 'string' || value.length > limit) throw new Error(`描述最多 ${limit} 个字符。`);
       return value.trim();

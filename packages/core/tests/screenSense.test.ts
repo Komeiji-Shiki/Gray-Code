@@ -3,7 +3,7 @@ import type {
   ScreenSenseConfiguration, ScreenSenseRecord, ScreenSenseSnapshot,
 } from '@graycode/contracts';
 import { PlatformApplication } from '../../../apps/server/src/application';
-import { screenRecords, screenSenseHistory } from '../../../apps/server/src/pets/screenSenseHistory';
+import { screenRecords, ScreenSenseHistory } from '../../../apps/server/src/pets/screenSenseHistory';
 import type { ComputerNativePort, ComputerScreenPort } from '../../../apps/server/src/computer/port';
 import { PlatformDatabase } from '../src/storage/database';
 import type { StorageOperations } from '../src/storage/protocol';
@@ -107,6 +107,7 @@ test('最近感知记录通过源码倒序分页，用量令牌覆盖追加、�
     getRun: async (id: string) => ({ id, status: 'completed' }),
     getRunByRequestKey: async () => null,
   } } as unknown as PlatformApplication;
+  const history = new ScreenSenseHistory(app.storage);
   const record = (id: string, conversationId = 'main'): ScreenSenseRecord => ({
     id, sessionId: 'session', createdAt: 1, target: '窗口', conversationId, providerId: 'provider', runId: 'main-run',
     prices: { currency: 'TEST', input: 2, output: 4, cacheRead: 1, cacheWrite: 3 },
@@ -136,38 +137,38 @@ test('最近感知记录通过源码倒序分页，用量令牌覆盖追加、�
     database.execute('putRecord', { namespace: screenRecords, id: '029', value: { ...record('029'),
       visionUsage: { inputTokens: 7, outputTokens: 2, cacheReadTokens: 1, cacheWriteTokens: 0, requests: 1, unknownRequests: 0 },
     } });
-    const first = await screenSenseHistory(app);
+    const first = await history.read();
     expect(first.map(entry => entry.id)).toEqual(Array.from({ length: 20 }, (_, index) => String(29 - index).padStart(3, '0')));
     expect(first[0]).toMatchObject({ usage: { inputTokens: 7 }, mainUsage: { inputTokens: 100, outputTokens: 20 } });
     expect(first[1]!.usage.estimatedCost).toBeCloseTo(0.00025);
     expect(usageReads).toEqual([{ id: 'main', since: undefined, keep: 0, added: 1 }]);
 
-    await Promise.all([screenSenseHistory(app), screenSenseHistory(app)]);
+    await Promise.all([history.read(), history.read()]);
     expect(usageReads.slice(1).every(read => typeof read.since === 'string' && read.keep === 1 && read.added === 0)).toBe(true);
     database.execute('appendHistory', { id: 'main', messages: [{ ...message, id: 'next',
       usageMetadata: { promptTokenCount: 20, candidatesTokenCount: 3 } }] });
-    expect((await screenSenseHistory(app))[1]!.usage.inputTokens).toBe(120);
+    expect((await history.read())[1]!.usage.inputTokens).toBe(120);
     expect(usageReads.at(-1)).toMatchObject({ keep: 1, added: 1 });
     database.execute('replaceHistory', { id: 'main', messages: [message] });
-    expect((await screenSenseHistory(app))[1]!.usage.inputTokens).toBe(100);
+    expect((await history.read())[1]!.usage.inputTokens).toBe(100);
     database.execute('replaceHistory', { id: 'main', messages: [{ ...message,
       usageMetadata: { promptTokenCount: 11, candidatesTokenCount: 1 } }] });
-    expect((await screenSenseHistory(app))[1]!.usage.inputTokens).toBe(11);
+    expect((await history.read())[1]!.usage.inputTokens).toBe(11);
 
     database.execute('createConversation', metadata('other'));
     for (let index = 30; index < 50; index++) {
       const id = String(index).padStart(3, '0');
       database.execute('putRecord', { namespace: screenRecords, id, value: record(id, 'other') });
     }
-    expect((await screenSenseHistory(app)).every(entry => entry.conversationId === 'other')).toBe(true);
+    expect((await history.read()).every(entry => entry.conversationId === 'other')).toBe(true);
     for (let index = 30; index < 50; index++) database.execute('deleteRecord', { namespace: screenRecords, id: String(index).padStart(3, '0') });
-    await screenSenseHistory(app);
+    await history.read();
     expect(usageReads.at(-1)).toMatchObject({ id: 'main', since: undefined });
     database.execute('deleteConversation', { id: 'main' });
-    expect((await screenSenseHistory(app))[1]!.usage).toMatchObject({ inputTokens: 0, requests: 0, unknownRequests: 1 });
+    expect((await history.read())[1]!.usage).toMatchObject({ inputTokens: 0, requests: 0, unknownRequests: 1 });
     database.execute('createConversation', metadata('main'));
     database.execute('appendHistory', { id: 'main', messages: [message] });
-    expect((await screenSenseHistory(app))[1]!.usage.inputTokens).toBe(100);
+    expect((await history.read())[1]!.usage.inputTokens).toBe(100);
     expect(usageReads.at(-1)).toMatchObject({ id: 'main', since: undefined });
     expect(readRecordPage.mock.calls.every(([, , options]) => options.limit === 20 && options.order === 'desc')).toBe(true);
   } finally { database.execute('close', undefined); await f.cleanup(); }
