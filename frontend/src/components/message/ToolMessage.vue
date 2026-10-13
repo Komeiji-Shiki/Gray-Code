@@ -26,8 +26,8 @@ import { useChatStore } from '../../stores'
 import { useBackgroundTaskStore } from '../../stores/backgroundTaskStore'
 import { sendToExtension, showNotification } from '../../utils/vscode'
 import { useI18n } from '../../i18n'
-import { generateId, decodeUnicodeEscapes } from '../../utils/format'
-import { shouldShowToolArgumentPreview } from './toolPreviewPolicy'
+import { generateId } from '../../utils/format'
+import { shouldShowToolArgumentPreview, toolArgumentPreviewText } from './toolPreviewPolicy'
 import { computeTaskCardStatus } from '../../utils/tools/subagents/backgroundStatus'
 import {
   diffGuardWarnings,
@@ -60,11 +60,14 @@ const DIFF_SUPPORTED_TOOLS = ['apply_diff', 'write_file', 'search_in_files', 'in
 const pendingDiffOrphanedAt = ref<Map<string, number>>(new Map())
 const DIFF_ORPHAN_GRACE_MS = 800
 const orphanCheckTick = ref(0)
+const EMPTY_PENDING_DIFFS: PendingDiffView[] = []
 
 const pendingDiffViewsByToolId = computed<Map<string, PendingDiffView[]>>(() => {
   const views = new Map<string, PendingDiffView[]>()
   for (const tool of enhancedTools.value) {
-    views.set(tool.id, getPendingDiffSessions(tool.id).map((session) => ({
+    const sessions = getPendingDiffSessions(tool.id)
+    if (sessions.length === 0) continue
+    views.set(tool.id, sessions.map((session) => ({
       ...session,
       progress: getDiffAutoSaveProgress(session),
       timeLeft: getDiffAutoSaveTimeLeft(session),
@@ -518,7 +521,7 @@ function shouldShowStreamingPreview(tool: ToolUsage): boolean {
 // 否则中文参数在预览阶段会显示为满屏 \u4e2d\u6587 转义序列。
 // 解码只影响展示；实际 partialArgs 保持原样，最终仍由 JSON.parse 权威解析。
 function getStreamingPreviewText(tool: ToolUsage): string {
-  return decodeUnicodeEscapes(tool.partialArgs || '')
+  return shouldShowStreamingPreview(tool) ? toolArgumentPreviewText(tool.partialArgs!) : ''
 }
 
 // 流式预览元素引用（用于自动滚动到底部）
@@ -581,7 +584,7 @@ const ToolContentHost = defineComponent({
       :is-processing="processingToolIds.has(tool.id)"
       :show-streaming-preview="shouldShowStreamingPreview(tool)"
       :streaming-preview-text="getStreamingPreviewText(tool)"
-      :pending-diffs="pendingDiffViewsByToolId.get(tool.id) || []"
+      :pending-diffs="pendingDiffViewsByToolId.get(tool.id) || EMPTY_PENDING_DIFFS"
       :diff-guard-warning="getDiffGuardWarning(tool)"
       :content-host="ToolContentHost"
       :register-streaming-preview-ref="setStreamingPreviewRef(tool.id)"

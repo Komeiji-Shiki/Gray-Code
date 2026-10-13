@@ -247,11 +247,8 @@ async function runToolAction(action: ToolActionConfig, tool: ToolUsage) {
         <div class="tool-info">
           <span
             v-if="isExpandable"
-            :class="[
-              'expand-icon',
-              'codicon',
-              isExpanded ? 'codicon-chevron-down' : 'codicon-chevron-right'
-            ]"
+            class="expand-icon codicon codicon-chevron-right"
+            :class="{ expanded: isExpanded }"
             aria-hidden="true"
           ></span>
 
@@ -449,6 +446,10 @@ async function runToolAction(action: ToolActionConfig, tool: ToolUsage) {
   font-size: var(--gc-font-size-body);
   color: var(--gc-text-muted);
   transition: transform var(--gc-duration-fast) var(--gc-ease-standard);
+}
+
+.expand-icon.expanded {
+  transform: rotate(90deg);
 }
 
 .tool-icon {
@@ -718,6 +719,10 @@ async function runToolAction(action: ToolActionConfig, tool: ToolUsage) {
 }
 
 @media (prefers-reduced-motion: reduce) {
+  .expand-icon {
+    transition: none;
+  }
+
   .status-icon.status-running {
     animation: none;
   }

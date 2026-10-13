@@ -531,7 +531,7 @@ onUnmounted(releaseThoughtDisplay)
   padding: 1px 6px;
   border-radius: var(--gc-radius-md);
   margin-left: 4px;
-  transition: all 0.2s ease;
+  transition: color var(--gc-duration-fast) var(--gc-ease-standard), background-color var(--gc-duration-fast) var(--gc-ease-standard);
 }
 
 .thought-time.thinking-active {
@@ -671,5 +671,16 @@ onUnmounted(releaseThoughtDisplay)
 /* 正文与工具调用块的垂直间距 */
 .tool-message-block {
   margin: 8px 0;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .thought-icon.thinking-pulse,
+  .thought-time.thinking-active {
+    animation: none;
+  }
+
+  .thought-time {
+    transition: none;
+  }
 }
 </style>

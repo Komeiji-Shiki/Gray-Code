@@ -12,6 +12,7 @@
 
 import { ref, computed, watch } from 'vue'
 import type { ComputedRef } from 'vue'
+import type { Message, ToolUsage } from '../../types'
 import { useChatStore } from '../../stores'
 import { messageListUiStateByTab } from './messageListUiState'
 import {
@@ -70,7 +71,7 @@ export function useTodoPanel(options: UseTodoPanelOptions) {
       .filter(t => t.text.length > 0)
   })
 
-  function hasConfirmedPlanExecution(tool: any): boolean {
+  function hasConfirmedPlanExecution(tool: ToolUsage): boolean {
     if (!tool) return false
     if (tool.name !== 'create_plan' && tool.name !== 'update_plan') return false
     const fromTool = tool.result && typeof tool.result === 'object' ? tool.result as Record<string, unknown> : undefined
@@ -88,7 +89,7 @@ export function useTodoPanel(options: UseTodoPanelOptions) {
     return getPlanExecutionPrompt(merged).length > 0
   }
 
-  function isTodoInitToolForSticky(tool: any): boolean {
+  function isTodoInitToolForSticky(tool: ToolUsage): boolean {
     if (!tool) return false
     if (tool.name === 'todo_write') return true
     if (tool.name === 'create_plan') return hasConfirmedPlanExecution(tool)
@@ -98,31 +99,53 @@ export function useTodoPanel(options: UseTodoPanelOptions) {
     return false
   }
 
-  // 模块级常量：todo 相关工具名集合（todoStickyMeta 的轻量预过滤用，避免每次评估重建 Set）
+  // 工具名先筛选，只有计划工具才需要合并结果和检查执行确认。
   const TODO_TOOL_NAME_SET = new Set(['todo_write', 'create_plan', 'update_plan'])
+
+  type TodoInit = { message: Message; tool: ToolUsage }
+  let prefixCache: {
+    messages: Message[]
+    structure: number
+    responses: number
+    scannedCount: number
+    latest: TodoInit | null
+  } | null = null
+
+  function findLatestInit(messages: Message[], from: number, before: number): TodoInit | null {
+    for (let index = before - 1; index >= from; index--) {
+      const message = messages[index]
+      if (message.role !== 'assistant' || !Array.isArray(message.tools)) continue
+      const tool = message.tools.find(item => TODO_TOOL_NAME_SET.has(item.name) && isTodoInitToolForSticky(item))
+      if (tool) return { message, tool }
+    }
+    return null
+  }
 
   const todoStickyMeta = computed(() => {
     const fallbackName = t('components.message.tool.todoWrite.label')
     const messages = chatStore.allMessages
+    const prefixCount = Math.max(0, messages.length - 1)
+    const structure = chatStore.messagesStructuralVersion
+    const responses = chatStore.toolResponseCacheRevision
+    const cached = prefixCache
+    const reusable = cached !== null && cached.messages === messages && cached.structure === structure
+      && cached.responses === responses && cached.scannedCount <= prefixCount
+    // 与消息窗口共用结构版本；流式尾消息始终重新检查，历史结果变更则重新定位初始化工具。
+    const prefix = findLatestInit(messages, reusable ? cached.scannedCount : 0, prefixCount)
+      ?? (reusable ? cached.latest : null)
+    prefixCache = { messages, structure, responses, scannedCount: prefixCount, latest: prefix }
+    const latest = findLatestInit(messages, prefixCount, messages.length) ?? prefix
 
-    // 工具名先于昂贵的合并判定做轻量过滤：todo_write / create_plan / update_plan 之外的
-    // 消息直接跳过（isTodoInitToolForSticky 含 getMergedToolResult + 确认文案判定，仅对有
-    // 相关工具名的消息调用），窗口内没有任何相关工具名时直接返回空态
-    for (let i = messages.length - 1; i >= 0; i--) {
-      const msg = messages[i]
-      if (msg.role !== 'assistant' || !Array.isArray(msg.tools)) continue
-      const hasTodoToolName = msg.tools.some(t => TODO_TOOL_NAME_SET.has(t.name))
-      if (!hasTodoToolName) continue
-      const initTool = msg.tools.find(tool => isTodoInitToolForSticky(tool))
-      if (!initTool) continue
+    if (latest) {
+      const { message: msg, tool: initTool } = latest
 
       let panelName = fallbackName
       if (initTool.name === 'create_plan' || initTool.name === 'update_plan') {
-        const title = typeof (initTool.args as any)?.title === 'string' ? (initTool.args as any).title.trim() : ''
+        const title = typeof initTool.args?.title === 'string' ? initTool.args.title.trim() : ''
         if (title) {
           panelName = title
         } else {
-          const path = typeof (initTool.args as any)?.path === 'string' ? (initTool.args as any).path.trim() : ''
+          const path = typeof initTool.args?.path === 'string' ? initTool.args.path.trim() : ''
           if (path) {
             const normalized = path.replace(/\\/g, '/')
             const name = normalized.split('/').filter(Boolean).pop() || path

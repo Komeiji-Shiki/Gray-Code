@@ -32,7 +32,11 @@ import deflist from 'markdown-it-deflist'
 import taskLists from 'markdown-it-task-lists'
 
 export type RenderProfile = 'default' | 'artifactSafe'
-interface MathRenderEnvironment { trustedMath?: Map<string, string>; conversationId?: string | null }
+interface MathRenderEnvironment {
+  trustedMath?: Map<string, string>
+  conversationId?: string | null
+  cacheCodeHighlights?: boolean
+}
 
 /**
  * 将 highlight.js 的 HTML 按“原始换行”安全拆成行，避免拆坏跨行的 <span>
@@ -367,7 +371,7 @@ function createMarkdownIt(options: { allowHtml: boolean }) {
       } else {
         try {
           highlighted = hljs.highlight(displayCode, { language: lang }).value
-          codeHighlightCache.set(cacheKey, highlighted)
+          if (env.cacheCodeHighlights !== false) codeHighlightCache.set(cacheKey, highlighted)
         } catch {
           highlighted = escapeHtml(displayCode)
         }
@@ -381,7 +385,7 @@ function createMarkdownIt(options: { allowHtml: boolean }) {
         highlighted = cached
       } else {
         highlighted = hljs.highlightAuto(displayCode).value
-        codeHighlightCache.set(cacheKey, highlighted)
+        if (env.cacheCodeHighlights !== false) codeHighlightCache.set(cacheKey, highlighted)
       }
     } else {
       // 完全无标注：跳过 auto，仅转义原文
@@ -826,7 +830,8 @@ export function renderStreamingContent(
   const markdownIt = getMarkdownItInstance(renderProfile)
   const environment: StreamingRenderEnvironment = {
     trustedMath: renderProfile !== 'artifactSafe' ? new Map() : undefined,
-    conversationId
+    conversationId,
+    cacheCodeHighlights: false
   }
   const tokens = markdownIt.parse(content, environment)
   const hasCrossBlockState = Object.keys(environment.references ?? {}).length > 0 || environment.footnotes !== undefined
@@ -847,6 +852,8 @@ export function renderStreamingContent(
     const block = blocks[i]
     const seqStart = environment.__grayCode?.codeBlockSeq ?? 0
     const isLast = i === blocks.length - 1
+    // 增长中的末块仍可读取已有高亮，但中间前缀不占用已完成代码的全局缓存。
+    environment.cacheCodeHighlights = !isLast
     const key = isLast
       ? ''
       : `${contextKey}\u0000${seqStart}\u0000${block.fileSignature}\u0000${source.slice(lineOffset(block.startLine), lineOffset(block.endLine))}`

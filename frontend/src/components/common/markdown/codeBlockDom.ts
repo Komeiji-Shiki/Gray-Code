@@ -63,18 +63,22 @@ export function createCodeBlockDomController(
     // 记录窗口：流式期间，或“流式类尚未解除”的收尾窗口（此时 pre 仍为自然高度，可测 scrollHeight）
     const recording = isStreaming() || isStreamingClassActive.value
 
+    // 先统一应用换行状态，再集中读取新布局；不能先测旧高度，也不逐块交替写样式和读布局。
+    blocks.forEach(block => {
+      block.classList.toggle('is-nowrap', codeWrapOverrides.get(block.getAttribute('data-block-id') || '') === true)
+    })
+    if (recording) {
+      blocks.forEach(block => {
+        const pre = block.querySelector<HTMLElement>('pre.code-block-wrapper')
+        if (pre && pre.scrollHeight > CODE_BLOCK_COLLAPSE_HEIGHT) {
+          streamingOverHeightBlockIds.add(block.getAttribute('data-block-id') || '')
+        }
+      })
+    }
+
     blocks.forEach((block) => {
       const blockId = block.getAttribute('data-block-id') || ''
       const isNoWrap = codeWrapOverrides.get(blockId) === true
-
-      block.classList.toggle('is-nowrap', isNoWrap)
-
-      if (recording) {
-        const pre = block.querySelector<HTMLElement>('pre.code-block-wrapper')
-        if (pre && pre.scrollHeight > CODE_BLOCK_COLLAPSE_HEIGHT) {
-          streamingOverHeightBlockIds.add(blockId)
-        }
-      }
       // 非流式时按记录恢复展开态（流式期间由 is-streaming 类放开高度，无需 keep-expanded）
       block.classList.toggle('keep-expanded', !isStreaming() && streamingOverHeightBlockIds.has(blockId))
 
