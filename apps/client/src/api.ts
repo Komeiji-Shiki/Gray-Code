@@ -1,7 +1,8 @@
 import { shellText as t } from './i18n';
 import type { RpcCall, UiRequestCall } from '@graycode/contracts';
 import { callDesktopBridge, type DesktopBridge } from '../../../shared/desktopBridge';
-import { requiresJsonRoundTrip } from '../../../shared/hostPayload';
+import { prepareHostPayload } from '../../../shared/hostPayload';
+import { isProxy, toRaw } from 'vue';
 export type { DesktopBridge } from '../../../shared/desktopBridge';
 declare global {
   interface Window {
@@ -10,12 +11,13 @@ declare global {
 }
 export function call<T = any>(method: string, params: object = {}): Promise<T> {
   if (!window.graycode) return Promise.reject(new Error(t('uiapiDesktopAppRequired')));
-  // 仅为代理对象及非 JSON 数据解包；普通文档和附件参数直接传输，避免复制正文。
+  // 代理只复制相关分支；普通文档和附件参数继续直接传输。
   if (method === 'files.upload' && 'bytes' in params && params.bytes instanceof Uint8Array) {
     const { bytes, ...fields } = params;
-    return callDesktopBridge<T>(window.graycode, method, { ...(requiresJsonRoundTrip(fields) ? JSON.parse(JSON.stringify(fields)) : fields), bytes });
+    const prepared = prepareHostPayload(fields, value => isProxy(value) ? toRaw(value) : value);
+    return callDesktopBridge<T>(window.graycode, method, { ...prepared, bytes });
   }
-  const payload = requiresJsonRoundTrip(params) ? JSON.parse(JSON.stringify(params)) : params;
+  const payload = prepareHostPayload(params, value => isProxy(value) ? toRaw(value) : value);
   return callDesktopBridge<T>(window.graycode, method, payload);
 }
 export function subscribe(listener: (event: Record<string, any>) => void): () => void {

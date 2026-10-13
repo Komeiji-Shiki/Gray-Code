@@ -9,7 +9,8 @@ import { routeExtensionMessage, type PendingRequestHandler } from './extensionMe
 // B1：超时豁免名单迁入 shared/protocol.ts 单一来源（与 NON_BLOCKING_MESSAGE_TYPES 语义不同，勿合并）
 import { MESSAGE_NAMES, UNBOUNDED_REQUEST_TYPES } from '@shared/protocol'
 import { getHostTransport } from './hostTransport'
-import { requiresJsonRoundTrip } from '@shared/hostPayload'
+import { prepareHostPayload } from '@shared/hostPayload'
+import { isProxy, toRaw } from 'vue'
 import { t } from '../i18n'
 
 // 获取 VSCode API（全局类型由 vite-env.d.ts 声明：acquireVsCodeApi(): VsCodeApi）
@@ -81,18 +82,8 @@ export function sendToExtension<T = any>(type: string, data?: any, options?: Ext
 
     // 发送消息
     try {
-      // 修改原因：Vue ref 响应式对象是 Proxy，vscode.postMessage 的 structured clone
-      //          无法序列化 Proxy，会抛 DataCloneError。调用方传进来的 data 可能含有来自
-      //          ref 的深层嵌套 Proxy（如预设模板的 tools.whitelist 数组）。
-      // 修改方式：仅当 payload 树中检测到 Proxy 时才 JSON 往返解包；纯 JSON payload
-      //          （如带 base64 附件的大对象）直接透传，避免每次复制数 MB 字符串。
-      //          透传若因漏检的非 Vue Proxy 抛 DataCloneError，回退 JSON 解包重试一次。
-      // 修改目的：调用方无需感知 Vue 响应式细节，全局消除 "could not be cloned"，
-      //          同时消除大 payload 的双份 JSON 序列化开销。
-      let safeData = data
-      if (requiresJsonRoundTrip(data)) {
-        safeData = JSON.parse(JSON.stringify(data))
-      }
+      // Proxy 只复制所属分支；混合非 JSON 数据仍保留原来的根转换语义。
+      let safeData = prepareHostPayload(data, value => isProxy(value) ? toRaw(value) : value)
       try {
         vscode.postMessage({
           type,
@@ -100,9 +91,8 @@ export function sendToExtension<T = any>(type: string, data?: any, options?: Ext
           data: safeData
         })
       } catch (postErr: any) {
-        // 已 JSON 化仍失败（如 payload 超限）→ 直接抛出，由外层统一处理
-        if (safeData !== data) throw postErr
-        // 透传失败（漏检的非 Vue Proxy 等）→ 回退 JSON 解包重试一次
+        // 分支复制后仍可能漏检非 Vue Proxy，克隆错误继续按原数据 JSON 化重试一次。
+        if (safeData !== data && postErr?.name !== 'DataCloneError') throw postErr
         safeData = JSON.parse(JSON.stringify(data))
         vscode.postMessage({
           type,

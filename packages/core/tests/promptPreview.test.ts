@@ -8,6 +8,36 @@ import { PlatformPromptService } from '../../../apps/server/src/prompt/service';
 import { PINNED_FILE_MAX_BYTES, PINNED_FILE_MAX_TOTAL_BYTES } from '../../../backend/modules/prompt/pinnedFiles';
 import type { PromptPreviewResult } from '../../../shared/promptPreview';
 import { fixture } from './fixtures';
+import { MessageTokenEstimator } from '../../../backend/modules/api/chat/services/MessageTokenEstimator';
+import type { Content } from '../../../backend/modules/conversation/types';
+import { estimateModelInputTokens } from '../../../apps/server/src/model/usage';
+
+test('usage 固定长前缀复用完整计数，内容或嵌入方式变化后保留原拼接口径', () => {
+  const input: ModelInput = { providerId: 'usage-fixture', conversationId: 'usage-fixture', systemPrompt: '固定前缀 '.repeat(30_000),
+    tools: [{ name: 'tool', description: '工具说明', parameters: { type: 'object' } }],
+    messages: [{ role: 'user', parts: [{ text: '当前输入' }] }],
+    promptContext: { historyPlacement: 'entry', beforeHistoryMessages: [{ role: 'user', parts: [{ text: '前置上下文' }] }], afterHistoryMessages: [] },
+    taskContext: { actor: { id: 'owner', displayName: '主人', role: 'owner' } }, signal: new AbortController().signal,
+  };
+  const legacyCount = () => {
+    const fixed = [input.systemPrompt, JSON.stringify(input.tools), input.promptContext?.taskContextEmbedded ? '' : JSON.stringify(input.taskContext)]
+      .filter(Boolean).join('\n');
+    const estimator = new MessageTokenEstimator();
+    return [...input.messages, ...input.promptContext!.beforeHistoryMessages, ...input.promptContext!.afterHistoryMessages,
+      { role: 'user', parts: [{ text: fixed }] }].reduce((sum, message) => sum + estimator.estimateMessageTokens(message as Content), 0);
+  };
+  const expected = legacyCount();
+  const estimate = jest.spyOn(MessageTokenEstimator.prototype, 'estimateMessageTokens');
+  try {
+    expect(estimateModelInputTokens(input)).toBe(expected);
+    expect(estimateModelInputTokens({ ...input, tools: input.tools.map(tool => ({ ...tool })) })).toBe(expected);
+    expect(estimate.mock.calls.filter(([message]) => message.parts[0]?.text?.startsWith(input.systemPrompt)).length).toBe(1);
+  } finally { estimate.mockRestore(); }
+  input.tools[0]!.description = '原地变更后的工具说明';
+  expect(estimateModelInputTokens(input)).toBe(legacyCount());
+  input.promptContext!.taskContextEmbedded = true;
+  expect(estimateModelInputTokens(input)).toBe(legacyCount());
+});
 
 describe('当前完整提示词的只读预览', () => {
   let f: Awaited<ReturnType<typeof fixture>>, app: PlatformApplication, providerId: string;
