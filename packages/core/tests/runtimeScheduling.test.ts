@@ -41,6 +41,39 @@ test('独立读取最多四个同时执行，写入保序，图片结果仍按�
   } finally { await runtime.close(); await f.cleanup(); }
 });
 
+test('连续的派发调用一起启动，不受只读批次上限约束，后续写入等待整组结束', async () => {
+  const f = await fixture(); const tools = new RuntimeToolRegistry();
+  let active = 0, maximum = 0, release!: () => void;
+  // 串行执行时第一项会等到超时才放行，最大并发数随之停在 1。
+  const gate = new Promise<void>(resolve => { release = resolve; setTimeout(resolve, 1000).unref(); });
+  tools.register({ declaration: { name: 'dispatch', description: '派发', parameters: { type: 'object', properties: { index: { type: 'integer' } } } },
+    concurrentDispatch: true, effects: () => [], execute: async args => {
+      active++; maximum = Math.max(maximum, active);
+      if (active === 6) release();
+      await gate; active--;
+      return { success: true, data: { index: args.index } };
+    } });
+  tools.register({ declaration: { name: 'write', description: '写入', parameters: { type: 'object', properties: {} } },
+    effects: () => ['workspace_write'], execute: async () => { expect(active).toBe(0); return { success: true }; } });
+  const inputIds = [...Array.from({ length: 6 }, (_, index) => 'dispatch-' + index), 'write'];
+  const runtime = new PlatformRuntime({ storage: f.store, tools,
+    actor: async () => ({ id: 'owner', displayName: '测试', role: 'owner', effects: [], workspaceIds: '*' }),
+    agent: async () => ({ id: 'test', name: '测试', providerId: 'fixture', systemPrompt: '', approvalMode: 'sensitive', toolApproval: { write: 'auto' }, maxIterations: 2, toolNames: ['dispatch', 'write'] }),
+    workspace: async () => null, models: { generate: async input => {
+      if (input.messages.some(message => message.isFunctionResponse)) {
+        const results = input.messages.flatMap(message => message.parts).filter(part => part.functionResponse).map(part => part.functionResponse as any);
+        expect(results.map(result => result.id)).toEqual(inputIds);
+        return { role: 'model', parts: [{ text: '完成' }] };
+      }
+      return { role: 'model', parts: inputIds.map(id => ({ functionCall: { id, name: id === 'write' ? 'write' : 'dispatch', args: id === 'write' ? {} : { index: Number(id.slice(9)) } } })) };
+    } } });
+  try {
+    await runtime.initialize(); await f.store.createConversation(metadata('dispatch'));
+    const run = await runtime.start({ actorId: 'owner', agentId: 'test', conversationId: 'dispatch', requestKey: 'dispatch', message: { role: 'user', parts: [{ text: '派发' }] } });
+    expect((await runtime.wait(run.id))?.status).toBe('completed'); expect(maximum).toBe(6);
+  } finally { await runtime.close(); await f.cleanup(); }
+});
+
 test('取消并行读取后不执行后续写入，剩余调用都有成对结果', async () => {
   const f = await fixture(); const tools = new RuntimeToolRegistry();
   let entered = 0, ready!: () => void, writes = 0; const allStarted = new Promise<void>(resolve => { ready = resolve; });

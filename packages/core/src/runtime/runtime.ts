@@ -590,6 +590,9 @@ export class PlatformRuntime {
           const batch = [calls[index++]];
           if (this.parallelRead(batch[0], agent, catalog)) {
             while (batch.length < 4 && index < calls.length && !calls[index].async && this.parallelRead(calls[index], agent, catalog)) batch.push(calls[index++]);
+          } else if (this.concurrentDispatch(batch[0], catalog)) {
+            // 子代理等派发调用由工具自身的并发上限排队，连续的调用一起启动，不套用只读批次的四个上限。
+            while (index < calls.length && !calls[index].async && this.concurrentDispatch(calls[index], catalog)) batch.push(calls[index++]);
           }
           const outcomes = await Promise.all(batch.map(call => signal.aborted
             ? { success: false, code: 'CANCELLED', error: 'Task was cancelled before execution.' }
@@ -649,6 +652,10 @@ export class PlatformRuntime {
     if (catalog.entries.get(call.name)?.tool.nativeAsync === true) return agent.toolApproval?.[call.name] !== 'deny';
     const { task_handle: _handle, ...args } = call.args;
     return this.parallelRead({ ...call, args }, agent, catalog);
+  }
+
+  private concurrentDispatch(call: FunctionCall, catalog: ToolCatalog): boolean {
+    return catalog.entries.get(call.name)?.tool.concurrentDispatch === true;
   }
 
   private parallelRead(call: FunctionCall, agent: AgentDefinition, catalog: ToolCatalog): boolean {

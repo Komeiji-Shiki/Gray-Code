@@ -22,7 +22,8 @@ export function subagentTools(app: PlatformApplication, config: SubAgentsConfig 
     ? `向同一主任务中正在运行的子代理或主模型发送消息。用 targetRunId 指定子代理运行，或用 targetAgentName 指定名称（重名时发给最近启动的那个，main 表示主模型），二者只能选一个。发送成功即表示消息已保存。收件方会在当前这批工具执行完、下一次调用模型前或任务结束前读取。前台子代理给 main 发消息后，主模型不再等它返回，它会转到后台继续运行；主模型空闲时会自动处理收到的消息。每条消息最多 ${AGENT_MESSAGE_MAX_LENGTH} 字符，每个收件方最多积压 ${AGENT_INBOX_MAX_MESSAGES} 条。不要轮询，也不要重复发送。消息不会唤醒已失败、已停止或因重启中断的子代理。`
     : `Send a message to a running sub-agent or to the main model within the same main task. Address a sub-agent run with targetRunId, or a name with targetAgentName (the most recently started one wins on duplicate names; main means the main model); use only one of them. A successful send means the message has been saved. The recipient reads it after the current batch of tools finishes, before its next model call, or before it finishes. When a foreground sub-agent messages main, the main model stops waiting for it and it continues in the background; an idle main model handles incoming messages automatically. Each message is limited to ${AGENT_MESSAGE_MAX_LENGTH} characters, and each recipient holds at most ${AGENT_INBOX_MAX_MESSAGES} unread messages. Do not poll or resend. Messages do not wake sub-agents that failed, were stopped or were interrupted by a restart.`);
   return [{ declaration: { name: declaration.name, description: declaration.description, parameters: declaration.parameters }, effects: () => [],
-    execute: (args, context) => app.subagents.dispatch(args, context) },
+    // 同一响应中的多个子代理一起启动，实际并发数和排队由「最大并发数」控制。
+    concurrentDispatch: true, execute: (args, context) => app.subagents.dispatch(args, context) },
     { declaration: { name: messages.name, description: messages.description, parameters: messages.parameters }, effects: () => [],
       execute: (args, context) => app.subagents.messages.send(args, context) },
     subagentRequestsTool(app, isZh)];

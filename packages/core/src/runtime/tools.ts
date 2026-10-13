@@ -46,6 +46,8 @@ export interface RuntimeTool {
   approvalName?: (args: Record<string, unknown>) => string;
   /** 明确独立的读取允许同批并行；混合工具可按参数纯分类，实际效果与审批仍限制并行。 */
   parallelRead?: boolean | ((args: Record<string, unknown>) => boolean);
+  /** 同一响应中连续的此类调用一起启动；容量与排队由工具自身的并发控制负责，不受只读批次上限约束。 */
+  concurrentDispatch?: boolean;
   /** 支持待完成调用的生命周期；实际执行仍经过完整授权和审批。 */
   nativeAsync?: boolean;
   /** 只在实际启用原生异步时补充模型侧的生命周期约束。 */
