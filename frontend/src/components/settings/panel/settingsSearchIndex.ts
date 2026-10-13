@@ -91,7 +91,10 @@ export function settingsSearchIndex(isDesktopHost: boolean, supportsFileAssociat
     labelKey: 'components.settings.channelSettings.form.advancedOptions.title',
     keywords: [
       '高级选项', 'advanced options', '高度な設定', 'gemini', 'openai', 'anthropic', '扩展',
-      'OpenCode', 'OpenCode Go', 'opencode', 'x-opencode-session', '会话', 'session', 'セッション'
+      'OpenCode', 'OpenCode Go', 'opencode', 'x-opencode-session', '会话', 'session', 'セッション',
+      '温度', 'temperature', 'top_p', 'topP', 'top_k', 'topK', 'max_tokens', 'max_output_tokens', 'maxOutputTokens',
+      '思考', 'thinking', 'thinkingBudget', 'budget_tokens', 'reasoning', 'reasoning_effort', 'reasoningEffort', 'effort',
+      '提示词缓存', 'promptCaching', 'prompt_cache', '缓存', 'cache'
     ],
     anchor: '[data-search-anchor="advanced-options"]'
   },

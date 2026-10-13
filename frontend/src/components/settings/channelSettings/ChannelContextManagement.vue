@@ -141,7 +141,12 @@ const thresholdHelp = computed(() => {
 </script>
 
 <template>
-  <div class="form-group" data-search-anchor="context-management">
+  <div
+    class="form-group"
+    data-search-anchor="context-management"
+    data-search-reveal
+    @settings-search-reveal="emit('update:show', true)"
+  >
     <button class="advanced-toggle" @click="emit('update:show', !show)">
       <i :class="['codicon', show ? 'codicon-chevron-down' : 'codicon-chevron-right']"></i>
       <span>{{ t('components.settings.contextPage.channelOverridesTitle') }}</span>

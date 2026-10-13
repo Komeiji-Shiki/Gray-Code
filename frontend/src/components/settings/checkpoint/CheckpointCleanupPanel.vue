@@ -77,7 +77,7 @@ defineEmits<{
     </p>
 
     <!-- 搜索框 -->
-    <div class="search-box">
+    <div class="search-box" data-preference-transient>
       <i class="codicon codicon-search" aria-hidden="true"></i>
       <input
         :value="searchQuery"

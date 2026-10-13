@@ -30,7 +30,12 @@ const emit = defineEmits<{
 </script>
 
 <template>
-  <div class="form-group" data-search-anchor="advanced-options">
+  <div
+    class="form-group"
+    data-search-anchor="advanced-options"
+    data-search-reveal
+    @settings-search-reveal="emit('update:show', true)"
+  >
     <button class="advanced-toggle" @click="emit('update:show', !show)">
       <i :class="['codicon', show ? 'codicon-chevron-down' : 'codicon-chevron-right']"></i>
       <span>{{ t('components.settings.channelSettings.form.advancedOptions.title') }}</span>

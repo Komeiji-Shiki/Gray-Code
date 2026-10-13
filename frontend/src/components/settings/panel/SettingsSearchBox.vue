@@ -96,7 +96,7 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <div ref="searchRootRef" class="settings-search-root">
+  <div ref="searchRootRef" class="settings-search-root" data-preference-transient>
     <div
       class="settings-search-box"
       :class="{ focused, 'has-query': !!query }"

@@ -189,7 +189,7 @@ watch([() => props.visible, () => props.configId], ([visible, configId]) => {
       </div>
 
       <div v-else class="model-list-wrapper">
-        <div class="filter-input-container">
+        <div class="filter-input-container" data-preference-transient>
           <i class="codicon codicon-search" aria-hidden="true"></i>
           <input
             v-model="filterKeyword"

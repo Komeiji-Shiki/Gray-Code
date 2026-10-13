@@ -61,7 +61,7 @@ const emit = defineEmits<{
 
     <div v-else class="tool-policy-custom">
       <div class="tool-policy-toolbar">
-        <div class="tool-search">
+        <div class="tool-search" data-preference-transient>
           <i class="codicon codicon-search"></i>
           <input
             :value="searchQuery"

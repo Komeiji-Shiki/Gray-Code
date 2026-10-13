@@ -232,7 +232,7 @@ async function selectModel(modelId: string) {
     <!-- 已添加的模型 -->
     <div v-if="models.length > 0" class="model-list-container">
       <!-- 筛选输入框 -->
-      <div class="filter-input-container">
+      <div class="filter-input-container" data-preference-transient>
         <i class="codicon codicon-search" aria-hidden="true"></i>
         <input
           v-model="filterKeyword"

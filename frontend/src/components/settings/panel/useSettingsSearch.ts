@@ -78,19 +78,22 @@ export function useSettingsSearch(options: SearchOptions) {
     cancelNavigation()
     searchFocused.value = false
     if (await options.selectTab(entry.tab) === false || disposed || options.activeTab() !== entry.tab) return
-    searchQuery.value = ''; activeSearchIndex.value = 0
+    // 保留查询和当前结果位置，便于再次打开下拉列表继续比较其他匹配项。
     const request = navigation
     await nextTick()
     const container = options.container()
     if (disposed || request !== navigation || !container) return
     const fallback = () => container.querySelector<HTMLElement>('.settings-section h4, .settings-section h3, [data-search-anchor]') ?? container
     const find = () => entry.anchor ? container.querySelector<HTMLElement>(entry.anchor) : fallback()
-    const reveal = (target: HTMLElement) => {
+    const reveal = async (target: HTMLElement) => {
       cancelWait?.(); cancelWait = undefined
-      // 搜索结果可能位于可选配置中，先展开祖先区块再计算滚动位置。
+      // 原生 details 与自定义折叠区共用展开入口；区块自己更新状态，搜索不模拟点击开关。
       for (let element: HTMLElement | null = target; element && element !== container; element = element.parentElement) {
         if (element instanceof HTMLDetailsElement) element.open = true
+        if (element.hasAttribute('data-search-reveal')) element.dispatchEvent(new Event('settings-search-reveal'))
       }
+      await nextTick()
+      if (disposed || request !== navigation) return
       frame = requestAnimationFrame(() => {
         frame = undefined
         if (disposed || request !== navigation) return
@@ -101,10 +104,10 @@ export function useSettingsSearch(options: SearchOptions) {
       })
     }
     const target = find()
-    if (target) { reveal(target); return }
+    if (target) { await reveal(target); return }
     // 页签组件和工具目录会分别异步加载，观察实际条目，避免 nextTick 后立即退回页首。
-    const observer = new MutationObserver(() => { const target = find(); if (target) reveal(target) })
-    const timeout = setTimeout(() => reveal(fallback()), 4000)
+    const observer = new MutationObserver(() => { const target = find(); if (target) void reveal(target) })
+    const timeout = setTimeout(() => { void reveal(fallback()) }, 4000)
     cancelWait = () => { observer.disconnect(); clearTimeout(timeout) }
     observer.observe(container, { childList: true, subtree: true })
   }

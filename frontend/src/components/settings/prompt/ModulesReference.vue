@@ -27,7 +27,12 @@ const emit = defineEmits<{
 
 <template>
   <!-- 可用变量参考（可收缩，默认收起） -->
-  <div class="modules-reference collapsible" data-search-anchor="prompt-modules">
+  <div
+    class="modules-reference collapsible"
+    data-search-anchor="prompt-modules"
+    data-search-reveal
+    @settings-search-reveal="emit('update:collapsed', false)"
+  >
     <button
       type="button"
       class="reference-header"

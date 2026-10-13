@@ -325,6 +325,8 @@ onMounted(() => {
             :key="tool.name"
             class="tool-wrapper"
             :data-search-tool="encodeURIComponent(tool.name)"
+            :data-search-reveal="hasConfigPanel(tool.name) ? '' : undefined"
+            @settings-search-reveal="expandedTools.add(tool.name)"
           >
             <div class="tool-item" :class="{ 'tool-disabled': hasToolDependencies(tool.name) && !areAllDependenciesInstalled(tool.name) }">
               <div class="tool-info">
