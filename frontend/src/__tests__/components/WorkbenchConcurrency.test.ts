@@ -21,7 +21,14 @@ vi.mock('../../../../apps/client/src/computer', () => ({ computerState: { openRe
 vi.mock('../../../../apps/client/src/debugging', () => ({ connectDebugging() {}, debugControl: vi.fn(), toggleBreakpoint: vi.fn(),
   debugState: { activeId: undefined, sessions: [] } }));
 // 子面板的渲染和宿主连接各有回归；这里保留工作台本身的 Vue 状态、事件与文档队列。
-vi.mock('../../../../apps/client/src/components/CodeEditor.vue', () => ({ default: { name: 'CodeEditor', props: ['path', 'workspaceId', 'value', 'version'], emits: ['change'], template: '<div />' } }));
+vi.mock('../../../../apps/client/src/components/CodeEditor.vue', () => ({ default: {
+  name: 'CodeEditor', props: ['document', 'models', 'selection'], emits: ['save', 'problems', 'outline'], template: '<div />',
+} }));
+vi.mock('../../../../apps/client/src/workbenchModels', () => ({ WorkbenchDocumentModels: class {
+  prepare() { return { model: { isDisposed: () => false } }; }
+  reconcile() {}
+  dispose() {}
+} }));
 vi.mock('../../../../apps/client/src/components/TerminalPanel.vue', () => ({ default: { name: 'TerminalPanel', template: '<div />' } }));
 vi.mock('../../../../apps/client/src/components/ComputerPane.vue', () => ({ default: { name: 'ComputerPane', template: '<div />' } }));
 vi.mock('../../../../apps/client/src/components/NodePane.vue', () => ({ default: { name: 'NodePane', template: '<div />' } }));
@@ -42,12 +49,35 @@ beforeEach(() => {
 });
 afterEach(() => { wrappers.splice(0).forEach(wrapper => wrapper.unmount()); mocks.listeners.clear(); });
 function workbench(compact = false) {
-  const wrapper = shallowMount(Workbench, { props: { compact } }); wrappers.push(wrapper);
+  const wrapper = shallowMount(Workbench, { props: { compact }, global: { stubs: {
+    CodeEditor: { name: 'CodeEditor', props: ['document', 'models', 'selection'], template: '<div />' },
+  } } }); wrappers.push(wrapper);
   const tabs = () => wrapper.findComponent(WorkbenchTabs);
   tabs().vm.$emit('add', 'editor');
   const open = (file: string) => wrapper.findComponent(FileTree).vm.$emit('open', file, 'project');
   return { wrapper, tabs, open };
 }
+
+test('窄屏首次打开后扩大窗口会准备共享编辑器，反复切换布局仍沿用文档模型注册表', async () => {
+  const view = workbench(true);
+  view.open('compact.ts');
+  await flushPromises();
+  expect(view.wrapper.findComponent({ name: 'CodeEditor' }).exists()).toBe(false);
+  expect(view.wrapper.findComponent(MobileCodeEditor).props('path')).toBe('compact.ts');
+
+  await view.wrapper.setProps({ compact: false });
+  await vi.waitFor(() => expect(view.wrapper.findComponent({ name: 'CodeEditor' }).exists()).toBe(true));
+  const editor = () => view.wrapper.findComponent({ name: 'CodeEditor' });
+  const registry = editor().props('models');
+  expect(editor().props('document').path).toBe('compact.ts');
+
+  await view.wrapper.setProps({ compact: true });
+  expect(editor().exists()).toBe(false);
+  await view.wrapper.setProps({ compact: false });
+  await flushPromises();
+  expect(editor().props('models')).toBe(registry);
+  expect(editor().props('document').path).toBe('compact.ts');
+});
 
 test('迟到的打开响应可以保留标签，但不能抢回较新文件的焦点', async () => {
   const slow = deferred<ReturnType<typeof document>>();

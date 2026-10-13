@@ -8,7 +8,13 @@ import { setShellLanguage } from '../../../../apps/client/src/i18n';
 const mocks = vi.hoisted(() => ({ call: vi.fn(), report: vi.fn(), createModel: vi.fn(),
   listeners: new Set<(event: any) => void>(), editors: [] as { setModel: ReturnType<typeof vi.fn>; dispose: ReturnType<typeof vi.fn> }[],
   observers: [] as { resize(width: number): void; disconnect: ReturnType<typeof vi.fn> }[] }));
-vi.mock('../../../../apps/client/src/api', () => ({ call: mocks.call, rpc: mocks.call,
+vi.mock('../../../../apps/client/src/api', () => ({ call: (method: string, params: Record<string, any>) => {
+  if (method === 'ui.request' && params.type === 'diff.loadContent') {
+    const id = params.data.diffContentId;
+    return Promise.resolve({ originalContent: `before:${id}`, newContent: `after:${id}` });
+  }
+  return mocks.call(method, params);
+}, rpc: mocks.call,
   subscribe: (listener: (event: any) => void) => { mocks.listeners.add(listener); return () => mocks.listeners.delete(listener); } }));
 vi.mock('../../../../apps/client/src/state', async () => {
   const { reactive, ref } = await import('vue');

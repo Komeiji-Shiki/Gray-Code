@@ -5,15 +5,14 @@ import { changeBreakpoints, connectDebugging, debugState, loadDebugSettings, tog
 import { report } from './state';
 
 /** 使用 Monaco 的装饰范围跟随编辑与撤销移动断点，不重建文本模型。 */
-export function bindEditorDebugging(editor: monaco.editor.IStandaloneCodeEditor, workspaceId: string, file: string) {
+export function bindModelDebugging(model: monaco.editor.ITextModel, workspaceId: string, file: string) {
   connectDebugging();
-  const model = editor.getModel()!;
   let decorations: string[] = [],
     ids: string[] = [],
     positionsDirty = false,
     disposed = false;
   let timer: ReturnType<typeof setTimeout> | undefined;
-  const execution = editor.createDecorationsCollection();
+  let execution: string[] = [];
   const render = () => {
     const previous = new Map(ids.map((id, index) => [id, model.getDecorationRange(decorations[index])?.startLineNumber]));
     const values = debugState.settings[workspaceId]?.breakpoints.filter((value) => value.path === file) ?? [];
@@ -44,7 +43,7 @@ export function bindEditorDebugging(editor: monaco.editor.IStandaloneCodeEditor,
     decorations = model.deltaDecorations(decorations, next);
     ids = values.map((value) => value.id);
     const location = debugState.location;
-    execution.set(
+    execution = model.deltaDecorations(execution,
       location?.workspaceId === workspaceId && location.path === file
         ? [
             {
@@ -61,20 +60,6 @@ export function bindEditorDebugging(editor: monaco.editor.IStandaloneCodeEditor,
     { deep: true },
   );
   void loadDebugSettings(workspaceId).catch(report);
-  const toggle = () => {
-    const position = editor.getPosition();
-    if (position) void toggleBreakpoint(workspaceId, file, position.lineNumber).catch(report);
-  };
-  const mouse = editor.onMouseDown((event) => {
-    if (event.target.type === monaco.editor.MouseTargetType.GUTTER_GLYPH_MARGIN && event.target.position)
-      void toggleBreakpoint(workspaceId, file, event.target.position.lineNumber).catch(report);
-  });
-  const action = editor.addAction({
-    id: 'graycode.toggleBreakpoint',
-    label: t('uieditorDebuggingToggleCurrentLineBreakpoint'),
-    keybindings: [monaco.KeyCode.F9],
-    run: toggle,
-  });
   const persist = async () => {
     if (disposed || !positionsDirty) return;
     let version = model.getVersionId();
@@ -112,11 +97,28 @@ export function bindEditorDebugging(editor: monaco.editor.IStandaloneCodeEditor,
       disposed = true;
       clearTimeout(timer);
       stopWatching();
-      mouse.dispose();
       changed.dispose();
-      action?.dispose();
-      execution.clear();
+      if (!model.isDisposed()) model.deltaDecorations(execution, []);
       if (!model.isDisposed()) model.deltaDecorations(decorations, []);
     },
   };
+}
+
+/** 只绑定可见编辑器的输入；断点位置与装饰由文档模型持续维护。 */
+export function bindEditorDebugging(editor: monaco.editor.IStandaloneCodeEditor, workspaceId: string, file: string) {
+  const toggle = () => {
+    const position = editor.getPosition();
+    if (position) void toggleBreakpoint(workspaceId, file, position.lineNumber).catch(report);
+  };
+  const mouse = editor.onMouseDown((event) => {
+    if (event.target.type === monaco.editor.MouseTargetType.GUTTER_GLYPH_MARGIN && event.target.position)
+      void toggleBreakpoint(workspaceId, file, event.target.position.lineNumber).catch(report);
+  });
+  const action = editor.addAction({
+    id: 'graycode.toggleBreakpoint',
+    label: t('uieditorDebuggingToggleCurrentLineBreakpoint'),
+    keybindings: [monaco.KeyCode.F9],
+    run: toggle,
+  });
+  return { dispose() { mouse.dispose(); action?.dispose(); } };
 }

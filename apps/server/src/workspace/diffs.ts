@@ -16,6 +16,8 @@ export interface WorkspaceDiff extends ToolErrorDisplayMetadata {
   encoding?: TextDetectionResult;
   diffGuardWarning?: string; diffGuardDeletePercent?: number;
 }
+export type WorkspaceDiffSummary = Pick<WorkspaceDiff, 'id' | 'conversationId' | 'workspaceId' | 'path' | 'status'
+  | 'toolCallId' | 'createdAt' | 'error' | 'displayErrorCode' | 'diffGuardWarning' | 'diffGuardDeletePercent'>;
 interface PendingReview {
   value: WorkspaceDiff; context: ToolContext; session: DiffReviewSession; processing: boolean;
   settle(value: WorkspaceDiff): void;
@@ -46,18 +48,18 @@ export class WorkspaceDiffs {
   private save(value: WorkspaceDiff) {
     return this.app.storage.putRecord({ namespace, id: value.id, ownerId: value.conversationId, value });
   }
-  async list(actorId: string, workspaceId: string, includeId?: string): Promise<WorkspaceDiff[]> {
+  async list(actorId: string, workspaceId: string, includeId?: string): Promise<WorkspaceDiffSummary[]> {
     if (includeId !== undefined && (typeof includeId !== 'string' || !includeId)) throw new Error(t('modules.diff.previewNotFound'));
     this.app.workspace(actorId, workspaceId, ['workspace_read']);
-    type DiffHeader = Pick<WorkspaceDiff, 'id' | 'conversationId' | 'workspaceId' | 'createdAt'>;
-    let recent: DiffHeader[] = [], included: DiffHeader | undefined, afterId: string | undefined;
+    let recent: WorkspaceDiffSummary[] = [], included: WorkspaceDiffSummary | undefined, afterId: string | undefined;
     const conversations = new Set<string>();
     for (;;) {
-      // 历史提案先按轻量字段筛选，仅还原最终显示项的正文，避免把其他工作区与过期提案全部读回。
+      // 列表只读摘要；正文由已有 content 接口按选中提案读取，不再展开最近百份文件。
       const page = await this.app.storage.readRecordPage(namespace, undefined, { afterId, limit: 200,
-        projection: { fields: ['id', 'conversationId', 'workspaceId', 'createdAt'] } });
+        projection: { fields: ['id', 'conversationId', 'workspaceId', 'createdAt', 'path', 'status', 'toolCallId',
+          'error', 'displayErrorCode', 'diffGuardWarning', 'diffGuardDeletePercent'] } });
       for (const entry of page) {
-        const value = entry.value as DiffHeader;
+        const value = entry.value as WorkspaceDiffSummary;
         if (value.workspaceId !== workspaceId) continue;
         if (!conversations.has(value.conversationId)) {
           await this.app.conversation(actorId, value.conversationId); conversations.add(value.conversationId);
@@ -74,7 +76,7 @@ export class WorkspaceDiffs {
       // 精确预览历史目标时仍保持列表上限，只替换最旧的一项，不改默认最新列表。
       recent = [...recent.slice(0, 99), included];
     }
-    return Promise.all(recent.map(value => this.app.storage.getRecord(namespace, value.id) as Promise<WorkspaceDiff>));
+    return recent;
   }
   async content(actorId: string, id: string) {
     const value = await this.app.storage.getRecord(namespace, id) as WorkspaceDiff | null;

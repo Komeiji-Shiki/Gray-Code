@@ -14,15 +14,19 @@ import { shellText } from '../i18n';
 type DiffStatus = "pending" | "accepted" | "rejected" | "cancelled";
 interface WorkspaceDiff {
   id: string; conversationId: string; workspaceId: string; path: string;
-  originalText: string; proposedText: string; status: DiffStatus; toolCallId: string;
+  status: DiffStatus; toolCallId: string;
   diffGuardWarning?: string; error?: string;
 }
 const MAX_DIFFS = 100;
 type DiffTarget = { workspaceId: string; id?: string; path?: string; toolCallId?: string };
 const props = defineProps<{ workspaceId: string; target?: DiffTarget }>();
+const emit = defineEmits<{ open: [path: string, workspaceId: string] }>();
 const diffs = ref<WorkspaceDiff[]>([]);
 const selectedId = ref("");
 const loading = ref(false);
+const contentLoading = ref(false);
+const contentError = ref('');
+const sideBySide = ref(false);
 const listVisible = ref(true);
 const compactListVisible = ref(false);
 const panelWidth = ref(0);
@@ -43,12 +47,13 @@ const editorRoot = ref<HTMLDivElement>();
 let resizeObserver: ResizeObserver | undefined;
 let loadSequence = 0;
 let resolveSequence = 0;
+let contentSequence = 0;
 let disposed = false;
 let requestedTarget: DiffTarget | undefined;
 let diffEditor: monaco.editor.IStandaloneDiffEditor | undefined;
 let originalModel: monaco.editor.ITextModel | undefined;
 let proposedModel: monaco.editor.ITextModel | undefined;
-let renderedDiff: Pick<WorkspaceDiff, 'id' | 'path' | 'originalText' | 'proposedText'> | undefined;
+let renderedDiff: { id: string; path: string; originalText: string; proposedText: string } | undefined;
 const selected = () => loadedWorkspaceId.value === props.workspaceId
   ? diffs.value.find(diff => diff.id === selectedId.value && diff.workspaceId === props.workspaceId) : undefined;
 function matchesTarget(diff: WorkspaceDiff, target: DiffTarget) {
@@ -93,18 +98,38 @@ function disposeModels() {
   originalModel?.dispose(); proposedModel?.dispose(); originalModel = undefined; proposedModel = undefined;
   renderedDiff = undefined;
 }
-function showSelected() {
+async function showSelected() {
   const diff = selected();
-  if (!diffEditor || !diff) { disposeModels(); diffEditor?.setModel(null); return; }
-  // 列表和审批状态刷新不改变正文时保留模型，避免重新计算差异并重置阅读位置。
-  if (renderedDiff?.id === diff.id && renderedDiff.path === diff.path && renderedDiff.originalText === diff.originalText && renderedDiff.proposedText === diff.proposedText) return;
-  disposeModels();
-  void ensureEditorLanguage(editorLanguageId(documentLanguageId(diff.path))).catch(cause => { if (selected() === diff) error.value = String(cause); });
-  originalModel = monaco.editor.createModel(diff.originalText, undefined, monaco.Uri.from({ scheme: 'graycode-review', authority: diff.id, path: '/original/' + diff.path }));
-  proposedModel = monaco.editor.createModel(diff.proposedText, undefined, monaco.Uri.from({ scheme: 'graycode-review', authority: diff.id, path: '/proposed/' + diff.path }));
-  diffEditor.setModel({ original: originalModel, modified: proposedModel });
-  renderedDiff = { id: diff.id, path: diff.path, originalText: diff.originalText, proposedText: diff.proposedText };
+  const sequence = ++contentSequence;
+  contentError.value = ''; contentLoading.value = false;
+  if (!diffEditor || !diff) { disposeModels(); return; }
+  if (renderedDiff?.id !== diff.id) disposeModels();
+  contentLoading.value = true;
+  const current = () => !disposed && sequence === contentSequence && selected()?.id === diff.id;
+  try {
+    const content = await call<{ originalContent: string; newContent: string }>('ui.request', {
+      type: 'diff.loadContent', data: { diffContentId: diff.id },
+    });
+    if (!current() || !diffEditor) return;
+    // 审批和列表刷新仍核对选中正文；正文未变时保留模型和阅读位置。
+    if (renderedDiff?.id === diff.id && renderedDiff.path === diff.path
+      && renderedDiff.originalText === content.originalContent && renderedDiff.proposedText === content.newContent) return;
+    disposeModels();
+    void ensureEditorLanguage(editorLanguageId(documentLanguageId(diff.path))).catch(cause => {
+      if (current()) contentError.value = String(cause);
+    });
+    originalModel = monaco.editor.createModel(content.originalContent, undefined,
+      monaco.Uri.from({ scheme: 'graycode-review', authority: diff.id, path: '/original/' + diff.path }));
+    proposedModel = monaco.editor.createModel(content.newContent, undefined,
+      monaco.Uri.from({ scheme: 'graycode-review', authority: diff.id, path: '/proposed/' + diff.path }));
+    diffEditor.setModel({ original: originalModel, modified: proposedModel });
+    renderedDiff = { id: diff.id, path: diff.path, originalText: content.originalContent, proposedText: content.newContent };
+  } catch (cause) {
+    if (current()) contentError.value = cause instanceof Error ? cause.message : String(cause);
+  } finally { if (current()) contentLoading.value = false; }
 }
+function toggleView() { sideBySide.value = !sideBySide.value; diffEditor?.updateOptions({ renderSideBySide: sideBySide.value }); }
+function openFile() { const diff = selected(); if (diff) emit('open', diff.path, diff.workspaceId); }
 async function resolve(accepted: boolean) {
   const diff = selected();
   if (!diff || diff.workspaceId !== props.workspaceId || loadedWorkspaceId.value !== props.workspaceId
@@ -118,7 +143,7 @@ async function resolve(accepted: boolean) {
 }
 watch(() => [props.workspaceId, props.target] as const, ([workspaceId, target], previous) => {
   if (workspaceId !== previous?.[0]) {
-    loadSequence++; resolveSequence++; loadedWorkspaceId.value = ''; diffs.value = []; selectedId.value = '';
+    loadSequence++; resolveSequence++; contentSequence++; loadedWorkspaceId.value = ''; diffs.value = []; selectedId.value = '';
     processingId.value = ''; actionError.value = ''; error.value = ''; compactListVisible.value = false;
     disposeModels();
   }
@@ -138,7 +163,8 @@ onMounted(() => {
   if (!editorRoot.value) return;
   diffEditor = monaco.editor.createDiffEditor(editorRoot.value, {
     automaticLayout: true, readOnly: true, originalEditable: false,
-    renderSideBySide: false, minimap: { enabled: false }, scrollBeyondLastLine: false, theme: resolvedTheme.value === 'light' ? 'vs' : 'vs-dark',
+    renderSideBySide: sideBySide.value, minimap: { enabled: false }, scrollBeyondLastLine: false,
+    theme: resolvedTheme.value === 'light' ? 'vs' : 'vs-dark',
     fontFamily: appearance.value?.codeFont, fontSize: appearance.value?.codeFontSize ?? 14,
     lineHeight: Math.round((appearance.value?.codeFontSize ?? 14) * (appearance.value?.lineHeight ?? 1.6)),
     glyphMargin: false, lineNumbersMinChars: 4, padding: { top: 14, bottom: 16 },
@@ -151,7 +177,8 @@ const unsubscribe = subscribe((event) => {
   if (event.type === "workspace.diff.changed" && event.workspaceId === props.workspaceId) void load();
   if (event.type === 'transport.resumed' && (event.snapshotRequired || event.authenticatedAgain)) void load();
 });
-onUnmounted(() => { disposed = true; loadSequence++; resolveSequence++; resizeObserver?.disconnect(); unsubscribe(); disposeModels(); diffEditor?.dispose(); diffEditor = undefined; });
+onUnmounted(() => { disposed = true; loadSequence++; resolveSequence++; contentSequence++;
+  resizeObserver?.disconnect(); unsubscribe(); disposeModels(); diffEditor?.dispose(); diffEditor = undefined; });
 </script>
 <template>
   <section ref="panelRoot" class="diff-panel review-panel" :class="{ 'narrow-review': narrow, 'very-narrow-review': panelWidth > 0 && panelWidth <= 320 }">
@@ -172,11 +199,22 @@ onUnmounted(() => { disposed = true; loadSequence++; resolveSequence++; resizeOb
       <div class="diff-toolbar">
         <button v-if="diffs.length > 1" class="review-list-toggle" :title="shellText('reviewToggleList')" :aria-label="shellText('reviewToggleList')" :aria-expanded="showList" @click="toggleList"><NavigationIcon name="folder" /><span>{{ diffs.length }}</span></button>
         <div class="review-breadcrumb" :title="selected()?.path"><NavigationIcon name="file" /><template v-for="(part, index) in selected()?.path.split(/[\\/]/) ?? []" :key="index"><NavigationIcon v-if="index" name="chevron" /><span>{{ part }}</span></template><span v-if="!selected()">{{ shellText('reviewTitle') }}</span></div>
+        <button class="review-action review-previous" :disabled="!renderedDiff" :title="shellText('reviewPreviousChange')"
+          :aria-label="shellText('reviewPreviousChange')" @click="diffEditor?.goToDiff('previous')"><NavigationIcon name="chevron" /></button>
+        <button class="review-action review-next" :disabled="!renderedDiff" :title="shellText('reviewNextChange')"
+          :aria-label="shellText('reviewNextChange')" @click="diffEditor?.goToDiff('next')"><NavigationIcon name="chevron" /></button>
+        <button class="review-action" :title="shellText(sideBySide ? 'reviewInline' : 'reviewSideBySide')"
+          :aria-label="shellText(sideBySide ? 'reviewInline' : 'reviewSideBySide')" :aria-pressed="sideBySide"
+          @click="toggleView"><NavigationIcon name="panel" /></button>
+        <button class="review-action" :disabled="!selected()" :title="shellText('uiGitPanelOpenFile')"
+          :aria-label="shellText('uiGitPanelOpenFile')" @click="openFile"><NavigationIcon name="file" /></button>
         <button class="review-refresh" :title="shellText('reviewRefresh')" :aria-label="shellText('reviewRefresh')" @click="load"><NavigationIcon name="history" /></button>
       </div>
       <div class="diff-body">
       <p v-if="loading && !selected()" class="empty-note">{{ shellText('reviewLoading') }}</p>
       <p v-if="error" class="empty-note diff-error">{{ error }}</p>
+      <p v-if="contentLoading && !renderedDiff" class="empty-note">{{ shellText('reviewLoading') }}</p>
+      <p v-if="contentError" class="empty-note diff-error">{{ contentError }}</p>
       <p v-if="actionError" class="diff-error">{{ actionError }}</p>
       <p v-if="selected()?.diffGuardWarning" class="empty-note" role="status">{{ selected()!.diffGuardWarning }}</p>
       <p v-if="selected()?.error" class="diff-error">{{ selected()!.error }}</p>
@@ -198,6 +236,29 @@ onUnmounted(() => { disposed = true; loadSequence++; resolveSequence++; resizeOb
   </section>
 </template>
 <style scoped>
-.review-panel{background:var(--gc-surface-sunken);min-width:0;overflow:hidden}.review-layout{display:flex;flex:1;min-width:0;min-height:0}.review-panel .diff-list{width:220px;flex-shrink:0;min-height:0;background:var(--gc-surface-raised)}.review-panel .panel-heading{height:44px;min-height:44px;font-size:12px;padding-inline:12px;gap:8px}.panel-heading>span{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.panel-heading>button{flex-shrink:0}.review-group-heading{display:flex;justify-content:space-between;gap:8px;margin:0;padding:10px 12px 6px;color:var(--gc-text-muted);font-size:11px;font-weight:500}.review-group-pending .review-group-heading,.review-panel .status-pending{color:var(--gc-accent)}.review-panel .diff-row{gap:8px;min-height:44px;font-size:12px;border-bottom:0}.diff-row>svg{width:14px;height:14px;flex-shrink:0;color:var(--gc-text-muted)}.review-panel .diff-row.active{background:var(--gc-surface-hover);box-shadow:inset 2px 0 var(--gc-accent)}.review-panel .diff-status{font-size:11px;text-transform:none;white-space:nowrap}.review-panel .diff-view{position:relative}.review-panel .diff-toolbar{height:44px;min-height:44px;flex-shrink:0;padding:6px 14px;gap:10px}.review-breadcrumb{display:flex;align-items:center;gap:7px;flex:1;min-width:0;overflow:hidden;white-space:nowrap;font-size:12px;color:var(--gc-text-muted)}.review-breadcrumb>span{overflow:hidden;text-overflow:ellipsis}.review-breadcrumb>span:last-child{font-weight:600;color:var(--gc-text-primary);flex-shrink:0;max-width:70%}.review-breadcrumb>svg{width:13px;height:13px;flex-shrink:0}.review-breadcrumb>svg:not(:first-child){width:10px;opacity:.5}.review-panel button{border-radius:var(--gc-radius-sm)}.review-refresh,.review-list-toggle{display:flex;align-items:center;gap:5px;border:0;background:transparent;color:var(--gc-text-muted);padding:6px;cursor:pointer;flex-shrink:0}.review-refresh svg,.review-list-toggle svg{width:15px;height:15px}.diff-body{display:flex;flex:1;flex-direction:column;min-height:0;min-width:0;position:relative;overflow:auto}.review-panel .diff-editor{min-height:0}.review-footer{display:flex;align-items:center;gap:9px;min-height:48px;flex-shrink:0;padding:8px 14px;border-top:1px solid var(--gc-border-subtle);background:var(--gc-surface-sunken)}.review-footer-spacer{flex:1}.review-footer button{padding:6px 13px;font:inherit;font-size:12px;background:transparent;border:1px solid var(--gc-border-control);cursor:pointer}.review-footer .accept-change{color:var(--gc-success);border-color:var(--gc-success-border);background:var(--gc-success-bg)}.review-footer .reject-change{color:var(--gc-danger);border-color:var(--gc-danger-border)}.review-footer button:hover{filter:brightness(1.2)}.review-footer button:disabled{opacity:.5;cursor:wait}.review-empty{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:12px;background:var(--gc-surface-sunken);text-align:center;padding:30px;pointer-events:none}.review-empty>svg{width:32px;height:32px;color:var(--gc-text-muted);opacity:.4}.review-empty h3{font-size:15px;font-weight:500;margin:0}.review-empty p{font-size:12px;color:var(--gc-text-muted);margin:0}.review-panel .diff-error{padding-inline:14px;font-size:12px}
+.review-refresh,
+.review-action,
+.review-list-toggle {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  border: 0;
+  background: transparent;
+  color: var(--gc-text-muted);
+  padding: 6px;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+.review-refresh svg,
+.review-action svg,
+.review-list-toggle svg {
+  width: 15px;
+  height: 15px;
+}
+
+.review-previous svg { transform: rotate(-90deg); }
+.review-next svg { transform: rotate(90deg); }
+.review-panel{background:var(--gc-surface-sunken);min-width:0;overflow:hidden}.review-layout{display:flex;flex:1;min-width:0;min-height:0}.review-panel .diff-list{width:220px;flex-shrink:0;min-height:0;background:var(--gc-surface-raised)}.review-panel .panel-heading{height:44px;min-height:44px;font-size:12px;padding-inline:12px;gap:8px}.panel-heading>span{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.panel-heading>button{flex-shrink:0}.review-group-heading{display:flex;justify-content:space-between;gap:8px;margin:0;padding:10px 12px 6px;color:var(--gc-text-muted);font-size:11px;font-weight:500}.review-group-pending .review-group-heading,.review-panel .status-pending{color:var(--gc-accent)}.review-panel .diff-row{gap:8px;min-height:44px;font-size:12px;border-bottom:0}.diff-row>svg{width:14px;height:14px;flex-shrink:0;color:var(--gc-text-muted)}.review-panel .diff-row.active{background:var(--gc-surface-hover);box-shadow:inset 2px 0 var(--gc-accent)}.review-panel .diff-status{font-size:11px;text-transform:none;white-space:nowrap}.review-panel .diff-view{position:relative}.review-panel .diff-toolbar{height:44px;min-height:44px;flex-shrink:0;padding:6px 14px;gap:10px}.review-breadcrumb{display:flex;align-items:center;gap:7px;flex:1;min-width:0;overflow:hidden;white-space:nowrap;font-size:12px;color:var(--gc-text-muted)}.review-breadcrumb>span{overflow:hidden;text-overflow:ellipsis}.review-breadcrumb>span:last-child{font-weight:600;color:var(--gc-text-primary);flex-shrink:0;max-width:70%}.review-breadcrumb>svg{width:13px;height:13px;flex-shrink:0}.review-breadcrumb>svg:not(:first-child){width:10px;opacity:.5}.review-panel button{border-radius:var(--gc-radius-sm)}.diff-body{display:flex;flex:1;flex-direction:column;min-height:0;min-width:0;position:relative;overflow:auto}.review-panel .diff-editor{min-height:0}.review-footer{display:flex;align-items:center;gap:9px;min-height:48px;flex-shrink:0;padding:8px 14px;border-top:1px solid var(--gc-border-subtle);background:var(--gc-surface-sunken)}.review-footer-spacer{flex:1}.review-footer button{padding:6px 13px;font:inherit;font-size:12px;background:transparent;border:1px solid var(--gc-border-control);cursor:pointer}.review-footer .accept-change{color:var(--gc-success);border-color:var(--gc-success-border);background:var(--gc-success-bg)}.review-footer .reject-change{color:var(--gc-danger);border-color:var(--gc-danger-border)}.review-footer button:hover{filter:brightness(1.2)}.review-footer button:disabled{opacity:.5;cursor:wait}.review-empty{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:12px;background:var(--gc-surface-sunken);text-align:center;padding:30px;pointer-events:none}.review-empty>svg{width:32px;height:32px;color:var(--gc-text-muted);opacity:.4}.review-empty h3{font-size:15px;font-weight:500;margin:0}.review-empty p{font-size:12px;color:var(--gc-text-muted);margin:0}.review-panel .diff-error{padding-inline:14px;font-size:12px}
 .narrow-review .review-layout{display:grid;grid-template-columns:minmax(0,1fr);grid-template-rows:44px minmax(0,1fr) auto}.narrow-review .diff-view{display:contents}.narrow-review .diff-toolbar{grid-column:1;grid-row:1;padding-inline:8px;gap:6px}.narrow-review .diff-body{grid-column:1;grid-row:2}.narrow-review .review-footer{grid-column:1;grid-row:3}.narrow-review .diff-list{grid-column:1;grid-row:2;z-index:2;width:min(220px,100%);max-width:100%;border-right:1px solid var(--gc-border-subtle)}.review-list-backdrop{grid-column:1;grid-row:2;z-index:1;padding:0;border:0;background:#0005}.very-narrow-review .review-footer{flex-wrap:wrap;gap:6px;padding:8px}.very-narrow-review .review-footer>.diff-status{flex-basis:100%}.very-narrow-review .review-footer-spacer{display:none}.very-narrow-review .review-footer button{flex:1;min-width:0;padding:6px 8px;overflow-wrap:anywhere}.narrow-review .review-empty{padding:18px}
 </style>

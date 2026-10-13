@@ -54,11 +54,14 @@ export const workspaceEditorServices: monaco.editor.IEditorOverrideServices = {
   },
 };
 
-export function bindEditorUndo(editor: monaco.editor.IStandaloneCodeEditor): monaco.IDisposable {
-  const change = editor.onDidChangeModelContent((event) => {
-    const model = editor.getModel();
-    if (model && !event.isUndoing && !event.isRedoing) batchHistory.invalidateRedo(target(model));
+/** 后台模型同样参与整批撤销，不依赖它是否被可见编辑器挂载。 */
+export function bindModelUndo(model: monaco.editor.ITextModel): monaco.IDisposable {
+  return model.onDidChangeContent(event => {
+    if (!event.isUndoing && !event.isRedoing) batchHistory.invalidateRedo(target(model));
   });
+}
+
+export function bindEditorUndo(editor: monaco.editor.IStandaloneCodeEditor): monaco.IDisposable {
   const run = (undo: boolean) => {
     const model = editor.getModel();
     if (model) return batchHistory.move(target(model), undo).catch(report);
@@ -77,7 +80,6 @@ export function bindEditorUndo(editor: monaco.editor.IStandaloneCodeEditor): mon
   });
   return {
     dispose() {
-      change.dispose();
       undo.dispose();
       redo.dispose();
     },

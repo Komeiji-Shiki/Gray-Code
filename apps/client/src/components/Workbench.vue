@@ -1,17 +1,16 @@
 <script setup lang="ts">
-import { computed, nextTick, defineAsyncComponent, onUnmounted, reactive, ref, watch } from 'vue';
-import type { IRange, editor as MonacoEditor } from 'monaco-editor';
+import { computed, nextTick, defineAsyncComponent, onUnmounted, reactive, ref, shallowRef, watch } from 'vue';
+import type { IRange } from 'monaco-editor';
 import type { DocumentState, ProjectReplacement, SourceRange } from '@graycode/contracts';
 import { EditorBatchHistory, type EditBatchHandle } from '../../../../shared/editorBatchHistory';
-import { documentTextPatch, trackDocumentChange, type DocumentChangeRegion, type TrackedDocumentChange } from '../../../../shared/documentPatch';
 import { call, subscribe } from '../api';
 import { guard, report, state } from '../state';
 import { shellText as t } from '../i18n';
 import MarkdownIt from 'markdown-it';
 import BrowserPane from './BrowserPane.vue';
 import FileTree from './FileTree.vue';
-import { PendingDocumentChanges } from '../pendingDocumentChanges';
-import { ModelReadyWaiters } from '../modelReadyWaiters';
+import { useWorkbenchDocuments, workbenchDocumentKey } from '../useWorkbenchDocuments';
+import type { WorkbenchDocumentModels } from '../workbenchModels';
 import { useNavigationIntent } from '../navigationIntent';
 import GitPanel from './GitPanel.vue';
 import ProblemsPanel from './ProblemsPanel.vue';
@@ -34,10 +33,10 @@ const TerminalPanel = defineAsyncComponent(() => import('./TerminalPanel.vue'));
 const terminalSession = ref('');
 const CodeEditor = defineAsyncComponent(() => import('./CodeEditor.vue'));
 const DiffPanel = defineAsyncComponent(() => import('./DiffPanel.vue'));
-const documents = reactive<DocumentState[]>([]);
-const synchronizedText = new WeakMap<DocumentState, { text: string; version: number }>();
-// 桌面编辑器报告的累计变更范围，仅用于缩小补丁的前后缀查找；与基线或待发文本对不上时不使用。
-const changeTracks = new WeakMap<DocumentState, TrackedDocumentChange>();
+const { documents, synchronizedText, queues, recoveringDocuments, closingDocuments, connection,
+  flushDocument, flushDocuments, queue, change, recoverDocument, save } = useWorkbenchDocuments(() => disposed);
+const editorRegistry = shallowRef<WorkbenchDocumentModels>();
+let modelModule: Promise<typeof import('../workbenchModels')> | undefined;
 const current = ref('');
 const pane = ref('empty');
 const diffTarget = ref<{ workspaceId: string; id?: string; path?: string; toolCallId?: string }>();
@@ -141,32 +140,16 @@ function openMonitor(runId?: string, conversationId?: string) {
 }
 const selections = reactive<Record<string, IRange>>({});
 const closing = ref<DocumentState | null>(null);
-const queues = new Map<string, Promise<unknown>>();
-const recoveringDocuments = new Set<DocumentState>();
-const documentConflicts = new WeakSet<DocumentState>();
-let transportConnected = true;
-const recoveryConflict = (doc: DocumentState) => new Error(`${doc.path}: ${t('documentRecoveryConflict')}`);
-const closingDocuments = new Set<DocumentState>();
-function flushDocument(doc: DocumentState) {
-  return queues.get(key(doc)) ?? Promise.resolve();
-}
-async function flushDocuments() {
-  await Promise.all(documents.map(flushDocument));
-}
-const editorModels = new Map<string, MonacoEditor.ITextModel>();
-const readyWaiters = new ModelReadyWaiters<MonacoEditor.ITextModel>(() => new Error(t('uiWorkbenchEditorLoadingReplacement')));
-const mobileBatchHistory = new EditorBatchHistory();
-function editorReady(doc: DocumentState, model: MonacoEditor.ITextModel) {
-  const id = key(doc);
-  editorModels.set(id, model);
-  readyWaiters.resolve(id, model);
-}
 async function readyModel(doc: DocumentState) {
-  const id = key(doc),
-    existing = editorModels.get(id);
-  if (existing && !existing.isDisposed()) return existing;
-  return readyWaiters.wait(id);
+  const module = await (modelModule ??= import('../workbenchModels'));
+  if (disposed || !documents.includes(doc)) throw new Error(t('uiWorkbenchEditorLoadingReplacement'));
+  editorRegistry.value ??= new module.WorkbenchDocumentModels({ change, flush: flushDocument,
+    open: (path, workspaceId, range, focus) => open(path, workspaceId, range, focus),
+  });
+  return editorRegistry.value.prepare(doc).model;
 }
+watch(() => documents.map(doc => key(doc)), () => editorRegistry.value?.reconcile(documents));
+const mobileBatchHistory = new EditorBatchHistory();
 function openRange(path: string, range: SourceRange, workspaceId: string) {
   return open(path, workspaceId, {
     startLineNumber: range.start.line + 1,
@@ -236,8 +219,17 @@ async function replaceFiles(workspaceId: string, edits: ProjectReplacement[]): P
     },
   };
 }
-const key = (doc: Pick<DocumentState, 'workspaceId' | 'path'>) => `${doc.workspaceId}:${doc.path}`;
+const key = workbenchDocumentKey;
 const active = computed(() => documents.find((doc) => key(doc) === current.value));
+// 可见文档统一按视口准备，窄屏首次打开后切回桌面布局也能取得模型。
+watch(() => [props.compact, active.value, pane.value] as const, ([compact, document, panel], _previous, onCleanup) => {
+  let current = true;
+  onCleanup(() => { current = false; });
+  if (compact || !document || panel !== 'editor') return;
+  void readyModel(document).catch(error => {
+    if (current && !disposed) report(error);
+  });
+}, { immediate: true });
 const tabs = computed<WorkbenchTab[]>(() => [
   ...documents.map((doc) => ({
     id: `file:${key(doc)}`,
@@ -340,108 +332,6 @@ function markdownLink(event: MouseEvent) {
   const target = new URL(href, `https://workspace.invalid/${active.value.path.replaceAll('\\', '/')}`);
   void guard(() => open(decodeURIComponent(target.pathname).replace(/^\//, ''), active.value!.workspaceId));
 }
-function queue(doc: DocumentState, operation: () => Promise<unknown>, isChange = false) {
-  if (!isChange) pendingChanges.barrier(doc);
-  const id = key(doc);
-  const promise = (queues.get(id) ?? Promise.resolve()).catch(() => undefined).then(operation);
-  queues.set(id, promise);
-  void promise.catch((error) => {
-    if (!disposed) report(error);
-  });
-  return promise;
-}
-const pendingChanges = new PendingDocumentChanges<DocumentState>(
-  (doc, operation) => {
-    void queue(doc, operation, true);
-  },
-  async (doc, text) => {
-    // 重连先核对原文和版本，再发送离线输入；否则服务器重启后的版本号可能恰好相同。
-    if (!transportConnected || recoveringDocuments.has(doc)) return;
-    if (documentConflicts.has(doc)) throw recoveryConflict(doc);
-    const base = synchronizedText.get(doc),
-      tracked = changeTracks.get(doc);
-    const region = tracked?.text === text && tracked.base === base?.text ? tracked.region : undefined;
-    const patch = doc.supportsPatches && base?.version === doc.version ? documentTextPatch(base.text, text, region) : undefined;
-    // 全文更短或基线未知时沿用旧协议；版本冲突必须保留草稿，不能用全文覆盖宿主。
-    const payload = patch && JSON.stringify(patch).length < text.length ? { patch } : { text };
-    // 发送前改以本次文本为基线，回执前到达的输入接着累计；发送失败时 synchronizedText 不更新，
-    // 基线对不上便自动回退全文比较。记录已超前于本次文本（保存边界冻结了旧快照）时保留原记录，
-    // 它的基线不再等于回执后的同步文本，下一次发送同样回退全文比较。
-    if (!tracked || tracked.text === text) changeTracks.set(doc, { base: text, text });
-    const result = await call<Pick<DocumentState, 'version' | 'dirty'>>('documents.update', {
-      workspaceId: doc.workspaceId,
-      path: doc.path,
-      ...payload,
-      version: doc.version,
-    }).catch((error) => {
-      // 失败时不能确定宿主是否接受了正文；保留草稿，后续保存先核对原基线和版本。
-      recoveringDocuments.add(doc);
-      throw error;
-    });
-    synchronizedText.set(doc, { text, version: result.version });
-    doc.version = result.version;
-    if (doc.text === text) doc.dirty = result.dirty;
-  },
-);
-function change(doc: DocumentState, text: string, edit?: { previous: string; region: DocumentChangeRegion }) {
-  const tracked = trackDocumentChange(changeTracks.get(doc), text, edit);
-  if (tracked) changeTracks.set(doc, tracked);
-  else changeTracks.delete(doc);
-  doc.text = text;
-  doc.dirty = true;
-  pendingChanges.push(doc, text);
-}
-function recoverDocument(doc: DocumentState) {
-  recoveringDocuments.add(doc);
-  return queue(doc, async () => {
-    let synchronized = false;
-    try {
-      if (!documents.includes(doc) || closingDocuments.has(doc)) return;
-      const version = doc.version,
-        base = synchronizedText.get(doc);
-      const next = await call<DocumentState>('documents.open', { workspaceId: doc.workspaceId, path: doc.path, reload: true });
-      if (!documents.includes(doc) || doc.version !== version) return;
-      synchronized = true;
-      // 已收到更新回执的脏正文也只在内存中；服务重启后不能把它当作干净缓存丢掉。
-      const latest = doc.text,
-        preserveDraft = doc.dirty || latest !== base?.text;
-      const sameBaseline = next.baseHash === doc.baseHash;
-      const sameDraft = next.version === version && next.text === base?.text;
-      if (documentConflicts.has(doc) || (preserveDraft && next.text !== latest && (!sameBaseline || (next.dirty && !sameDraft)))) {
-        documentConflicts.add(doc);
-        doc.dirty = true;
-        throw recoveryConflict(doc);
-      }
-      Object.assign(doc, next);
-      synchronizedText.set(doc, { text: next.text, version: next.version });
-      if (preserveDraft && latest !== next.text) {
-        doc.text = latest;
-        doc.dirty = true;
-        change(doc, latest);
-      }
-    } finally {
-      if (synchronized || !documents.includes(doc)) recoveringDocuments.delete(doc);
-    }
-  });
-}
-async function save(doc: DocumentState) {
-  if (!transportConnected) throw new Error(t('connectionTimeout'));
-  if (recoveringDocuments.has(doc)) await recoverDocument(doc);
-  const synchronized = flushDocument(doc);
-  await queue(doc, async () => {
-    // 保存边界仍在点击时入队；此前的编辑同步失败时，不能继续把宿主旧正文保存为成功。
-    await synchronized;
-    if (!transportConnected) throw new Error(t('connectionTimeout'));
-    if (documentConflicts.has(doc)) throw recoveryConflict(doc);
-    const result = await call<DocumentState>('documents.save', {
-      workspaceId: doc.workspaceId,
-      path: doc.path,
-      version: doc.version,
-    });
-    doc.baseHash = result.baseHash;
-    if (doc.text === result.text) doc.dirty = result.dirty;
-  });
-}
 async function close(doc: DocumentState, discard = false) {
   if (current.value === key(doc)) openSequence++;
   if (doc.dirty && !discard) {
@@ -460,11 +350,12 @@ async function close(doc: DocumentState, discard = false) {
       });
     const index = documents.indexOf(doc);
     if (index >= 0) documents.splice(index, 1);
+    // 关闭回执后立即释放旧所有者，随后同路径重新打开不会借用即将销毁的模型。
+    editorRegistry.value?.reconcile(documents);
     const reopened = documents.some((item) => key(item) === key(doc));
     // 删除通知或重新打开可先于关闭回执到达，只释放原文档仍拥有的界面状态。
     if (!reopened) {
       queues.delete(key(doc));
-      editorModels.delete(key(doc));
     }
     if (closing.value === doc) closing.value = null;
     if (!reopened && current.value === key(doc)) current.value = documents[index] ? key(documents[index]) : documents.at(-1) ? key(documents.at(-1)!) : '';
@@ -479,18 +370,18 @@ watch(
 );
 const unsubscribe = subscribe((event) => {
   if (event.type === 'transport.disconnected') {
-    transportConnected = false;
+    connection.connected = false;
     return;
   }
   if (event.type === 'transport.resumed') {
-    const disconnected = !transportConnected;
-    transportConnected = true;
+    const disconnected = !connection.connected;
+    connection.connected = true;
     if (!disconnected && !event.snapshotRequired && !event.authenticatedAgain) return;
     for (const doc of documents) recoveringDocuments.add(doc);
     void Promise.allSettled(documents.map(recoverDocument))
       .then(() => {
         const doc = active.value;
-        if (!disposed && transportConnected && doc && documents.includes(doc) && !closingDocuments.has(doc) && !recoveringDocuments.has(doc))
+        if (!disposed && connection.connected && doc && documents.includes(doc) && !closingDocuments.has(doc) && !recoveringDocuments.has(doc))
           return call('documents.focus', { workspaceId: doc.workspaceId, path: doc.path });
       })
       .catch((error) => {
@@ -539,6 +430,7 @@ const unsubscribe = subscribe((event) => {
       if (newerText && text !== doc.text) change(doc, text);
     } else if (!newerText) {
       documents.splice(documents.indexOf(doc), 1);
+      editorRegistry.value?.reconcile(documents);
       if (current.value === key(doc)) current.value = documents.length ? key(documents[0]) : '';
       if (!event.removed) report(new Error(event.error));
     } else {
@@ -599,7 +491,7 @@ const unsubscribe = subscribe((event) => {
 });
 onUnmounted(() => {
   disposed = true;
-  readyWaiters.dispose();
+  editorRegistry.value?.dispose();
   openSequence++;
   unsubscribe();
 });
@@ -699,9 +591,10 @@ onUnmounted(() => {
           </div>
         </div>
         <div class="editors">
-          <template v-for="doc in documents" :key="key(doc)">
+          <template v-if="compact">
             <MobileCodeEditor
-              v-if="compact"
+              v-for="doc in documents"
+              :key="key(doc)"
               v-show="current === key(doc) && !(markdownPreview && /\.md$/i.test(doc.path))"
               :path="doc.path"
               :value="doc.text"
@@ -710,23 +603,17 @@ onUnmounted(() => {
               @save="guard(() => save(doc))"
               @breakpoint="(line) => guard(() => toggleBreakpoint(doc.workspaceId, doc.path, line))"
             />
-            <CodeEditor
-              v-else
-              v-show="current === key(doc) && !(markdownPreview && /\.md$/i.test(doc.path))"
-              :path="doc.path"
-              :workspace-id="doc.workspaceId"
-              :version="doc.version"
-              :flush="() => flushDocument(doc)"
-              :open="(path, range, focus) => open(path, doc.workspaceId, range, focus)"
-              :selection="selections[key(doc)]"
-              :value="doc.text"
-              @change="(text, edit) => change(doc, text, edit)"
-              @save="guard(() => save(doc))"
-              @problems="activatePanel('problems')"
-              @outline="activatePanel('outline')"
-              @ready="(model) => editorReady(doc, model)"
-            />
           </template>
+          <CodeEditor
+            v-if="!compact && active && editorRegistry"
+            v-show="!(markdownPreview && /\.md$/i.test(active.path))"
+            :document="active"
+            :models="editorRegistry"
+            :selection="selections[key(active)]"
+            @save="guard(() => save(active!))"
+            @problems="activatePanel('problems')"
+            @outline="activatePanel('outline')"
+          />
           <article
             v-if="active && markdownPreview && /\.md$/i.test(active.path)"
             class="markdown-preview"
@@ -762,7 +649,8 @@ onUnmounted(() => {
         :flush="flushDocuments"
         @open="(path, workspaceId) => guard(() => open(path, workspaceId))"
       />
-      <DiffPanel v-if="pane === 'diff'" :workspace-id="diffTarget?.workspaceId ?? state.workspaceId" :target="diffTarget" />
+      <DiffPanel v-if="pane === 'diff'" :workspace-id="diffTarget?.workspaceId ?? state.workspaceId" :target="diffTarget"
+        @open="(path, workspaceId) => guard(() => open(path, workspaceId))" />
       <SearchPanel
         v-if="openedPanels.includes('search')"
         v-show="pane === 'search'"

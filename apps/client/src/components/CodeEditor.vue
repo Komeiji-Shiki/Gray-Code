@@ -1,46 +1,26 @@
 <script setup lang="ts">
 import { shellText as t } from '../i18n';
-import { computed, onMounted, onUnmounted, ref, watch } from 'vue';
-import type { LanguageDocumentStatus } from '@graycode/contracts';
+import { computed, onMounted, onUnmounted, ref, shallowRef, watch } from 'vue';
+import type { DocumentState, LanguageDocumentStatus } from '@graycode/contracts';
 import * as monaco from '../monaco';
-import { appearance, report } from '../state';
-import { ensureEditorLanguage } from '../editorLanguages';
+import { appearance } from '../state';
 import { appearancePalette, resolvedTheme } from '../appearance';
 import { applyWorkbenchTheme, WORKBENCH_THEME } from '../editorAppearance';
-import { bindLanguageDocument, editorUri } from '../languages';
 import { bindEditorUndo, workspaceEditorServices } from '../editorWorkspaceEdits';
 import { bindEditorDebugging } from '../editorDebugging';
-import { documentLanguageId, editorLanguageId } from '../../../../shared/documentLanguages';
-import { documentChangeRegion, type DocumentChangeRegion } from '../../../../shared/documentPatch';
-const props = defineProps<{
-  workspaceId: string;
-  path: string;
-  value: string;
-  version: number;
-  flush: () => Promise<unknown>;
-  open: (path: string, range?: monaco.IRange, focus?: boolean) => Promise<void>;
-  selection?: monaco.IRange;
-}>();
-const emit = defineEmits<{
-  change: [value: string, edit?: { previous: string; region: DocumentChangeRegion }];
-  save: [];
-  problems: [];
-  outline: [];
-  ready: [model: monaco.editor.ITextModel];
-}>();
+import type { WorkbenchDocumentModel, WorkbenchDocumentModels } from '../workbenchModels';
+const props = defineProps<{ document: DocumentState; models: WorkbenchDocumentModels; selection?: monaco.IRange }>();
+const emit = defineEmits<{ save: []; problems: []; outline: [] }>();
 const root = ref<HTMLDivElement>();
+const binding = shallowRef<WorkbenchDocumentModel>();
 let editor: monaco.editor.IStandaloneCodeEditor | undefined;
-let applying = false;
-// 模型当前全文（含 BOM）的已知副本：父组件回传本组件刚发出的同一字符串时无需再取全文比较，
-// 也是变更范围所基于的文本；挂载前为 undefined。
-let synced: string | undefined;
-let language: ReturnType<typeof bindLanguageDocument> | undefined;
-const languageState = ref<LanguageDocumentStatus>({ languageId: '' });
-const diagnosticCounts = ref({ errors: 0, warnings: 0 });
-const cursor = ref({ lineNumber: 1, column: 1 });
 let markerListener: monaco.IDisposable | undefined;
 let undoBinding: monaco.IDisposable | undefined;
 let debugBinding: monaco.IDisposable | undefined;
+const language = computed(() => binding.value?.language);
+const languageState = computed<LanguageDocumentStatus>(() => binding.value?.languageState.value ?? { languageId: '' });
+const diagnosticCounts = ref({ errors: 0, warnings: 0 });
+const cursor = ref({ lineNumber: 1, column: 1 });
 const languageLabel = computed(() => {
   const state = languageState.value;
   if (state.error || state.session?.status === 'failed') return t('uiCodeEditorLanguageServiceError');
@@ -51,144 +31,61 @@ const languageLabel = computed(() => {
   if (state.reason === 'unavailable') return t('uiCodeEditorLanguageServiceMissing', { value1: state.languageId });
   return t('uiCodeEditorSyntaxHighlighting', { value1: state.languageId });
 });
-function suggest() {
-  editor?.focus();
-  editor?.trigger('graycode', 'editor.action.triggerSuggest', {});
-}
-function quickFix() {
-  editor?.focus();
-  editor?.trigger('graycode', 'editor.action.codeAction', { kind: 'quickfix', apply: 'never' });
-}
+function suggest() { editor?.focus(); editor?.trigger('graycode', 'editor.action.triggerSuggest', {}); }
+function quickFix() { editor?.focus(); editor?.trigger('graycode', 'editor.action.codeAction', { kind: 'quickfix', apply: 'never' }); }
 function options() {
-  return {
-    fontFamily: appearance.value?.codeFont,
-    fontSize: appearance.value?.codeFontSize,
-    lineHeight: Math.round((appearance.value?.codeFontSize ?? 14) * (appearance.value?.lineHeight ?? 1.6)),
-    theme: WORKBENCH_THEME,
-  };
+  return { fontFamily: appearance.value?.codeFont, fontSize: appearance.value?.codeFontSize,
+    lineHeight: Math.round((appearance.value?.codeFontSize ?? 14) * (appearance.value?.lineHeight ?? 1.6)), theme: WORKBENCH_THEME };
+}
+function updateCounts() {
+  const model = editor?.getModel();
+  const markers = model ? monaco.editor.getModelMarkers({ resource: model.uri }) : [];
+  diagnosticCounts.value = { errors: markers.filter(item => item.severity === monaco.MarkerSeverity.Error).length,
+    warnings: markers.filter(item => item.severity === monaco.MarkerSeverity.Warning).length };
+}
+function applySelection() {
+  const entry = binding.value, selection = props.selection;
+  if (!entry || !selection || selection === entry.selection || !editor) return;
+  entry.selection = selection;
+  editor.setSelection(selection); editor.revealRangeInCenter(selection); editor.focus();
+}
+function switchDocument() {
+  if (!editor) return;
+  if (binding.value) binding.value.viewState = editor.saveViewState();
+  debugBinding?.dispose();
+  const entry = props.models.prepare(props.document);
+  binding.value = entry;
+  editor.setModel(entry.model);
+  if (entry.viewState) editor.restoreViewState(entry.viewState);
+  debugBinding = bindEditorDebugging(editor, props.document.workspaceId, props.document.path);
+  applySelection(); updateCounts();
+  cursor.value = editor.getPosition() ?? { lineNumber: 1, column: 1 };
 }
 onMounted(() => {
-  void ensureEditorLanguage(editorLanguageId(documentLanguageId(props.path))).catch(report);
-  editor = monaco.editor.create(
-    root.value!,
-    {
-      value: props.value,
-      model: undefined,
-      automaticLayout: true,
-      fixedOverflowWidgets: true,
-      minimap: { enabled: false },
-      glyphMargin: true,
-      scrollBeyondLastLine: false,
-      padding: { top: 14 },
-      ...options(),
-      theme: resolvedTheme.value === 'light' ? 'vs' : 'vs-dark',
-    },
-    workspaceEditorServices,
-  );
+  editor = monaco.editor.create(root.value!, { model: null, automaticLayout: true, fixedOverflowWidgets: true,
+    minimap: { enabled: false }, glyphMargin: true, scrollBeyondLastLine: false, padding: { top: 14 }, ...options(),
+    theme: resolvedTheme.value === 'light' ? 'vs' : 'vs-dark' }, workspaceEditorServices);
   applyWorkbenchTheme(appearancePalette.value, resolvedTheme.value === 'light');
-  const initial = editor.getModel();
-  const uri = editorUri(props.workspaceId, props.path);
-  const model = monaco.editor.getModel(uri) ?? monaco.editor.createModel(props.value, editorLanguageId(documentLanguageId(props.path)), uri);
-  editor.setModel(model);
-  initial?.dispose();
   undoBinding = bindEditorUndo(editor);
-  debugBinding = bindEditorDebugging(editor, props.workspaceId, props.path);
-  language = bindLanguageDocument({
-    model,
-    workspaceId: props.workspaceId,
-    path: props.path,
-    version: () => props.version,
-    flush: props.flush,
-    open: props.open,
-    status: (value) => {
-      languageState.value = value;
-    },
+  markerListener = monaco.editor.onDidChangeMarkers(uris => {
+    const model = editor?.getModel();
+    if (model && uris.some(uri => uri.toString() === model.uri.toString())) updateCounts();
   });
-  const updateCounts = () => {
-    const markers = monaco.editor.getModelMarkers({ resource: model.uri });
-    diagnosticCounts.value = {
-      errors: markers.filter((item) => item.severity === monaco.MarkerSeverity.Error).length,
-      warnings: markers.filter((item) => item.severity === monaco.MarkerSeverity.Warning).length,
-    };
-  };
-  markerListener = monaco.editor.onDidChangeMarkers((uris) => {
-    if (uris.some((uri) => uri.toString() === model.uri.toString())) updateCounts();
-  });
-  updateCounts();
-  if (props.selection) {
-    editor.setSelection(props.selection);
-    editor.revealRangeInCenter(props.selection);
-  }
-  synced = model.getValue(undefined, true);
-  editor.onDidChangeModelContent((event) => {
-    language?.clearMarkers();
-    if (applying) return;
-    const previous = synced,
-      value = model.getValue(undefined, true);
-    synced = value;
-    // 重置与换行符切换没有可靠的局部范围（EOL 切换可能不带 changes），BOM 也可能随重置变化。
-    // Monaco 偏移不含 BOM；同一模型的普通编辑不改变 BOM，按当前全文与无 BOM 长度之差补偿。
-    const region =
-      previous === undefined || event.isFlush || event.isEolChange ? undefined : documentChangeRegion(event.changes, value.length - model.getValueLength());
-    emit('change', value, region && previous !== undefined ? { previous, region } : undefined);
-  });
-  editor.onDidChangeCursorPosition((event) => {
-    cursor.value = event.position;
-  });
-  editor.addAction({
-    id: 'graycode.showCompletions',
-    label: t('uiCodeEditorShowCompletion'),
-    keybindings: [monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyJ],
-    run: suggest,
-  });
+  editor.onDidChangeCursorPosition(event => { cursor.value = event.position; });
+  editor.addAction({ id: 'graycode.showCompletions', label: t('uiCodeEditorShowCompletion'),
+    keybindings: [monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyJ], run: suggest });
   editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyS, () => emit('save'));
-  emit('ready', model);
+  switchDocument();
 });
-watch(
-  () => props.value,
-  (value) => {
-    // 输入回传的是刚发出的同一字符串，引用相同即可跳过全文比较。
-    if (!editor || value === synced) return;
-    const model = editor.getModel();
-    synced = model?.getValue(undefined, true);
-    if (synced !== value) {
-      applying = true;
-      try {
-        editor.setValue(value);
-      } finally {
-        applying = false;
-      }
-      // 以模型实际内容为准：setValue 可能统一换行符，之后的变更范围都基于规范化后的文本。
-      synced = model?.getValue(undefined, true);
-    }
-  },
-);
-watch(
-  () => props.version,
-  () => language?.updateMarkers(),
-);
-watch(
-  () => props.selection,
-  (selection) => {
-    if (selection && editor) {
-      editor.setSelection(selection);
-      editor.revealRangeInCenter(selection);
-      editor.focus();
-    }
-  },
-);
+watch(() => [props.document, props.document.workspaceId, props.document.path], switchDocument);
+watch(() => props.selection, applySelection);
 watch(appearance, () => editor?.updateOptions(options()), { deep: true });
 watch([appearancePalette, resolvedTheme], () => {
   if (editor) applyWorkbenchTheme(appearancePalette.value, resolvedTheme.value === 'light');
 });
 onUnmounted(() => {
-  debugBinding?.dispose();
-  undoBinding?.dispose();
-  markerListener?.dispose();
-  language?.dispose();
-  const model = editor?.getModel();
-  editor?.dispose();
-  model?.dispose();
+  if (binding.value) binding.value.viewState = editor?.saveViewState() ?? null;
+  debugBinding?.dispose(); undoBinding?.dispose(); markerListener?.dispose(); editor?.dispose();
 });
 </script>
 <template>
