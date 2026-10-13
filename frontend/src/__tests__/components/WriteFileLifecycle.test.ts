@@ -42,6 +42,9 @@ test('写入回执到达前保留待写内容，失败时显示全局原因', as
 
   const originalError = "ENOENT: no such file or directory, open '/workspace/sample.txt'";
   await wrapper.setProps({ error: originalError });
+  expect(wrapper.get('.panel-error').text()).toContain(originalError);
+  expect(wrapper.find('.panel-error details').exists()).toBe(false);
+  await wrapper.setProps({ result: { success: false, error: originalError, displayErrorCode: 'ENOENT' } });
   const errorPanel = wrapper.get('.panel-error');
   expect(errorPanel.text()).toContain('文件或目录不存在');
   expect(errorPanel.get('.error-path').text()).toBe('sample.txt');
@@ -50,4 +53,9 @@ test('写入回执到达前保留待写内容，失败时显示全局原因', as
   details.element.open = true;
   await details.trigger('toggle');
   expect(errorPanel.get('pre').text()).toBe(originalError);
+
+  await wrapper.setProps({ error: undefined, result: { success: false,
+    data: { results: [{ path: 'sample.txt', success: false, error: '未授予文件访问权限', displayErrorCode: 'EACCES' }] } } });
+  expect(wrapper.get('.file-error').text()).toContain('没有权限访问该文件或目录');
+  expect(wrapper.get('.file-error .error-path').text()).toBe('sample.txt');
 });

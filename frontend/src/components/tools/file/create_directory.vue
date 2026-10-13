@@ -37,6 +37,7 @@ const dirCount = computed(() => pathList.value.length)
 // 创建结果列表
 interface CreateResult {
   path: string
+  displayErrorCode?: string
   success: boolean
   error?: string
 }
@@ -51,7 +52,8 @@ const createResults = computed((): CreateResult[] => {
   return pathList.value.map(path => ({
     path,
     success,
-    error: success ? undefined : props.error
+    error: success ? undefined : props.error,
+    displayErrorCode: result?.displayErrorCode
   }))
 })
 
@@ -103,7 +105,7 @@ function getDirName(dirPath: string): string {
     <!-- 全局错误 -->
     <div v-if="error && dirCount === 0" class="panel-error">
       <span class="codicon codicon-error error-icon"></span>
-      <ToolErrorMessage class="error-text" :error="error" :path="args.path" />
+      <ToolErrorMessage class="error-text" :error="error" :code="result?.displayErrorCode" :path="args.path" />
     </div>
     
     <!-- 目录列表 -->
@@ -121,7 +123,8 @@ function getDirName(dirPath: string): string {
         <div class="dir-info">
           <span class="dir-name">{{ getDirName(item.path) }}</span>
           <span class="dir-path">{{ item.path }}</span>
-          <ToolErrorMessage v-if="!item.success && item.error" class="dir-error" :error="item.error" :path="item.path" />
+          <ToolErrorMessage v-if="!item.success && item.error" class="dir-error"
+            :error="item.error" :code="item.displayErrorCode" :path="item.path" />
         </div>
       </div>
     </div>

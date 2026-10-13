@@ -68,6 +68,7 @@ const fileRequests = computed((): FileRequest[] => {
 interface ReadResult {
   path: string
   success: boolean
+  displayErrorCode?: string
   type?: 'text' | 'multimodal' | 'binary'
   content?: string
   lineCount?: number
@@ -265,7 +266,7 @@ onBeforeUnmount(() => {
     <!-- 全局错误 -->
     <div v-if="error && readResults.length === 0" class="panel-error">
       <span class="codicon codicon-error error-icon"></span>
-      <ToolErrorMessage class="error-text" :error="error" :path="args.path" />
+      <ToolErrorMessage class="error-text" :error="error" :code="result?.displayErrorCode" :path="args.path" />
     </div>
 
     <p v-else-if="!hasResult" class="file-waiting" role="status">
@@ -319,7 +320,7 @@ onBeforeUnmount(() => {
 
         <!-- 错误信息 -->
         <div v-if="!result.success && result.error" class="file-error">
-          <ToolErrorMessage :error="result.error" :path="result.path" />
+          <ToolErrorMessage :error="result.error" :code="result.displayErrorCode" :path="result.path" />
         </div>
 
         <!-- 二进制文件提示 -->

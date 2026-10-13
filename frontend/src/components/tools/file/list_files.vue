@@ -49,6 +49,7 @@ interface Entry {
 // 单个目录的结果
 interface ListResult {
   path: string
+  displayErrorCode?: string
   entries: Entry[]
   fileCount: number
   dirCount: number
@@ -75,7 +76,8 @@ const listResults = computed((): ListResult[] => {
           fileCount: entries.length,
           dirCount: 0,
           success: r.success,
-          error: r.error
+          error: r.error,
+          displayErrorCode: r.displayErrorCode
         }
       }
       return r as ListResult
@@ -121,7 +123,8 @@ const listResults = computed((): ListResult[] => {
     fileCount: 0,
     dirCount: 0,
     success: !props.error,
-    error: props.error
+    error: props.error,
+    displayErrorCode: result?.displayErrorCode
   }))
 })
 
@@ -266,7 +269,7 @@ async function copyAllEntries() {
     <!-- 全局错误 -->
     <div v-if="error && listResults.length === 0" class="panel-error">
       <span class="codicon codicon-error error-icon"></span>
-      <ToolErrorMessage class="error-text" :error="error" :path="args.path" />
+      <ToolErrorMessage class="error-text" :error="error" :code="result?.displayErrorCode" :path="args.path" />
     </div>
     
     <!-- 目录列表 -->
@@ -296,7 +299,7 @@ async function copyAllEntries() {
         
         <!-- 错误信息 -->
         <div v-if="!result.success && result.error" class="dir-error">
-          <ToolErrorMessage :error="result.error" :path="result.path" />
+          <ToolErrorMessage :error="result.error" :code="result.displayErrorCode" :path="result.path" />
         </div>
         
         <!-- 条目列表 -->

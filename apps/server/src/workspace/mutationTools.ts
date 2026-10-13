@@ -16,7 +16,21 @@ import { getActualLanguage } from '../../../../backend/i18n';
 import { resolveLocalizationLanguage } from '../../../../backend/tools/localization/types';
 import { countSplitTextLines, normalizeLineEndingsToLF as normalize } from '../../../../shared/textLines';
 import { withBatchItems } from './batchItems';
+import { getErrorDisplayMetadata, type ToolErrorDisplayMetadata } from '../../../../shared/toolErrorMetadata';
+import type { WorkspaceDiff } from './diffs';
 import { decodeTextBytes, detectTextEncoding, findUnencodableCharacter, isLegacyEncoding, roundTripsExactly, type TextDetectionResult } from '../../../../backend/tools/search/textEncodingRuntime';
+
+interface FileMutationResult extends ToolErrorDisplayMetadata {
+  path: string;
+  success: boolean;
+  status: WorkspaceDiff['status'];
+  action: 'created' | 'modified' | 'unchanged';
+  cancelled?: boolean;
+  error?: string;
+  diffContentId?: string;
+  pendingDiffId?: string;
+  encoding?: TextDetectionResult['encoding'];
+}
 
 /** 原文件工具只负责参数和提案；文件效果统一交给宿主事务与审阅服务。 */
 export function mutationTools(app: PlatformApplication, format: 'unified' | 'search_replace'): RuntimeTool[] {
@@ -41,7 +55,8 @@ export function mutationTools(app: PlatformApplication, format: 'unified' | 'sea
       return { text: decodeTextBytes(value.bytes, detection), hash: value.hash, encoding: detection };
     }, { writeGrants: context.fileWriteGrants });
   }
-  async function review(context: ToolContext, file: string, before: { text: string; hash: string | null; encoding?: TextDetectionResult }, content: string) {
+  async function review(context: ToolContext, file: string,
+    before: { text: string; hash: string | null; encoding?: TextDetectionResult }, content: string): Promise<FileMutationResult> {
     if (before.hash !== null && normalize(before.text) === content) return { path: file, success: true, status: 'accepted', action: 'unchanged' };
     // 先检查新内容能否用原编码表示，避免用户确认 Diff 后才发现无法保存。
     const unsupported = before.encoding && findUnencodableCharacter(content, before.encoding.encoding);
@@ -50,6 +65,7 @@ export function mutationTools(app: PlatformApplication, format: 'unified' | 'sea
     const result = await app.diffs.propose(context, file, before.text, content, before.hash, before.encoding);
     return { path: file, success: result.status === 'accepted', status: result.status, cancelled: result.status === 'cancelled',
       action: before.hash === null ? 'created' : 'modified', diffContentId: result.id, pendingDiffId: result.id, error: result.error,
+      ...(result.displayErrorCode ? { displayErrorCode: result.displayErrorCode } : {}),
       encoding: before.encoding?.encoding };
   }
   async function batch(entries: Record<string, any>[], operation: (entry: Record<string, any>) => Promise<Record<string, any>>): Promise<ToolOutcome> {
@@ -57,7 +73,7 @@ export function mutationTools(app: PlatformApplication, format: 'unified' | 'sea
     const results: Record<string, any>[] = [];
     for (const entry of entries) {
       try { results.push(await operation(entry)); }
-      catch (error) { results.push({ path: entry?.path ?? '', success: false, error: String(error) }); }
+      catch (error) { results.push({ path: entry?.path ?? '', success: false, error: String(error), ...getErrorDisplayMetadata(error) }); }
     }
     const successCount = results.filter(item => item.success).length;
     const cancelled = results.some(item => item.cancelled);
@@ -84,6 +100,7 @@ export function mutationTools(app: PlatformApplication, format: 'unified' | 'sea
         if (!proposal.appliedCount) return { success: false, error: '没有差异块能够应用。', data: { file, status: 'rejected', ...counts } };
         const result = await review(context, file, before, proposal.newContent);
         return { success: result.success && !proposal.failedCount, cancelled: result.cancelled, error: result.error,
+          ...(result.displayErrorCode ? { displayErrorCode: result.displayErrorCode } : {}),
           data: { ...result, file, ...counts } };
       } },
     { declaration: declaration(createInsertCodeDeclaration(declarationOptions)), effects: () => ['workspace_write'],

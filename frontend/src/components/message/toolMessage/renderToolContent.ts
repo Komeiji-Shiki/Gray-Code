@@ -70,7 +70,7 @@ export function renderToolContent(
         children.push(
           h('div', { class: 'content-section error-section' }, [
             h('div', { class: 'section-label' }, t('components.message.tool.error') + ':'),
-            h(ToolErrorMessage, { class: 'error-message', error: tool.error, path: tool.args?.path })
+            h(ToolErrorMessage, { class: 'error-message', error: tool.error, code: tool.result?.displayErrorCode, path: tool.args?.path })
           ])
         )
       }

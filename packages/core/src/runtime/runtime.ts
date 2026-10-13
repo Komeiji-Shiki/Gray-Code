@@ -764,7 +764,10 @@ export class PlatformRuntime {
       context.actor = latest ?? undefined;
       return finish(await entry.tool.execute(call.args, context));
     } catch (error) {
-      return finish({ success: false, code: signal.aborted ? 'CANCELLED' : 'TOOL_FAILED', error: error instanceof Error ? error.message : String(error) });
+      const displayErrorCode = (error as { code?: unknown } | null)?.code;
+      return finish({ success: false, code: signal.aborted ? 'CANCELLED' : 'TOOL_FAILED',
+        error: error instanceof Error ? error.message : String(error),
+        ...(typeof displayErrorCode === 'string' ? { displayErrorCode } : {}) });
     }
   }
 

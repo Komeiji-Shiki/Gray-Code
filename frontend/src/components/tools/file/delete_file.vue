@@ -38,6 +38,7 @@ const fileCount = computed(() => pathList.value.length)
 // 删除结果列表
 interface DeleteResult {
   path: string
+  displayErrorCode?: string
   success: boolean
   error?: string
 }
@@ -52,7 +53,8 @@ const deleteResults = computed((): DeleteResult[] => {
   return pathList.value.map(path => ({
     path,
     success,
-    error: success ? undefined : props.error
+    error: success ? undefined : props.error,
+    displayErrorCode: result?.displayErrorCode
   }))
 })
 
@@ -104,7 +106,7 @@ function getFileName(filePath: string): string {
     <!-- 全局错误 -->
     <div v-if="error && fileCount === 0" class="panel-error">
       <span class="codicon codicon-error error-icon"></span>
-      <ToolErrorMessage class="error-text" :error="error" :path="args.path" />
+      <ToolErrorMessage class="error-text" :error="error" :code="result?.displayErrorCode" :path="args.path" />
     </div>
     
     <!-- 文件列表 -->
@@ -122,7 +124,8 @@ function getFileName(filePath: string): string {
         <div class="file-info">
           <button type="button" class="file-name clickable gc-link-button" :title="item.path" @click.stop="openFile(item.path)">{{ getFileName(item.path) }}</button>
           <button type="button" class="file-path clickable gc-link-button" :title="item.path" @click.stop="openFile(item.path)">{{ item.path }}</button>
-          <ToolErrorMessage v-if="!item.success && item.error" class="file-error" :error="item.error" :path="item.path" />
+          <ToolErrorMessage v-if="!item.success && item.error" class="file-error"
+            :error="item.error" :code="item.displayErrorCode" :path="item.path" />
         </div>
       </div>
     </div>

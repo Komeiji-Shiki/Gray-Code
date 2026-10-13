@@ -7,6 +7,36 @@
 
 import { serializeToolResultForLLM } from '../../modules/channel/formatters/toolResponseFormatter';
 
+test('直接序列化含展示错误码的顶层及批量回执时，模型正文逐字不变', () => {
+    const direct = { success: false, code: 'TOOL_FAILED', error: 'opaque failure' };
+    expect(serializeToolResultForLLM('apply_diff', { ...direct, displayErrorCode: 'EACCES' }))
+        .toBe(serializeToolResultForLLM('apply_diff', direct));
+
+    for (const toolName of ['read_file', 'list_files', 'write_file']) {
+        const original = {
+            success: false, error: '1 file failed',
+            data: {
+                results: [
+                    { path: 'a.txt', success: true, ...(toolName === 'read_file' ? { content: '正文\n下一行' } : { entries: [] }),
+                        payload: { displayErrorCode: '用户内容' } },
+                    { path: 'b.txt', success: false, error: 'access denied' }
+                ],
+                successCount: 1, failCount: 1, totalCount: 2
+            }
+        };
+        const display = {
+            ...original, displayErrorCode: 'EACCES',
+            data: {
+                ...original.data, displayErrorCode: 'EISDIR',
+                results: original.data.results.map(item => item.success ? item : { ...item, displayErrorCode: 'ENOENT' })
+            }
+        };
+        expect(serializeToolResultForLLM(toolName, display)).toBe(serializeToolResultForLLM(toolName, original));
+        expect(serializeToolResultForLLM(toolName, display)).toContain('用户内容');
+        expect(display.data.results[1]).toHaveProperty('displayErrorCode', 'ENOENT');
+    }
+});
+
 describe('serializeToolResultForLLM - 部分成功结果（F-02）', () => {
     test('read_file 一项成功一项失败时，成功内容与失败详情都可见', () => {
         const result = serializeToolResultForLLM('read_file', {

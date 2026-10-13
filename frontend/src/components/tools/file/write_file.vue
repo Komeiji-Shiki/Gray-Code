@@ -51,6 +51,7 @@ interface WriteFileEntry {
 // 单个文件写入结果
 interface WriteResult {
   path: string
+  displayErrorCode?: string
   success: boolean
   action?: 'created' | 'modified' | 'unchanged'
   status?: string
@@ -459,7 +460,7 @@ onBeforeUnmount(() => {
     <!-- 全局错误 -->
     <div v-if="error && writeResults.length === 0" class="panel-error">
       <span class="codicon codicon-error error-icon"></span>
-      <ToolErrorMessage class="error-text" :error="error" :path="args.path" />
+      <ToolErrorMessage class="error-text" :error="error" :code="result?.displayErrorCode" :path="args.path" />
     </div>
 
     <!-- 文件列表 -->
@@ -506,7 +507,7 @@ onBeforeUnmount(() => {
 
         <!-- 错误信息 -->
         <div v-if="file.result && !file.result.success && file.result.error" class="file-error">
-          <ToolErrorMessage :error="file.result.error" :path="file.path" />
+          <ToolErrorMessage :error="file.result.error" :code="file.result.displayErrorCode" :path="file.path" />
         </div>
 
         <!-- 视图切换按钮 -->

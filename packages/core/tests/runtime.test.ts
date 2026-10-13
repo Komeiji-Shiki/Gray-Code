@@ -89,6 +89,22 @@ describe('independent task execution and identity boundaries', () => {
     expect((await f.store.readFullHistory('approval')).messages[2].parts[0]).toMatchObject({ functionResponse: { id: 'delete-call', response: { code: 'PERMISSION_DENIED' } } });
   });
 
+  test('工具边界保留原有失败正文，并为界面保存异常的 code', async () => {
+    const tool = registry.catalog(['public_search']).entries.get('public_search')!.tool;
+    const error = Object.assign(new Error('file access failed'), { code: 'EACCES' });
+    const execute = jest.spyOn(tool, 'execute').mockRejectedValue(error);
+    try {
+      const run = await start('owner', 'file-error');
+      expect((await runtime.wait(run.id))?.status).toBe('completed');
+      const history = (await f.store.readFullHistory('file-error')).messages;
+      const response = history.flatMap(message => message.parts)
+        .find(part => (part.functionResponse as { id?: string } | undefined)?.id === 'public-call')?.functionResponse;
+      expect(response).toMatchObject({ response: {
+        success: false, code: 'TOOL_FAILED', error: 'file access failed', displayErrorCode: 'EACCES'
+      } });
+    } finally { execute.mockRestore(); }
+  });
+
   test('cancelling an active run authorizes from memory without waiting for storage', async () => {
     let approvalReady!: () => void;
     const ready = new Promise<void>(resolve => { approvalReady = resolve; });

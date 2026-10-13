@@ -12,16 +12,14 @@ function normalizePath(value: string): string {
 }
 
 /** 只生成界面说明；原始错误与工具结果保持原样。 */
-export function getToolFileError(error: string, pathHint?: string, workspaceUri?: string | null): {
+export function getToolFileError(code: unknown, pathHint?: string, workspaceUri?: string | null): {
   code: FileErrorCode
   path?: string
 } | undefined {
-  const code = error.match(/\b(ENOENT|EACCES|EISDIR)\b/)?.[1] as FileErrorCode | undefined
-  if (!code) return undefined
-  const rawPath = pathHint || error.match(/(?:open|stat|lstat|realpath|scandir|mkdir|rmdir|unlink|read|write)\s+['"]([^'"]+)['"]/)?.[1]
-  if (!rawPath) return { code }
+  if (code !== 'ENOENT' && code !== 'EACCES' && code !== 'EISDIR') return undefined
+  if (!pathHint) return { code }
 
-  const path = normalizePath(rawPath)
+  const path = normalizePath(pathHint)
   if (!/^(?:[A-Za-z]:\/|\/)/.test(path)) return { code, path: path.replace(/^\.\//, '') }
   const root = workspaceUri ? normalizePath(workspaceUri).replace(/\/$/, '') : undefined
   if (root) {

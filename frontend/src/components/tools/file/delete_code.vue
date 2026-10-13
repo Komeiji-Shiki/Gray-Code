@@ -33,6 +33,7 @@ interface DeleteEntry {
 // 单个删除结果
 interface DeleteResult {
   path: string
+  displayErrorCode?: string
   success: boolean
   start_line?: number
   end_line?: number
@@ -56,7 +57,8 @@ const deleteResults = computed((): DeleteResult[] => {
   return fileList.value.map(f => ({
     path: f.path,
     success: !props.error,
-    error: props.error
+    error: props.error,
+    displayErrorCode: result?.displayErrorCode
   }))
 })
 
@@ -138,7 +140,7 @@ function getFileNameWithoutExt(fp: string): string {
     <!-- 全局错误 -->
     <div v-if="error && mergedFiles.length === 0" class="panel-error">
       <span class="codicon codicon-error error-icon"></span>
-      <ToolErrorMessage class="error-text" :error="error" :path="args.path" />
+      <ToolErrorMessage class="error-text" :error="error" :code="result?.displayErrorCode" :path="args.path" />
     </div>
 
     <!-- 文件列表 -->
@@ -165,7 +167,7 @@ function getFileNameWithoutExt(fp: string): string {
         <!-- 状态显示 -->
         <div v-if="file.result && !file.result.success && file.result.error" class="file-error">
           <span class="codicon codicon-error"></span>
-          <ToolErrorMessage :error="file.result.error" :path="file.path" />
+          <ToolErrorMessage :error="file.result.error" :code="file.result.displayErrorCode" :path="file.path" />
         </div>
         <div v-else-if="file.result?.status === 'accepted'" class="file-success">
           <span class="codicon codicon-check"></span>

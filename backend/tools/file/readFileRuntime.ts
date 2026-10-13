@@ -24,6 +24,7 @@ import { mapWithConcurrency } from '../shared/concurrency';
 import { selectTextLines, splitTextLines } from '../../../shared/textLines';
 import { calculateAspectRatio, type ImageDimensions } from '../shared/imageMath';
 import { formatFileSize } from '../shared/fileSize';
+import { getErrorDisplayMetadata, type ToolErrorDisplayMetadata } from '../../../shared/toolErrorMetadata';
 // 修改原因：read_file 本地副本的 parseImageDimensions 与 media/imageUtils 重复实现且行为漂移
 // （JPEG SOF 覆盖、WebP VP8L 位解析不一致），统一复用 imageUtils 实现，删除本地副本。
 import { parseImageDimensions as parseImageDimensionsFromImageUtils } from '../shared/imageDimensions';
@@ -140,7 +141,7 @@ interface ReadFileDebugInfo {
 /**
  * 单个文件读取结果
  */
-interface ReadResult {
+interface ReadResult extends ToolErrorDisplayMetadata {
     index?: number;
     path: string;
     workspace?: string;
@@ -420,7 +421,8 @@ async function readSingleFile(
                 path: filePath,
                 workspace: isMultiRoot ? workspace?.name : undefined,
                 success: false,
-                error: error instanceof Error ? error.message : String(error)
+                error: error instanceof Error ? error.message : String(error),
+                ...getErrorDisplayMetadata(error)
             }
         };
     }

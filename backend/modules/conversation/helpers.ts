@@ -5,6 +5,7 @@
  */
 
 import type { Content, ContentPart } from './types';
+import { withoutToolErrorDisplayMetadata } from '../../../shared/toolErrorMetadata';
 
 // 工具结果正文在历史中按对象替换；缓存净化后的只读投影，避免每轮复制大型 results。
 const functionResponseApiCache = new WeakMap<object, Record<string, unknown>>();
@@ -363,6 +364,7 @@ export function createMultiTextMessage(
  * - data 字段中的：diffContentId, diffId, diffs, pendingDiffId, toolId, terminalId, multiRoot, command, cwd, shell,
  *                   channelName, modelId（subagents 运行时元数据，仅供 UI 展示）
  * - data.results 数组中的：diffContentId, pendingDiffId
+ * - 上述回执结构中的 displayErrorCode：只为界面解释原始错误，不改变模型正文
  *
  * 保留的字段：killed, duration（AI 需要知道命令执行状态）；
  *             subagents 的 steps / toolsUsed（告知主模型子代理是否调用过工具及调用数量，不参与剥离）
@@ -388,7 +390,7 @@ export function cleanFunctionResponseForAPI(
     // agentInbox 是模型可见的真实历史内容：不能在后续请求中删除，否则已经发送过的
     // provider 前缀会从该 functionResponse 起发生变化，破坏 KV/prompt cache 命中。
     // 一次性语义由 AgentMailbox.drain/claim 保证，不靠改写历史实现。
-    const { diffContentId, diffId, diffs, pendingDiffId, ...rest } = response;
+    const { diffContentId, diffId, diffs, pendingDiffId, ...rest } = withoutToolErrorDisplayMetadata(response);
     
     // 检查 data 字段中是否也有这些字段
     if (rest.data && typeof rest.data === 'object') {

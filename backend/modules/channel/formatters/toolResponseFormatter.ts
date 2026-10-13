@@ -9,6 +9,8 @@
  * 不嵌套在 JSON 对象里。
  */
 
+import { withoutToolErrorDisplayMetadata } from '../../../../shared/toolErrorMetadata';
+
 /** 提取对象中可能是大段文本内容的关键字段名 */
 const TEXT_CONTENT_KEYS = new Set(['content', 'originalContent', 'newContent', 'search', 'replace', 'oldContent', 'lineContent', 'context', 'output']);
 
@@ -343,7 +345,7 @@ export function serializeToolResultForLLM(
         return String(response);
     }
 
-    response = compactBatchResponse(toolName, compactSearchResponse(toolName, response));
+    response = compactBatchResponse(toolName, compactSearchResponse(toolName, withoutToolErrorDisplayMetadata(response)));
     const textBody = formatTextBody(toolName, response);
     if (textBody !== undefined) return textBody;
     const data = response.data as Record<string, unknown> | undefined;

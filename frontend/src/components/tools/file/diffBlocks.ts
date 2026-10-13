@@ -7,6 +7,7 @@ export interface DiffBlock {
   new_start_line?: number
   success?: boolean
   error?: string
+  displayErrorCode?: string
   /** 是否被用户拒绝（部分接受/部分拒绝时由 rejectedBlockIndices 标记） */
   rejected?: boolean
 }

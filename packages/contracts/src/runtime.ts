@@ -158,6 +158,8 @@ export interface ToolOutcome {
   success: boolean;
   code?: string;
   error?: string;
+  /** 原始错误码仅供界面展示，不进入模型工具正文。 */
+  displayErrorCode?: string;
   data?: unknown;
   [key: string]: unknown;
 }

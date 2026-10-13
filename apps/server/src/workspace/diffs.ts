@@ -6,8 +6,9 @@ import { encodeTextBytes, type TextDetectionResult } from '../../../../backend/t
 import { countDeletedLines } from '../../../../backend/core/services/diff/diffAlgorithm';
 import { splitLines } from '../../../../backend/core/services/diff/lineId';
 import { t } from '../../../../backend/i18n';
+import { getErrorDisplayMetadata, type ToolErrorDisplayMetadata } from '../../../../shared/toolErrorMetadata';
 
-export interface WorkspaceDiff {
+export interface WorkspaceDiff extends ToolErrorDisplayMetadata {
   runId?: string;
   id: string; conversationId: string; workspaceId: string; path: string; originalText: string; proposedText: string;
   baseHash: string | null; status: 'pending' | 'accepted' | 'rejected' | 'cancelled'; toolCallId: string; createdAt: number;
@@ -115,16 +116,17 @@ export class WorkspaceDiffs {
     };
     context.signal.addEventListener('abort', abort, { once: true });
     try {
-      const applyImmediately = context.approvedByToolConfirmation || (config.autoSave && config.autoApplyWithoutDiffView);
-      const waitingForReview = !context.approvedByToolConfirmation && !config.autoSave && !context.signal.aborted;
+      const applyMode = context.approvedByToolConfirmation || (config.autoSave && config.autoApplyWithoutDiffView)
+        ? 'immediate' : config.autoSave ? 'autoSave' : 'review';
+      const waitingForReview = applyMode === 'review' && !context.signal.aborted;
       if (waitingForReview) await context.onDiffReview?.({ diffId: value.id, path: file, status: 'pending' });
       this.notify(value);
       const apply = async () => {
         try { await this.resolve(context.actorId, value.id, true); }
-        catch (error) { value.error = String(error); await this.finish(pending, 'rejected'); }
+        catch (error) { value.error = String(error); Object.assign(value, getErrorDisplayMetadata(error)); await this.finish(pending, 'rejected'); }
       };
-      if (applyImmediately) await apply();
-      else if (config.autoSave) session.scheduleAutoSave(config.autoSaveDelay, apply);
+      if (applyMode === 'immediate') await apply();
+      else if (applyMode === 'autoSave') session.scheduleAutoSave(config.autoSaveDelay, apply);
       if (context.signal.aborted) abort();
       const result = await completed;
       if (waitingForReview) await context.onDiffReview?.({ diffId: value.id, path: file, status: result.status });

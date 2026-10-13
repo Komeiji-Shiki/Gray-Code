@@ -16,7 +16,7 @@ const failure = computed(() => props.error || (typeof envelope.value?.error === 
 const hasData = computed(() => !!envelope.value && Object.hasOwn(envelope.value, 'data'))
 const partialResult = computed(() => isPartialToolData(envelope.value?.data ?? envelope.value))
 const metadata = computed(() => envelope.value ? Object.fromEntries(Object.entries(envelope.value)
-  .filter(([key]) => !['success', 'data', 'error', 'attachments', 'multimodal'].includes(key))) : {})
+  .filter(([key]) => !['success', 'data', 'error', 'displayErrorCode', 'attachments', 'multimodal'].includes(key))) : {})
 const payload = computed(() => hasData.value ? envelope.value?.data : envelope.value ? metadata.value : props.result)
 const media = computed(() => [envelope.value?.attachments, envelope.value?.multimodal].flatMap(value => Array.isArray(value) ? value : []))
 const resultEmpty = computed(() => payload.value === undefined || payload.value === null || recordValue(payload.value) && !Object.keys(payload.value).length)
@@ -28,7 +28,7 @@ const waiting = computed(() => !hasResult.value && !failure.value && ['queued', 
   <div class="tool-result-panel">
     <div v-if="failure" class="result-error" :class="{ warning: partialResult }" role="alert">
       <span :class="['codicon', partialResult ? 'codicon-warning' : 'codicon-error']" aria-hidden="true" />
-      <ToolErrorMessage :error="failure" :path="args?.path" />
+      <ToolErrorMessage :error="failure" :code="envelope?.displayErrorCode" :path="args?.path" />
     </div>
     <slot />
     <section v-if="hasResult" class="result-section" :aria-label="t('components.tools.result')">

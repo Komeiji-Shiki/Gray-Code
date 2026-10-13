@@ -328,6 +328,9 @@ export type ToolResult = {
     
     /** 错误信息（失败时） */
     error?: string;
+
+    /** 原始错误码仅供界面展示，发送模型前由内部元数据清理规则移除。 */
+    displayErrorCode?: string;
     
     /** 多模态数据（可选） */
     multimodal?: MultimodalData[];

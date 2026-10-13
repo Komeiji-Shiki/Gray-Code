@@ -33,7 +33,7 @@ describe('read_file batch requests', () => {
             if (uri.fsPath === workspaceFilePath('wide.txt')) {
                 return Buffer.concat([Buffer.from([0xff, 0xfe]), Buffer.from('宽字符\n第二行', 'utf16le')]);
             }
-            throw new Error('ENOENT');
+            throw Object.assign(new Error('ENOENT'), { code: 'ENOENT' });
         });
     });
 
@@ -105,7 +105,17 @@ describe('read_file batch requests', () => {
         expect(result.error).toBe('1 file failed to read');
         expect(result.data).toMatchObject({ successCount: 1, failCount: 1, totalCount: 2, partial: true });
         expect(result.data.results[0].success).toBe(true);
-        expect(result.data.results[1]).toMatchObject({ path: 'missing.txt', success: false, error: 'ENOENT' });
+        expect(result.data.results[1]).toMatchObject({ path: 'missing.txt', success: false, error: 'ENOENT', displayErrorCode: 'ENOENT' });
+    });
+
+    test('捕获真实 code 而非从错误文本猜测，原始错误说明保持原样', async () => {
+        host.readFile.mockRejectedValueOnce(Object.assign(new Error('无法读取当前文件'), { code: 'EACCES' }));
+        const coded = await createReadFileTool().handler({ path: 'a.txt' });
+        expect(coded.data.results[0]).toMatchObject({ error: '无法读取当前文件', displayErrorCode: 'EACCES' });
+        host.readFile.mockRejectedValueOnce(new Error('ENOENT: text without a code property'));
+        const plain = await createReadFileTool().handler({ path: 'a.txt' });
+        expect(plain.data.results[0].error).toBe('ENOENT: text without a code property');
+        expect(plain.data.results[0]).not.toHaveProperty('displayErrorCode');
     });
 
     test('自动识别 GBK 与 UTF-16 并标注编码，UTF-8 结果不增加字段，可显式指定编码', async () => {

@@ -43,6 +43,7 @@ interface InsertEntry {
 // 单个插入结果
 interface InsertResult {
   path: string
+  displayErrorCode?: string
   success: boolean
   line?: number
   insertedLines?: number
@@ -66,7 +67,8 @@ const insertResults = computed((): InsertResult[] => {
   return fileList.value.map(f => ({
     path: f.path,
     success: !props.error,
-    error: props.error
+    error: props.error,
+    displayErrorCode: result?.displayErrorCode
   }))
 })
 
@@ -217,7 +219,7 @@ onBeforeUnmount(() => {
     <!-- 全局错误 -->
     <div v-if="error && mergedFiles.length === 0" class="panel-error">
       <span class="codicon codicon-error error-icon"></span>
-      <ToolErrorMessage class="error-text" :error="error" :path="args.path" />
+      <ToolErrorMessage class="error-text" :error="error" :code="result?.displayErrorCode" :path="args.path" />
     </div>
 
     <!-- 文件列表 -->
@@ -256,7 +258,7 @@ onBeforeUnmount(() => {
 
         <!-- 错误信息 -->
         <div v-if="file.result && !file.result.success && file.result.error" class="file-error">
-          <ToolErrorMessage :error="file.result.error" :path="file.path" />
+          <ToolErrorMessage :error="file.result.error" :code="file.result.displayErrorCode" :path="file.path" />
         </div>
 
         <!-- 插入的代码内容 -->

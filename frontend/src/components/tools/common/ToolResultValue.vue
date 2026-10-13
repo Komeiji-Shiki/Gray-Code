@@ -16,7 +16,8 @@ const imageName = computed(() => recordValue(value.value) && typeof value.value.
   ? value.value.name : t('components.tools.structured.image'))
 const byteLength = computed(() => value.value instanceof Uint8Array ? value.value.byteLength : undefined)
 const link = computed(() => toolLink(value.value))
-const entries = computed(() => recordValue(value.value) ? Object.entries(value.value).filter(([key, item]) => item !== undefined && !props.omit.includes(key)) : [])
+const entries = computed(() => recordValue(value.value) ? Object.entries(value.value)
+  .filter(([key, item]) => item !== undefined && key !== 'displayErrorCode' && !props.omit.includes(key)) : [])
 const compactFields = computed(() => entries.value.length > 3 && entries.value.every(([, item]) =>
   item === null || typeof item === 'number' || typeof item === 'boolean' || typeof item === 'string' && item.length <= 96 && !item.includes('\n')))
 const statusLabel = computed(() => props.field === 'status' ? toolStatusLabel(value.value) : undefined)
@@ -69,7 +70,8 @@ async function previewToolImage() {
         <div v-for="[key, item] in entries.slice(0, visible)" :key="key" class="result-field">
           <dt :title="key">{{ toolFieldLabel(key) }}</dt>
           <dd>
-            <ToolErrorMessage v-if="key === 'error' && typeof item === 'string'" :error="item" :path="recordValue(value) ? value.path : undefined" />
+            <ToolErrorMessage v-if="key === 'error' && typeof item === 'string'" :error="item"
+              :code="recordValue(value) ? value.displayErrorCode : undefined" :path="recordValue(value) ? value.path : undefined" />
             <ToolResultValue v-else :value="item" :depth="depth + 1" :field="key" />
           </dd>
         </div>

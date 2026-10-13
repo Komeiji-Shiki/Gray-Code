@@ -3,6 +3,7 @@ import type { Tool, ToolResult, ToolContext } from '../types';
 import { mapWithConcurrency } from '../shared/concurrency';
 import { getActualLanguage } from '../../i18n';
 import { resolveLocalizationLanguage } from '../localization/types';
+import { getErrorDisplayMetadata, type ToolErrorDisplayMetadata } from '../../../shared/toolErrorMetadata';
 export interface FileLocation { fsPath: string }
 export interface ListFilesHost {
 getAllWorkspaces(): { name: string }[];
@@ -128,7 +129,7 @@ const LINE_COUNT_CONCURRENCY = 8;
 /**
  * 单个目录的列出结果
  */
-interface ListResult {
+interface ListResult extends ToolErrorDisplayMetadata {
     path: string;
     workspace?: string;
     entries: Entry[];
@@ -374,7 +375,8 @@ function createTool(): Tool {
                         fileCount: 0,
                         dirCount: 0,
                         success: false,
-                        error: error instanceof Error ? error.message : String(error)
+                        error: error instanceof Error ? error.message : String(error),
+                        ...getErrorDisplayMetadata(error)
                     });
                 }
             }

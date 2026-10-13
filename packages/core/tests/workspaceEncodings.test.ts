@@ -28,6 +28,23 @@ afterEach(async () => {
 const tool = (name: string, args: Record<string, unknown>) => app.tools.catalog([name]).entries.get(name)!.tool.execute(args, context) as Promise<any>;
 const script = '@echo off\r\nrem 启动游戏并等待退出\r\necho 正在运行\r\n';
 
+test('读取、目录列表与审批写入失败的回执保留展示错误码', async () => {
+  const read = await tool('read_file', { path: 'missing.txt' });
+  expect(read.data.results[0]).toMatchObject({ path: 'missing.txt', success: false, displayErrorCode: 'ENOENT' });
+  const list = await tool('list_files', { paths: ['missing-directory'] });
+  expect(list.data.results[0]).toMatchObject({ path: 'missing-directory', success: false, displayErrorCode: 'ENOENT' });
+
+  const failure = Object.assign(new Error('write denied by fixture'), { code: 'EACCES' });
+  const write = jest.spyOn(app.changes, 'write').mockRejectedValueOnce(failure);
+  try {
+    const written = await tool('write_file', { path: 'denied.txt', content: 'new content' });
+    expect(written.data.results[0]).toMatchObject({ path: 'denied.txt', success: false,
+      error: String(failure), displayErrorCode: 'EACCES' });
+    const saved = await app.diffs.list('owner', context.workspace!.id);
+    expect(saved[0]).toMatchObject({ path: 'denied.txt', error: String(failure), displayErrorCode: 'EACCES' });
+  } finally { write.mockRestore(); }
+});
+
 test('apply_diff 与 write_file 修改 GBK 文件后仍按 GBK 写回', async () => {
   const file = path.join(f.root, 'run.cmd');
   await writeFile(file, iconv.encode(script, 'gbk'));

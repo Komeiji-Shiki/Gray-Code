@@ -13,6 +13,37 @@ vi.mock('../../../../utils/vscode', () => ({ sendToExtension: vi.fn().mockResolv
 beforeEach(() => setLanguage('zh-CN'))
 afterEach(() => { setLanguage('auto'); toolRegistry.unregister('custom_display_fixture') })
 
+test('文件错误只按展示 code 映射，顶层与批量条目保留原始详情，旧记录不猜测错误文本', async () => {
+  for (const [code, message] of [
+    ['ENOENT', '文件或目录不存在'],
+    ['EACCES', '没有权限访问该文件或目录'],
+    ['EISDIR', '目标是文件夹，此操作需要文件']
+  ]) {
+    const raw = `opaque error for ${code.toLowerCase()}`
+    const panel = mount(ToolResultPanel, { props: { args: { path: 'src/file.txt' },
+      result: { success: false, error: raw, displayErrorCode: code } } })
+    const row = mount(ToolResultValue, { props: { value: [{ path: 'src/file.txt', success: false, error: raw, displayErrorCode: code }] } })
+    try {
+      for (const wrapper of [panel, row]) {
+        const error = wrapper.get('.tool-error-message')
+        expect(error.text()).toContain(message)
+        expect(error.get('.error-path').text()).toBe('src/file.txt')
+        expect(error.text()).not.toContain(raw)
+        const details = error.get<HTMLDetailsElement>('details')
+        details.element.open = true
+        await details.trigger('toggle')
+        expect(error.get('pre').text()).toBe(raw)
+      }
+    } finally { panel.unmount(); row.unmount() }
+  }
+  const originalError = 'ENOENT: missing path, without display metadata'
+  const legacy = mount(ToolResultPanel, { props: { result: { success: false, error: originalError } } })
+  try {
+    expect(legacy.get('.tool-error-message').text()).toBe(originalError)
+    expect(legacy.find('.tool-error-message details').exists()).toBe(false)
+  } finally { legacy.unmount() }
+})
+
 test('浏览器结果展示网址、页面内容与真实的零和布尔值，原始数据按需生成', async () => {
   const wrapper = mount(ToolResultPanel, { props: { args: { action: 'snapshot', tabId: 'fixture' }, status: 'success',
     result: { success: true, data: { title: 'Google Search', url: 'https://www.google.com/search?q=GrayCode', nodes: ['[a] heading "GrayCode"'], count: 0, truncated: false } } } })

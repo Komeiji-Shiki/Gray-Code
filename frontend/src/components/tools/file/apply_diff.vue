@@ -56,7 +56,9 @@ const diffList = computed((): DiffBlock[] => {
   const hunks = props.args.hunks as Array<{ oldContent: string; newContent: string; startLine?: number }> | undefined
   if (hunks && Array.isArray(hunks) && hunks.length > 0) {
     const data = props.result?.data as Record<string, any> | undefined
-    const results = (data?.results as Array<{ index: number; success?: boolean; error?: string; startLine?: number; matchKind?: string }> | undefined) || []
+    const results = (data?.results as Array<{
+      index: number; success?: boolean; error?: string; displayErrorCode?: string; startLine?: number; matchKind?: string
+    }> | undefined) || []
 
     return hunks.map((h, i) => {
       const r = results.find(x => x.index === i)
@@ -66,6 +68,7 @@ const diffList = computed((): DiffBlock[] => {
         start_line: h.startLine,
         success: r?.success,
         error: r?.error,
+        displayErrorCode: r?.displayErrorCode,
         rejected: rejectedIndices.has(i)
       }
     })
@@ -76,7 +79,9 @@ const diffList = computed((): DiffBlock[] => {
   if (patch && typeof patch === 'string' && patch.trim()) {
     const blocks = parseUnifiedPatchToDiffBlocks(patch)
     const data = props.result?.data as Record<string, any> | undefined
-    const results = (data?.results as Array<{ index: number; success?: boolean; error?: string; startLine?: number }> | undefined) || []
+    const results = (data?.results as Array<{
+      index: number; success?: boolean; error?: string; displayErrorCode?: string; startLine?: number
+    }> | undefined) || []
 
     // 将后端 best-effort 的逐 hunk 结果叠加到展示块上
     return blocks.map((b, i) => {
@@ -88,6 +93,7 @@ const diffList = computed((): DiffBlock[] => {
         ...b,
         success: r.success,
         error: r.error,
+        displayErrorCode: r.displayErrorCode,
         // 统一使用后端返回的 startLine（更接近真实应用位置）；没有则退回参数
         start_line: (r.startLine as any) ?? b.start_line,
         rejected: rejectedIndices.has(i)
@@ -108,6 +114,7 @@ const diffList = computed((): DiffBlock[] => {
         ...diff,
         success: res.success,
         error: res.error,
+        displayErrorCode: res.displayErrorCode,
         // 不要默认填充为 1：start_line 仅在“参数中提供/后端返回匹配行号”时才展示
         start_line: res.matchedLine ?? res.start_line ?? diff.start_line,
         rejected: rejectedIndices.has(i)
@@ -122,6 +129,7 @@ const diffList = computed((): DiffBlock[] => {
       ...diff,
       success: !failure,
       error: failure?.error,
+      displayErrorCode: failure?.displayErrorCode,
       // start_line 允许为空；为空时前端不显示“line xx”标记，但内部行号仍会从 1 开始计算
       start_line: diff.start_line,
       rejected: rejectedIndices.has(i)
@@ -348,7 +356,7 @@ onBeforeUnmount(() => {
       <span v-else-if="isPartial" class="codicon codicon-warning status-icon partial"></span>
       <span v-else class="codicon codicon-error status-icon error"></span>
       <div class="status-text">
-        <ToolErrorMessage v-if="error" :error="error" :path="filePath" />
+        <ToolErrorMessage v-if="error" :error="error" :code="result?.displayErrorCode" :path="filePath" />
         <template v-else-if="resultData.message">{{ resultData.message }}</template>
         <template v-else-if="isPartial">{{ t('components.tools.file.applyDiffPanel.diffApplied') }} ({{ resultData.appliedCount }}/{{ resultData.totalCount }})</template>
         <template v-else-if="isFailed">{{ t('common.failed') }}</template>
@@ -378,7 +386,7 @@ onBeforeUnmount(() => {
     <!-- 全局错误 -->
     <div v-if="error && !resultData" class="panel-error">
       <span class="codicon codicon-error error-icon"></span>
-      <ToolErrorMessage class="error-text" :error="error" :path="filePath" />
+      <ToolErrorMessage class="error-text" :error="error" :code="result?.displayErrorCode" :path="filePath" />
     </div>
 
         <!-- Diff 列表 -->
@@ -458,7 +466,7 @@ onBeforeUnmount(() => {
           <div class="failed-section">
             <div class="failed-error" v-if="diff.error">
               <span class="codicon codicon-error"></span>
-              <ToolErrorMessage :error="diff.error" :path="filePath" />
+              <ToolErrorMessage :error="diff.error" :code="diff.displayErrorCode" :path="filePath" />
             </div>
             <div class="failed-label">{{ t('components.message.tool.parameters') }} (search):</div>
             <CustomScrollbar :horizontal="true" :max-height="150">

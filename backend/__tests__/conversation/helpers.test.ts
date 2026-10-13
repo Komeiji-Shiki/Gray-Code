@@ -66,6 +66,30 @@ describe('ensureBackgroundTaskSourceForDisplay', () => {
 });
 
 describe('cleanFunctionResponseForAPI', () => {
+    test('展示错误码只从回执结构剥离，模型正文与旧回执完全一致', () => {
+        const original = {
+            success: false, code: 'TOOL_FAILED', error: '文件处理失败',
+            data: {
+                error: '目录访问失败',
+                results: [
+                    { path: 'a.txt', success: true, content: '原始正文', payload: { displayErrorCode: '用户数据必须保留' } },
+                    { path: 'b.txt', success: false, error: 'access denied' }
+                ]
+            }
+        };
+        const display = {
+            ...original, displayErrorCode: 'EACCES',
+            data: {
+                ...original.data, displayErrorCode: 'EISDIR',
+                results: original.data.results.map(item => item.success ? item : { ...item, displayErrorCode: 'ENOENT' })
+            }
+        };
+        expect(JSON.stringify(cleanFunctionResponseForAPI(display))).toBe(JSON.stringify(cleanFunctionResponseForAPI(original)));
+        expect(display.displayErrorCode).toBe('EACCES');
+        expect(display.data.results[1]).toHaveProperty('displayErrorCode', 'ENOENT');
+        expect(cleanFunctionResponseForAPI(display)?.data).toMatchObject({ results: [{ payload: { displayErrorCode: '用户数据必须保留' } }, {}] });
+    });
+
     test('保留顶层 agentInbox，避免历史前缀在后续请求中被改写', () => {
         const cleaned = cleanFunctionResponseForAPI({
             success: true,
