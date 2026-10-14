@@ -4,6 +4,8 @@ import type { ModelInput } from '@graycode/contracts';
 import * as fs from 'node:fs/promises';
 import path from 'node:path';
 import { fixture } from './fixtures';
+import { branchNamespace, readBranches, type BranchState } from '../../../apps/server/src/conversations/branches';
+import { validate } from '../../../backend/modules/conversation/branch/BranchGraph';
 
 describe('original UI history operations on the independent core', () => {
   let f: Awaited<ReturnType<typeof fixture>>;
@@ -166,6 +168,36 @@ describe('original UI history operations on the independent core', () => {
     reads.mockRestore();
     expect((await app.storage.getRun(running.runId))?.status).toBe('cancelled');
     expect((await history()).messages.some(message => message.id === 'pending')).toBe(false);
+  });
+
+  test('截断多条消息清理活动指针，旧版删除残留可读取且保留候选正文', async () => {
+    await run('chatStream', { streamId: 'truncate-first', message: 'First' });
+    const retained = await history();
+    await run('chatStream', { streamId: 'truncate-follow', messageId: 'follow-up', message: 'Follow' });
+    const before = await history();
+    const reply = before.messages.at(-1)!;
+    await call('deleteMessage', { conversationId: 'conversation', targetIndex: retained.messages.length, messageId: 'follow-up' });
+    const stored = await app.storage.getRecord(branchNamespace, 'conversation') as BranchState;
+    expect(validate(stored.graph)).toEqual({ valid: true, issues: [] });
+    expect(stored.graph.nodes['follow-up']).toMatchObject({ deleted: true, activeChildId: null });
+    expect(stored.graph.nodes[reply.id!]).toMatchObject({ deleted: true, activeChildId: null });
+    expect((await history()).messages).toEqual(retained.messages.map((message, index) => ({ ...message, index })));
+
+    // 还原此次旧版故障，验证读取只修正副本中的指针，并能通过后续操作保存修复。
+    stored.graph.nodes['follow-up'].activeChildId = reply.id!;
+    await app.storage.putRecord({ namespace: branchNamespace, id: 'conversation', ownerId: 'conversation', value: stored });
+    const state = await app.conversations.read('owner', 'conversation');
+    const repaired = readBranches(state);
+    expect(validate(repaired.graph).valid).toBe(true);
+    expect(repaired.groups).toEqual(expect.objectContaining(stored.groups));
+    expect(Object.keys(repaired.graph.nodes)).toEqual(Object.keys(stored.graph.nodes));
+    expect((state.records[0].record.value as BranchState).graph.nodes['follow-up'].activeChildId).toBe(reply.id);
+    await call('conversation.renameBranchCandidate', { conversationId: 'conversation', nodeId: retained.messages.at(-1)!.id, label: '保留的回复' });
+    expect(validate((await app.storage.getRecord(branchNamespace, 'conversation') as BranchState).graph).valid).toBe(true);
+
+    // 缺失父节点不属于本次残留，仍须拒绝，不能被恢复逻辑掩盖。
+    (state.records[0].record.value as BranchState).graph.nodes['follow-up'].parentId = 'missing-parent';
+    expect(() => readBranches(state)).toThrow('分支图损坏');
   });
 
   test('分支对应存档可恢复文件，未确认、过期确认和恢复失败都保留草稿及历史', async () => {

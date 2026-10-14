@@ -67,6 +67,8 @@ export class ConversationService {
     const retainedIds = new Set(messages.map(message => message.id));
     for (const node of Object.values(branches.graph.nodes)) if (!retainedIds.has(node.id) && state.history.messages.some(message => message.id === node.id)) {
       node.deleted = true; node.deletedAt = Date.now();
+      // 截断会同时删除相邻节点，保留活动指针会让下次读取把归档候选判为损坏。
+      node.activeChildId = null;
     }
     return this.commit(this.changed(state, messages, single ? '删除消息前' : '截断历史前', branches));
   }

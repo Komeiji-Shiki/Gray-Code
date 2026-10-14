@@ -37,6 +37,11 @@ export function readBranches(state: ConversationState): BranchState {
   const stored = state.records.find(record => record.namespace === branchNamespace)?.record.value as BranchState | null;
   if (stored && stored.version !== 1) throw new Error('不支持的分支存储版本。');
   const value: BranchState = stored ? structuredClone(stored) : { version: 1, graph: createEmptyBranchGraph(), groups: {} };
+  // 旧版截断只标记删除，留下已删节点之间的活动指针；正文和父子关系保留，仅清理这类残留。
+  for (const node of Object.values(value.graph.nodes)) {
+    const child = node.activeChildId ? value.graph.nodes[node.activeChildId] : undefined;
+    if (node.deleted && child?.deleted && child.parentId === node.id) node.activeChildId = null;
+  }
   if (value.graph.rootNodeId !== null && !validate(value.graph).valid) throw new Error('分支图损坏，未修改历史。');
   const current = groupMessages(state.history.messages);
   value.groups = { ...value.groups, ...current };
