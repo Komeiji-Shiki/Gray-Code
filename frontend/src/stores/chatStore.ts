@@ -587,8 +587,7 @@ export const useChatStore = defineStore('chat', () => {
     closeTabAction(
       state,
       tabId,
-      cancelStreamAndRejectTools,
-      streamHandlerCtx,
+      switchTabWrapped,
       window.__GRAYCODE_HOST ? undefined : async (conversationId) => {
         try {
           await sendToExtension(MESSAGE_NAMES.cancelStream, { conversationId })

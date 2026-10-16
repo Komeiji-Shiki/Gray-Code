@@ -120,7 +120,7 @@ describe('tabActions snapshot lifecycle', () => {
     ]
     state.messageQueue.value = [makeQueuedMessage('q1', 'conv-1')]
 
-    closeTab(state, 'tab-1', vi.fn())
+    closeTab(state, 'tab-1', tabId => switchTab(state, tabId, vi.fn()))
 
     expect(state.activeTabId.value).toBe('tab-2')
     expect(state.openTabs.value.map(t => t.id)).toEqual(['tab-2'])
