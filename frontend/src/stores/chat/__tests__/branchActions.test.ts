@@ -406,6 +406,47 @@ describe('switchBranchCandidate（TREE-07 切换后重建）', () => {
     mockSend.mockReset()
   })
 
+  test('切换前的旧预览在新历史加载后返回，不能把用户消息 ID 改回旧候选', async () => {
+    const oldGraph = makeGraph({
+      u1: makeNode('u1', null, { role: 'user', activeChildId: 'a1' }),
+      a1: makeNode('a1', 'u1', { activeChildId: 'old-user' }),
+      'old-user': makeNode('old-user', 'a1', { role: 'user' }),
+      'new-user': makeNode('new-user', 'a1', { role: 'user' })
+    }, 'old-user')
+    const newGraph = { ...oldGraph, activeTailNodeId: 'new-user',
+      nodes: { ...oldGraph.nodes, a1: { ...oldGraph.nodes.a1, activeChildId: 'new-user' } } }
+    const state = createState({ currentConversationId: ref('c1'), branchGraph: ref(oldGraph) })
+    let finishOld!: (value: unknown) => void
+    let finishCheckpoints!: (value: unknown) => void
+    let checkpointStarted!: () => void
+    const checkpointReady = new Promise<void>(resolve => { checkpointStarted = resolve })
+    let graphRequests = 0
+    mockSend.mockImplementation((command: string) => {
+      if (command === 'conversation.getBranchGraph') return ++graphRequests === 1
+        ? new Promise(resolve => { finishOld = resolve }) : Promise.resolve({ graph: newGraph })
+      if (command === 'conversation.switchBranchCandidate') return Promise.resolve({ success: true })
+      if (command === 'conversation.getMessagesPaged') return Promise.resolve({ total: 3, messages: [
+        { id: 'u1', role: 'user', index: 0, parts: [{ text: 'root' }] },
+        { id: 'a1', role: 'model', index: 1, parts: [{ text: 'answer' }] },
+        { id: 'new-user', role: 'user', index: 2, parts: [{ text: 'edited' }] }
+      ] })
+      if (command === 'checkpoint.getCheckpoints') {
+        checkpointStarted()
+        return new Promise(resolve => { finishCheckpoints = resolve })
+      }
+      return Promise.resolve(undefined)
+    })
+    const oldRead = loadBranchGraph(state)
+    const switching = switchBranchCandidate(state, 'new-user')
+    await checkpointReady
+    finishOld({ graph: oldGraph })
+    await oldRead
+    expect(state.allMessages.value.at(-1)?.id).toBe('new-user')
+    finishCheckpoints({ checkpoints: [] })
+    expect(await switching).toBe(true)
+    expect(state.branchGraph.value).toEqual(newGraph)
+  })
+
   test('成功：清理残留 → TODO/Build 重置 → 重载历史 → 检查点刷新 → 分支图刷新', async () => {
     const oldGraph = makeGraph({ u1: makeNode('u1', null, { role: 'user' }), a1: makeNode('a1', 'u1') }, 'a1')
     const newGraph = makeGraph(

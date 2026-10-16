@@ -244,6 +244,7 @@ export async function loadBranchGraph(state: ChatStoreState): Promise<BranchGrap
   const version = (branchGraphRequestVersions.get(state) ?? 0) + 1
   branchGraphRequestVersions.set(state, version)
   const conversationId = state.currentConversationId.value
+  const switchingAtStart = state.isSwitchingBranch.value
   if (!conversationId) {
     state.branchGraph.value = null
     state.branchGraphLoading.value = false
@@ -258,7 +259,9 @@ export async function loadBranchGraph(state: ChatStoreState): Promise<BranchGrap
       errorMessage?: string
     }>(MESSAGE_NAMES['conversation.getBranchGraph'], { conversationId })
 
-    if (branchGraphRequestVersions.get(state) !== version || !validateSessionIdentity(state, conversationId)) return state.branchGraph.value
+    // 切换开始后，旧预览不能按旧活跃路径重新对齐刚加载的用户消息 ID。
+    if (branchGraphRequestVersions.get(state) !== version || state.isSwitchingBranch.value !== switchingAtStart
+      || !validateSessionIdentity(state, conversationId)) return state.branchGraph.value
 
     if (result?.graph) {
       state.branchGraph.value = result.graph
@@ -274,7 +277,8 @@ export async function loadBranchGraph(state: ChatStoreState): Promise<BranchGrap
     }
     return state.branchGraph.value
   } catch (err) {
-    if (branchGraphRequestVersions.get(state) === version && validateSessionIdentity(state, conversationId)) {
+    if (branchGraphRequestVersions.get(state) === version && state.isSwitchingBranch.value === switchingAtStart
+      && validateSessionIdentity(state, conversationId)) {
       console.warn('[branchActions] Failed to load branch graph:', err)
     }
     return state.branchGraph.value

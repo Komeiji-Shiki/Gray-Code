@@ -181,6 +181,7 @@ describe('independent SQLite storage worker', () => {
   test('文本前缀投影兼容内联、跨块 UTF-8、孤立代理项和特殊字典键，完整读取保持原文', async () => {
     const texts = Object.fromEntries([
       ['inline', 'A🐱中文'],
+      ['inline-large', '中🐱'.repeat(8000)],
       ['utf8', '🐱中文'.repeat(80_000)],
       ['utf16', '\ud800中文🐱'.repeat(60_000)],
       ['__proto__', '特殊字典键'.repeat(10_000)],

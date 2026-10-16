@@ -263,7 +263,11 @@ export class ObjectStore {
       if (value && typeof value === 'object') return Object.fromEntries(Object.entries(value)
         .filter(([key]) => !selection?.fields || selection.fields.includes(key))
         .map(([key, item]) => [key, restore(item, depth + 1, propertySelection(selection, key))]));
-      if (typeof value === 'string') return value.slice(0, selection?.maxStringLength);
+      if (typeof value === 'string' && selection?.maxStringLength !== undefined && value.length > selection.maxStringLength) {
+        // V8 子串可能继续持有整段内联正文；复制有界前缀，缓存估算才不会隐藏大字符串。
+        // UTF-16 往返保留原有孤立代理项和截在代理对中间的预览。
+        return Buffer.from(value.slice(0, selection.maxStringLength), 'utf16le').toString('utf16le');
+      }
       return value;
     };
     const unpack = (bytes: Uint8Array) => decode(bytes, {
