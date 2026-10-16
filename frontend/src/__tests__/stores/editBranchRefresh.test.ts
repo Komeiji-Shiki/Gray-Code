@@ -71,6 +71,7 @@ function createState(overrides: Partial<ChatStoreState> = {}): ChatStoreState {
     _pendingBranchReplayContext: ref(null),
     branchGraph: ref<BranchGraphData | null>(null),
     branchGraphLoading: ref(false),
+    isSwitchingBranch: ref(false),
     historyFolded: ref(false),
     foldedMessageCount: ref(0),
     toolResponseCache: ref(new Map()),
