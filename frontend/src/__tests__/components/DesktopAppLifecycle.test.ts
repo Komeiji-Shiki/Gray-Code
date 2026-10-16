@@ -77,6 +77,14 @@ test('初始化期间发出的聊天就绪事件仍可解除侧栏禁用', async
   expect(mocks.call).toHaveBeenCalledWith('desktop.files.ready');
 });
 
+test('未打开工作台时由外壳完成保存退出的空文档回执', async () => {
+  state.chatFocused = true;
+  wrapper = shallowMount(App); await flushPromises();
+  mocks.listener?.({ type: 'desktop.saveAll', requestId: 'settings-only-save' });
+  await flushPromises();
+  expect(mocks.call).toHaveBeenCalledWith('desktop.saveResult', { requestId: 'settings-only-save', participant: 'documents' });
+});
+
 test('初始化未完成就卸载，不再建立宿主上下文或读取待打开文件', async () => {
   let finish!: () => void;
   mocks.initialize.mockImplementation(() => new Promise<void>(resolve => { finish = resolve; }));

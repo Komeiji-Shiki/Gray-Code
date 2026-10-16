@@ -28,6 +28,8 @@ import { validateSessionIdentity } from './utils'
 import { rebuildMessageIndexById } from './state'
 import { setPendingDirtyConfirm } from './dirtyConfirmState'
 
+const branchGraphRequestVersions = new WeakMap<ChatStoreState, number>()
+
 /** 与后端 BranchHandlers.BRANCH_BUSY_STREAMING_MESSAGE 对齐的前端防护文案 */
 export const BRANCH_BUSY_MESSAGE = '会话正在流式生成中，请等待完成后再操作'
 
@@ -239,9 +241,12 @@ function collectChildrenByParent(graph: BranchGraphData | null): Map<string, Bra
  * - 只读失败（IPC 异常）→ 保留旧值，不打断对话。
  */
 export async function loadBranchGraph(state: ChatStoreState): Promise<BranchGraphData | null> {
+  const version = (branchGraphRequestVersions.get(state) ?? 0) + 1
+  branchGraphRequestVersions.set(state, version)
   const conversationId = state.currentConversationId.value
   if (!conversationId) {
     state.branchGraph.value = null
+    state.branchGraphLoading.value = false
     return null
   }
 
@@ -253,7 +258,7 @@ export async function loadBranchGraph(state: ChatStoreState): Promise<BranchGrap
       errorMessage?: string
     }>(MESSAGE_NAMES['conversation.getBranchGraph'], { conversationId })
 
-    if (!validateSessionIdentity(state, conversationId)) return state.branchGraph.value
+    if (branchGraphRequestVersions.get(state) !== version || !validateSessionIdentity(state, conversationId)) return state.branchGraph.value
 
     if (result?.graph) {
       state.branchGraph.value = result.graph
@@ -269,12 +274,13 @@ export async function loadBranchGraph(state: ChatStoreState): Promise<BranchGrap
     }
     return state.branchGraph.value
   } catch (err) {
-    console.warn('[branchActions] Failed to load branch graph:', err)
+    if (branchGraphRequestVersions.get(state) === version && validateSessionIdentity(state, conversationId)) {
+      console.warn('[branchActions] Failed to load branch graph:', err)
+    }
     return state.branchGraph.value
   } finally {
-    // 无条件复位：await 期间会话可能已切换，条件复位会让 branchGraphLoading 卡 true
-    // （加载指示器永久旋转），与 isSwitchingBranch 的无条件复位同款
-    state.branchGraphLoading.value = false
+    // 独立查询可以倒序完成，旧请求不能提前结束较新刷新的加载状态。
+    if (branchGraphRequestVersions.get(state) === version) state.branchGraphLoading.value = false
   }
 }
 

@@ -5,6 +5,32 @@ import { fixture } from './fixtures';
 import { pathToFileURL } from 'node:url';
 import type { WorkspaceDiff } from '../../../apps/server/src/workspace/diffs';
 
+test('后台存档与分支查询不阻塞客户端交互，也不创建设置草稿', async () => {
+  const f = await fixture(); await f.store.close();
+  const app = await PlatformApplication.open({ dataDirectory: f.data });
+  const client = { actorId: 'owner', clientId: 'background-history-client' };
+  const ui = (type: string, data = {}) => app.productUi.call(client, type, data);
+  let finishCheckpoints!: (value: { checkpoints: [] }) => void;
+  let finishBranches!: (value: Awaited<ReturnType<typeof app.conversations.graph>>) => void;
+  const checkpointRead = jest.spyOn(app.checkpoints, 'summaries').mockImplementation(() => new Promise(resolve => { finishCheckpoints = resolve; }));
+  const branchRead = jest.spyOn(app.conversations, 'graph').mockImplementation(() => new Promise(resolve => { finishBranches = resolve; }));
+  const draft = jest.spyOn(app.product, 'draft');
+  const checkpoints = ui('checkpoint.getCheckpoints', { conversationId: 'conversation' });
+  const branches = ui('conversation.getBranchGraph', { conversationId: 'conversation' });
+  try {
+    expect(await ui('ui.state.get')).toEqual({});
+    expect(checkpointRead).toHaveBeenCalledWith('owner', 'conversation');
+    expect(branchRead).toHaveBeenCalledWith('owner', 'conversation');
+    expect(draft).not.toHaveBeenCalled();
+  } finally {
+    finishCheckpoints({ checkpoints: [] });
+    finishBranches({ graph: { version: 1, rootNodeId: null, activeTailNodeId: null, nodes: {} } });
+    await Promise.all([checkpoints, branches]);
+    checkpointRead.mockRestore(); branchRead.mockRestore(); draft.mockRestore();
+    await app.close(); await f.cleanup();
+  }
+});
+
 test('客户端清理后恢复代码模式和项目，空白会话首条输入不改变归属', async () => {
   const f = await fixture(); await f.store.close();
   const app = await PlatformApplication.open({ dataDirectory: f.data });

@@ -441,6 +441,19 @@ describe('loadCheckpoints（L-8）', () => {
     mockSend.mockReset()
   })
 
+  test('同一对话并发刷新不让旧存档回执覆盖删除后的列表', async () => {
+    const state = createState({ currentConversationId: ref('conv-1') })
+    const replies: Array<(value: unknown) => void> = []
+    mockSend.mockImplementation(() => new Promise(resolve => replies.push(resolve)))
+    const older = loadCheckpoints(state)
+    const newer = loadCheckpoints(state)
+    replies[1]({ checkpoints: [] })
+    await newer
+    replies[0]({ checkpoints: [{ id: 'deleted', messageIndex: 3, phase: 'before' }] })
+    await older
+    expect(state.checkpoints.value).toEqual([])
+  })
+
   test('成功后写入后端检查点列表', async () => {
     mockSend.mockResolvedValue({
       checkpoints: [{ id: 'cp_1', messageIndex: 3, phase: 'before' }]

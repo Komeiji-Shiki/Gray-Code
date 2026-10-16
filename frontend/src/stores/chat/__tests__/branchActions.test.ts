@@ -132,6 +132,32 @@ describe('loadBranchGraph / refreshBranchGraph（TREE-10 数据源）', () => {
     expect(state.branchGraph.value).toBeNull()
   })
 
+  test('同一对话并发刷新只接收最新分支图，旧请求不结束新请求的加载状态', async () => {
+    const state = createState({ currentConversationId: ref('c1') })
+    const replies: Array<(value: unknown) => void> = []
+    mockSend.mockImplementation(() => new Promise(resolve => replies.push(resolve)))
+    const older = loadBranchGraph(state)
+    const newer = loadBranchGraph(state)
+    replies[0]({ graph: makeGraph({ old: makeNode('old', null) }, 'old') })
+    await older
+    expect(state.branchGraph.value).toBeNull()
+    expect(state.branchGraphLoading.value).toBe(true)
+
+    const latest = makeGraph({ latest: makeNode('latest', null) }, 'latest')
+    replies[1]({ graph: latest })
+    await newer
+    expect(state.branchGraph.value).toEqual(latest)
+    expect(state.branchGraphLoading.value).toBe(false)
+
+    const late = loadBranchGraph(state)
+    const current = loadBranchGraph(state)
+    replies[3]({ graph: null })
+    await current
+    replies[2]({ graph: latest })
+    await late
+    expect(state.branchGraph.value).toBeNull()
+  })
+
   test('损坏（BRANCH_STORAGE_CORRUPT）→ 读取侧降级为 null，不抛错', async () => {
     const state = createState({ currentConversationId: ref('c1') })
     const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})

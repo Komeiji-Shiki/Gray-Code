@@ -25,6 +25,8 @@ import { clearPendingDirtyConfirm } from './dirtyConfirmState'
 import { resetTurnBaseTokenEstimate } from './streamChunkHandlers'
 import { t } from '../../composables/useI18n'
 
+const checkpointRequestVersions = new WeakMap<ChatStoreState, number>()
+
 // ============ 对话列表分页加载配置 ============
 
 /** 每次分页加载的对话数量 */
@@ -787,6 +789,8 @@ export async function loadMessagesAroundIndex(
  * 加载当前对话的检查点
  */
 export async function loadCheckpoints(state: ChatStoreState): Promise<void> {
+  const version = (checkpointRequestVersions.get(state) ?? 0) + 1
+  checkpointRequestVersions.set(state, version)
   // 固化会话标识：await 后当前会话可能已切换，迟到的旧会话响应不能覆盖新会话列表
   const conversationId = state.currentConversationId.value
   if (!conversationId) {
@@ -803,8 +807,8 @@ export async function loadCheckpoints(state: ChatStoreState): Promise<void> {
       conversationId
     })
     
-    // 校验归属：await 期间会话已切换时丢弃迟到响应，避免旧会话检查点覆盖当前会话
-    if (!validateSessionIdentity(state, conversationId)) return
+    // 同一对话也可能在恢复、删除存档后再次刷新；独立查询只接受最新一次回执。
+    if (checkpointRequestVersions.get(state) !== version || !validateSessionIdentity(state, conversationId)) return
 
     if (result?.success === false || result?.error) {
       throw new Error(result.error || 'Failed to load checkpoints')
@@ -816,7 +820,9 @@ export async function loadCheckpoints(state: ChatStoreState): Promise<void> {
     }
   } catch (err) {
     // L-8：加载失败时保留旧值（不静默置空），避免后端瞬时错误导致检查点条全部消失
-    console.warn('[conversationActions] Failed to load checkpoints, keeping previous list:', err)
+    if (checkpointRequestVersions.get(state) === version && validateSessionIdentity(state, conversationId)) {
+      console.warn('[conversationActions] Failed to load checkpoints, keeping previous list:', err)
+    }
   }
 }
 
