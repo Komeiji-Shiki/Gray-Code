@@ -185,6 +185,43 @@ describe('统一长期记忆的实际存储 worker',()=>{
     expect(stale.page).toBeUndefined(); expect(stale.unavailable).toEqual([ref]);
   });
 
+  test('交换归档保留来源的后续修订，恢复后不使已失效记忆重新有效', async () => {
+    await add();
+    await f.store.longMemoryWrite({ scope, sources: [
+      { ...source('city-source', '原来的住址来源已纠正。', time('2026-08-01')), expectedVersion: 1 },
+      source('unreferenced-source', '尚未引用的另一份原文。'),
+    ] });
+    expect((await f.store.longMemoryRecall(query())).hits).toEqual([]);
+    const archive = await f.store.longMemoryExport([scope]);
+    const other = await fixture();
+    try {
+      await other.store.longMemoryRestore({ actorId: 'owner', archive });
+      expect((await other.store.longMemoryRecall(query())).hits).toEqual([]);
+      const historical = await other.store.longMemoryRecall(query({ knownAt: time('2026-07-15') }));
+      expect(historical.hits.map(hit => hit.record.text)).toEqual(['当前住址是上海。']);
+      expect(archive.sources.map(item => [item.id, item.version])).toEqual([['city-source', 1], ['city-source', 2]]);
+    } finally { await other.cleanup(); }
+  });
+
+  test('仅引用第二版来源的交换归档可在空存储中恢复完整版本链', async () => {
+    await f.store.longMemoryWrite({ scope, sources: [source('city-source', '尚未提取的住址原文。')] });
+    await f.store.longMemoryWrite({ scope, sources: [
+      { ...source('city-source', '当前住址是杭州。', time('2026-08-01')), expectedVersion: 1 },
+    ], records: [record('city', '当前住址是杭州。', 'city-source', {
+      recordedAt: time('2026-08-01'),
+      validFrom: time('2026-08-01'),
+      dependencies: [{ kind: 'source', id: 'city-source', version: 2 }],
+    })] });
+    const archive = await f.store.longMemoryExport([scope]);
+    const other = await fixture();
+    try {
+      await expect(other.store.longMemoryRestore({ actorId: 'owner', archive })).resolves.toEqual({
+        sources: 2, records: 1, skipped: 0, tombstones: 0,
+      });
+      expect((await other.store.longMemoryRecall(query())).hits.map(hit => hit.record.text)).toEqual(['当前住址是杭州。']);
+    } finally { await other.cleanup(); }
+  });
+
   test('批量失败原子回滚，重试幂等，交换归档可重建关键词索引',async()=>{
     const written=await add();const again=await add();expect(again.state.revision).toBe(written.state.revision);
     await expect(f.store.longMemoryWrite({scope,sources:[source('rollback-source','不应留下。')],records:[record('bad','无效来源。','missing')]})).rejects.toMatchObject({code:'SOURCE_CHANGED'});

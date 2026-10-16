@@ -9,8 +9,9 @@ export class MemoryArchive {
     if(!scopes.length||scopes.some(scope=>scope.actorId!==scopes[0].actorId))invalid('只能导出同一账号的记忆。');
     const states=scopes.map(scope=>this.store.state(scope));
     const placeholders=scopes.map(()=>'?').join(','),ids=scopes.map(scope=>scope.id);
+    // 恢复依赖连续修订；未被直接引用的后续版本也决定旧记忆是否仍然有效。
     const sources=(this.store.db.prepare(`SELECT s.payload FROM long_memory_sources s WHERE s.scope_id IN(${placeholders}) AND EXISTS(
-      SELECT 1 FROM long_memory_dependencies d WHERE d.scope_id=s.scope_id AND d.parent_kind='source' AND d.parent_id=s.id AND d.parent_version=s.version)
+      SELECT 1 FROM long_memory_dependencies d WHERE d.scope_id=s.scope_id AND d.parent_kind='source' AND d.parent_id=s.id)
       ORDER BY s.scope_id,s.id,s.version`).all(...ids) as Array<{payload:string}>).map(row=>JSON.parse(row.payload) as LongMemorySource);
     const records=(this.store.db.prepare(`SELECT payload FROM long_memory_records WHERE scope_id IN(${placeholders}) ORDER BY recorded_at,version,id`).all(...ids) as Array<{payload:string}>).map(row=>JSON.parse(row.payload) as LongMemoryRecord);
     const tombstones=(this.store.db.prepare(`SELECT scope_id AS scopeId,kind,id,action,created_at AS at,reference FROM long_memory_tombstones WHERE scope_id IN(${placeholders}) ORDER BY scope_id,kind,id`).all(...ids) as Array<Omit<LongMemoryTombstone,'reference'>&{reference:string|null}>)
