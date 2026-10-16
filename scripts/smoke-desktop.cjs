@@ -204,6 +204,7 @@ async function main() {
     window.webContents.on('console-message', event => { if (event.level === 'error') errors.push(event.message); });
     window.webContents.on('render-process-gone', (_event, details) => errors.push(`Renderer exited: ${details.reason}`));
   });
+  const startupStartedAt = performance.now();
   require(path.join(root, 'apps/desktop/dist/main.cjs'));
   server = createServer(async (req, res) => {
     const chunks = []; for await (const chunk of req) chunks.push(chunk);
@@ -280,6 +281,7 @@ async function main() {
   };
   await until(() => evaluate('!!document.querySelector(".desktop-workspace")'), 'application ready');
   await until(() => chat('!!document.querySelector(".input-editor")'), 'original input area');
+  const startupTiming = { initialInputMountedMilliseconds: performance.now() - startupStartedAt };
   await ui('ui.settings.begin');
   const settings = await ui('platform.settings.get');
   settings.workspaces.push({ id: 'smoke', name: '桌面验证项目', directory: path.join(output, 'project'), deviceId: 'local' });
@@ -312,9 +314,11 @@ async function main() {
     await verifyQuitDialogLanguage(ui, language, expected);
   }
   const configuredMenu = Menu.getApplicationMenu();
+  const reloadStartedAt = performance.now();
   window.webContents.reload();
   await until(() => evaluate('!!document.querySelector(".desktop-workspace") && document.body.innerText.includes("桌面验证项目")'), 'configured application');
   await until(() => chat('!!document.querySelector(".input-editor") && document.body.innerText.includes("smoke-model")'), 'configured original input');
+  startupTiming.configuredReloadInputMountedMilliseconds = performance.now() - reloadStartedAt;
   if (petOnly) {
     const pets = await require('./smoke-pets.cjs')({ window, rpc, ui, evaluate, until, root, output, configId,
       setReply: value => { petReply = value; }, getRequests: () => petRequests });
@@ -331,7 +335,7 @@ async function main() {
     process.stdout.write(JSON.stringify(report) + '\n'); server.closeAllConnections(); server.close(); app.quit(); return;
   }
   if (rendererBenchmark && process.env.GRAYCODE_BENCHMARK_ONLY === '1') {
-    const report = await rendererBenchmark.measureRendererWorkload({ rpc, ui, chat, until, output, configId, contents: window.webContents });
+    const report = await rendererBenchmark.measureRendererWorkload({ rpc, ui, chat, until, output, configId, contents: window.webContents, startupTiming });
     process.stdout.write(JSON.stringify({ report, errors, output }) + '\n'); server.closeAllConnections(); server.close(); app.quit(); return;
   }
   const petSmoke = await require('./smoke-pets.cjs')({ window, rpc, ui, evaluate, until, root, output, configId });
@@ -494,7 +498,7 @@ async function main() {
   assert.equal(await preview.executeJavaScript('document.querySelector("h1").textContent'), 'GrayCode preview');
   await verifyProjectReplace(evaluate);
   await verifyRegexCancellation(rpc);
-  const rendererPerformance = rendererBenchmark ? await rendererBenchmark.measureRendererWorkload({ rpc, ui, chat, until, output, configId, contents: window.webContents }) : undefined;
+  const rendererPerformance = rendererBenchmark ? await rendererBenchmark.measureRendererWorkload({ rpc, ui, chat, until, output, configId, contents: window.webContents, startupTiming }) : undefined;
   await rpc('ui.command', { command: 'showSettings' });
   await until(() => chat('!!document.querySelector(".platform-settings-footer")'), 'settings draft for save and quit');
   const closingSettings = await ui('platform.settings.get');

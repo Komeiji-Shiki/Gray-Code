@@ -65,7 +65,8 @@ export class ConversationService {
     Object.assign(branches.groups, groupMessages(messages));
     // Retained inactive candidates cannot silently restore a deleted summary or response set.
     const retainedIds = new Set(messages.map(message => message.id));
-    for (const node of Object.values(branches.graph.nodes)) if (!retainedIds.has(node.id) && state.history.messages.some(message => message.id === node.id)) {
+    const originalIds = new Set(state.history.messages.map(message => message.id));
+    for (const node of Object.values(branches.graph.nodes)) if (!retainedIds.has(node.id) && originalIds.has(node.id)) {
       node.deleted = true; node.deletedAt = Date.now();
       // 截断会同时删除相邻节点，保留活动指针会让下次读取把归档候选判为损坏。
       node.activeChildId = null;

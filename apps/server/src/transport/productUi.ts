@@ -101,6 +101,13 @@ export class ProductUi {
       // 全量 ID 扫描只读已保存会话，不能排在首次发送和会话切换前占用交互队列。
       return conversationMetadataUiHandlers(this.app, this.conversations)['conversation.listConversations']({});
     }
+    // 首屏后加载的存档与分支只依赖明确的对话 ID，不占用设置和会话导航的串行队列。
+    if (type === 'checkpoint.getCheckpoints' || type === 'conversation.getBranchGraph') {
+      this.app.requireOwner(client.actorId);
+      return type === 'checkpoint.getCheckpoints'
+        ? this.app.checkpoints.summaries(client.actorId, data.conversationId)
+        : this.app.conversations.graph(client.actorId, data.conversationId);
+    }
     // 回调交换不能挡住状态查询和取消；开始登录仍串行，避免同客户端遗留多个监听器。
     if (['chatgpt.status', 'chatgpt.complete', 'chatgpt.cancel', 'chatgpt.disconnect'].includes(type)) return this.invoke(client, type, data);
     // 总结由会话级控制器和提交版本约束，模型等待期间不能占住整个界面的交互队列。
@@ -445,7 +452,6 @@ export class ProductUi {
       }
       case 'activity.getStats': return this.app.activity.stats(client.actorId, data);
       case 'activity.pulse': await this.app.activity.pulse(client.actorId); return { success: true };
-      case 'checkpoint.getCheckpoints': return this.app.checkpoints.summaries(client.actorId, data.conversationId);
       case 'checkpoint.previewRestore': return this.app.checkpoints.preview(client.actorId, data.conversationId, data.checkpointId);
       case 'checkpoint.deleteCheckpoint':
         return this.app.checkpoints.delete(client.actorId, data.conversationId, data.checkpointId, { force: data.force === true });
@@ -655,7 +661,6 @@ export class ProductUi {
       case 'context.summaryDetail': return this.app.context.getSummaryDetail(client.actorId, data.conversationId, data.messageId ?? data.summaryMessageId ?? data.id);
       case 'deleteMessage': return this.app.conversations.remove(client.actorId, data.conversationId, data.targetIndex, data.messageId, false);
       case 'deleteSingleMessage': return this.app.conversations.remove(client.actorId, data.conversationId, data.targetIndex, data.messageId, true);
-      case 'conversation.getBranchGraph': return this.app.conversations.graph(client.actorId, data.conversationId);
       case 'conversation.switchBranchCandidate': return this.app.conversations.switch(client.actorId, data.conversationId, data.nodeId, data.mode ?? 'chat-only', data);
       case 'conversation.deleteBranchCandidate': return this.app.conversations.changeCandidate(client.actorId, data.conversationId, data.nodeId, 'delete');
       case 'conversation.restoreBranchCandidate': return this.app.conversations.changeCandidate(client.actorId, data.conversationId, data.nodeId, 'restore');

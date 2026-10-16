@@ -131,7 +131,7 @@ async function runCommandCancellation({ rpc, ui, chat, until }) {
     killed: terminal.result.killed, exitCode: terminal.result.exitCode ?? null, pollingIntervalMilliseconds: 100 };
 }
 
-async function measureRendererSamples({ rpc, ui, chat, until, output, configId }) {
+async function measureRendererSamples({ rpc, ui, chat, until, output, configId, startupTiming }) {
   const samples = [];
   const cancellationOnly = process.env.GRAYCODE_RENDER_SCENARIO === 'cancel';
   await ui('config.updateConfig', { configId, updates: { preferStream: !cancellationOnly, timeout: 60000, maxContextTokens: 2000000, contextManagementEnabled: false } });
@@ -178,7 +178,8 @@ async function measureRendererSamples({ rpc, ui, chat, until, output, configId }
     : 'Electron offscreen, synthetic history and local SSE, single machine',
     runtime: { electron: process.versions.electron, node: process.versions.node, platform: process.platform, arch: process.arch,
       cpuModel: cpus[0]?.model, cpuCount: cpus.length, memoryGiB: Math.round(os.totalmem() / 1024 ** 3), sourceCommit: process.env.GITHUB_SHA },
-    tracing: process.env.GRAYCODE_RENDER_TRACE === '1', samples, ...(cancellation ? { cancellation } : {}) };
+    // 启动从加载桌面入口开始，重载从 reload 开始；均止于输入框挂载，不包含 Electron 进程启动时间。
+    startupTiming, tracing: process.env.GRAYCODE_RENDER_TRACE === '1', samples, ...(cancellation ? { cancellation } : {}) };
   await fs.writeFile(path.join(output, 'renderer-performance.json'), JSON.stringify(report, null, 2));
   return report;
 }
