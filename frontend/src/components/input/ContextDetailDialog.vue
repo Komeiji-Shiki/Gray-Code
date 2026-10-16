@@ -8,7 +8,7 @@
  *   已保存总结明细，getSummaryDetail 看单条详情，不触发总结。
  */
 
-import { computed, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import { useI18n } from '@/i18n'
 import { Modal } from '../common'
 import { formatNumber, formatTime } from '@/utils/format'
@@ -54,6 +54,8 @@ const detailLoading = ref(false)
 const detailError = ref('')
 const detailDesktopOnly = ref(false)
 const detail = ref<ContextSummaryDetail | null>(null)
+let describeRequest = 0
+let detailRequest = 0
 
 const displayMax = computed(() =>
   resolveDisplayMaxTokens(describe.value?.tokens.maxContextTokens, props.fallbackMaxTokens)
@@ -86,13 +88,20 @@ function close() {
 }
 
 function backToList() {
+  detailRequest++
+  detailLoading.value = false
   detail.value = null
   detailError.value = ''
   detailDesktopOnly.value = false
 }
 
 async function loadDescribe() {
-  if (!props.conversationId) {
+  const request = ++describeRequest
+  const conversationId = props.conversationId
+  const current = () => request === describeRequest && props.modelValue && props.conversationId === conversationId
+  backToList()
+  if (!conversationId) {
+    loading.value = false
     describe.value = null
     error.value = ''
     desktopOnly.value = false
@@ -101,34 +110,40 @@ async function loadDescribe() {
   loading.value = true
   error.value = ''
   desktopOnly.value = false
-  backToList()
   try {
-    describe.value = await fetchContextDescribe(props.conversationId, {
+    const result = await fetchContextDescribe(conversationId, {
       ...(props.providerId ? { providerId: props.providerId } : {}),
       ...(props.modelOverride ? { modelOverride: props.modelOverride } : {})
     })
+    if (current()) describe.value = result
   } catch (failure) {
+    if (!current()) return
     describe.value = null
     error.value = extractRpcErrorMessage(failure)
     desktopOnly.value = isMissingHandlerError(failure)
   } finally {
-    loading.value = false
+    if (current()) loading.value = false
   }
 }
 
 async function openDetail(messageId: string | undefined) {
   if (!props.conversationId || !messageId) return
+  const request = ++detailRequest
+  const conversationId = props.conversationId
+  const current = () => request === detailRequest && props.modelValue && props.conversationId === conversationId
   detailLoading.value = true
   detailError.value = ''
   detailDesktopOnly.value = false
   try {
-    detail.value = await fetchSummaryDetail(props.conversationId, messageId)
+    const result = await fetchSummaryDetail(conversationId, messageId)
+    if (current()) detail.value = result
   } catch (failure) {
+    if (!current()) return
     detail.value = null
     detailError.value = extractRpcErrorMessage(failure)
     detailDesktopOnly.value = isMissingHandlerError(failure)
   } finally {
-    detailLoading.value = false
+    if (current()) detailLoading.value = false
   }
 }
 
@@ -149,11 +164,18 @@ function formatTrimText(value: number | undefined): string {
 }
 
 watch(
-  () => props.modelValue,
-  value => {
-    if (value) void loadDescribe()
-  }
+  () => [props.modelValue, props.conversationId, props.providerId, props.modelOverride] as const,
+  ([visible]) => {
+    if (visible) void loadDescribe()
+    else {
+      describeRequest++
+      loading.value = false
+      backToList()
+    }
+  },
+  { immediate: true }
 )
+onBeforeUnmount(() => { describeRequest++; detailRequest++ })
 </script>
 
 <template>

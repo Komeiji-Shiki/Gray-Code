@@ -200,6 +200,24 @@ describe('InputArea 发送失败恢复', () => {
     vi.restoreAllMocks()
   })
 
+  test('详情面板首次打开才挂载，关闭再打开继续保留同一实例', async () => {
+    runtime.chatStore.currentConversationId = 'conv-lazy'
+    const dialog = { name: 'ContextDetailDialog', props: ['modelValue'], emits: ['update:modelValue'], template: '<div />' }
+    wrapper = mount(InputArea, { global: { stubs: { ...stubs, ContextDetailDialog: dialog } } })
+    await flushPromises()
+    expect(wrapper.findComponent({ name: 'ContextDetailDialog' }).exists()).toBe(false)
+    await wrapper.get('.context-detail-button').trigger('click')
+    await flushPromises()
+    const opened = wrapper.getComponent({ name: 'ContextDetailDialog' })
+    expect(opened.props('modelValue')).toBe(true)
+    opened.vm.$emit('update:modelValue', false)
+    await nextTick()
+    expect(opened.props('modelValue')).toBe(false)
+    await wrapper.get('.context-detail-button').trigger('click')
+    expect(wrapper.getComponent({ name: 'ContextDetailDialog' }).vm).toBe(opened.vm)
+    expect(opened.props('modelValue')).toBe(true)
+  })
+
   test.each(['awaiting_input', 'awaiting_approval'])('%s 保持忙碌状态，真实停止按钮仍可取消运行', async status => {
     runtime.chatStore.activeRunStatus = status
     runtime.chatStore.isWaitingForResponse = true

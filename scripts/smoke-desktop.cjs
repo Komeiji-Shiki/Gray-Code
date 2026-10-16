@@ -24,7 +24,7 @@ const workflowRequests = [];
 const projectSwitchRequests = [];
 async function until(check, label, timeout = 20000) {
   const deadline = Date.now() + timeout;
-  while (Date.now() < deadline) { const result = await check(); if (result) return result; await sleep(100); }
+  while (Date.now() < deadline) { const result = await check(); if (result) return result; await sleep(rendererBenchmark?.pollIntervalMilliseconds ?? 100); }
   throw new Error(`Timed out: ${label}`);
 }
 async function verifyQuitDialogLanguage(ui, language, expected) {
@@ -200,11 +200,13 @@ async function main() {
   process.env.GRAYCODE_DESKTOP_SMOKE = '1';
   process.argv.push('--data', path.join(output, 'data'));
   dialog.showErrorBox = (title, message) => { process.stderr.write(`${title}: ${message}\n`); app.exit(1); };
+  const startupStartedAt = performance.now();
+  const startupTiming = {};
   app.on('browser-window-created', (_event, window) => {
+    startupTiming.windowCreatedMilliseconds ??= performance.now() - startupStartedAt;
     window.webContents.on('console-message', event => { if (event.level === 'error') errors.push(event.message); });
     window.webContents.on('render-process-gone', (_event, details) => errors.push(`Renderer exited: ${details.reason}`));
   });
-  const startupStartedAt = performance.now();
   require(path.join(root, 'apps/desktop/dist/main.cjs'));
   server = createServer(async (req, res) => {
     const chunks = []; for await (const chunk of req) chunks.push(chunk);
@@ -279,9 +281,16 @@ async function main() {
     const frame = window.webContents.mainFrame.frames.find(frame => frame.url.includes('/chat/platform.html'));
     return frame ? frame.executeJavaScript('{' + source + '\n}', true) : Promise.resolve(false);
   };
+  const startupResources = () => chat(`(() => {
+    const navigation = performance.getEntriesByType('navigation')[0];
+    return { domInteractive: navigation?.domInteractive, domContentLoaded: navigation?.domContentLoadedEventEnd,
+      scripts: performance.getEntriesByType('resource').filter(entry => /\\.js(?:\\?|$)/.test(entry.name))
+        .map(entry => ({ file: new URL(entry.name).pathname, start: entry.startTime, end: entry.responseEnd, duration: entry.duration })) };
+  })()`);
   await until(() => evaluate('!!document.querySelector(".desktop-workspace")'), 'application ready');
   await until(() => chat('!!document.querySelector(".input-editor")'), 'original input area');
-  const startupTiming = { initialInputMountedMilliseconds: performance.now() - startupStartedAt };
+  startupTiming.initialInputMountedMilliseconds = performance.now() - startupStartedAt;
+  if (rendererBenchmark) startupTiming.initialResources = await startupResources();
   await ui('ui.settings.begin');
   const settings = await ui('platform.settings.get');
   settings.workspaces.push({ id: 'smoke', name: '桌面验证项目', directory: path.join(output, 'project'), deviceId: 'local' });
@@ -319,6 +328,7 @@ async function main() {
   await until(() => evaluate('!!document.querySelector(".desktop-workspace") && document.body.innerText.includes("桌面验证项目")'), 'configured application');
   await until(() => chat('!!document.querySelector(".input-editor") && document.body.innerText.includes("smoke-model")'), 'configured original input');
   startupTiming.configuredReloadInputMountedMilliseconds = performance.now() - reloadStartedAt;
+  if (rendererBenchmark) startupTiming.reloadResources = await startupResources();
   if (petOnly) {
     const pets = await require('./smoke-pets.cjs')({ window, rpc, ui, evaluate, until, root, output, configId,
       setReply: value => { petReply = value; }, getRequests: () => petRequests });

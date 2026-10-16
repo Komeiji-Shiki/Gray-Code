@@ -5,7 +5,7 @@
  */
 
 import { MESSAGE_NAMES } from '@shared/protocol'
-import { ref, computed, onMounted, watch, nextTick, onBeforeUnmount } from 'vue'
+import { defineAsyncComponent, ref, computed, onMounted, watch, nextTick, onBeforeUnmount } from 'vue'
 import InputBox from './InputBox.vue'
 import FilePickerPanel from './FilePickerPanel.vue'
 import SendButton from './SendButton.vue'
@@ -18,8 +18,8 @@ import BranchTreePanel from '../message/BranchTreePanel.vue'
 import InputSelectorBar from './InputSelectorBar.vue'
 import InputActionsMenu, { type InputActionItem } from './InputActionsMenu.vue'
 import ChannelSetupNotice, { type ChannelSetupStatus } from './ChannelSetupNotice.vue'
-import ContextDetailDialog from './ContextDetailDialog.vue'
-import PromptPreviewDialog from './PromptPreviewDialog.vue'
+const ContextDetailDialog = defineAsyncComponent(() => import('./ContextDetailDialog.vue'))
+const PromptPreviewDialog = defineAsyncComponent(() => import('./PromptPreviewDialog.vue'))
 import type { ChannelOption, PromptMode } from './types'
 
 import { IconButton, Tooltip } from '../common'
@@ -679,8 +679,13 @@ const ringDashOffset = computed(() => ringCircumference * (1 - chatStore.tokenUs
 
 // ========== 上下文统计详情入口（只读，不触发总结） ==========
 const showContextDetail = ref(false)
+const contextDetailMounted = ref(false)
 const promptPreviewAvailable = !!window.__GRAYCODE_HOST
 const showPromptPreview = ref(false)
+const promptPreviewMounted = ref(false)
+// 第一次打开才加载模块，之后继续保留对话框自己的视图选择和读取生命周期。
+watch(showContextDetail, open => { if (open) contextDetailMounted.value = true })
+watch(showPromptPreview, open => { if (open) promptPreviewMounted.value = true })
 const promptPreviewRequest = computed(() => ({
   conversationId: chatStore.currentConversationId, configId: chatStore.configId,
   message: serializeNodes(editorNodes.value).trim(), attachments: (props.attachments ?? []).map(attachment => ({
@@ -941,13 +946,15 @@ watch(() => settingsStore.promptModesVersion, () => {
     />
 
     <ContextDetailDialog
+      v-if="contextDetailMounted"
       v-model="showContextDetail"
       :conversation-id="chatStore.currentConversationId"
       :provider-id="chatStore.configId"
       :model-override="chatStore.selectedModelId || undefined"
       :fallback-max-tokens="chatStore.maxContextTokens"
     />
-    <PromptPreviewDialog v-if="promptPreviewAvailable" v-model="showPromptPreview" :request="promptPreviewRequest" :running="chatStore.isWaitingForResponse" />
+    <PromptPreviewDialog v-if="promptPreviewAvailable && promptPreviewMounted" v-model="showPromptPreview"
+      :request="promptPreviewRequest" :running="chatStore.isWaitingForResponse" />
   </div>
 </template>
 

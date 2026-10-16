@@ -2,6 +2,7 @@ const { PlatformStorage } = require('@graycode/core');
 const fs = require('node:fs/promises');
 const path = require('node:path');
 const assert = require('node:assert/strict');
+const POLL_INTERVAL_MS = 16;
 
 /** 使用独立数据目录中的真实历史存储和真实消息列表，不注入私有组件状态。 */
 async function seedRendererWorkload(directory) {
@@ -128,15 +129,16 @@ async function runCommandCancellation({ rpc, ui, chat, until }) {
     runSettledMilliseconds: runtime.milliseconds, processExitMilliseconds, runStatus: runtime.run.status, outputRetained: true,
     frontendIdleMilliseconds: frontend.idleMilliseconds, frontendLongTasks: frontend.longTasks, frontendLongTaskMax: frontend.longTaskMax, frontendFrameMaxGap: frontend.frameMaxGap,
     runEvents: events.map(event => ({ type: event.type, afterCancelMilliseconds: event.timestamp - cancelWallTime })),
-    killed: terminal.result.killed, exitCode: terminal.result.exitCode ?? null, pollingIntervalMilliseconds: 100 };
+    killed: terminal.result.killed, exitCode: terminal.result.exitCode ?? null, pollingIntervalMilliseconds: POLL_INTERVAL_MS };
 }
 
 async function measureRendererSamples({ rpc, ui, chat, until, output, configId, startupTiming }) {
   const samples = [];
   const cancellationOnly = process.env.GRAYCODE_RENDER_SCENARIO === 'cancel';
+  const startupOnly = process.env.GRAYCODE_RENDER_SCENARIO === 'startup';
   await ui('config.updateConfig', { configId, updates: { preferStream: !cancellationOnly, timeout: 60000, maxContextTokens: 2000000, contextManagementEnabled: false } });
   await ui('ui.settings.save');
-  for (const count of cancellationOnly ? [] : [1000, 5000]) {
+  for (const count of cancellationOnly || startupOnly ? [] : [1000, 5000]) {
     const start = performance.now();
     await rpc('ui.command', { command: 'platform.openModeConversation', data: { conversationId: `renderer-benchmark-${count}` } });
     await until(() => chat(`document.body.innerText.includes('BENCH-${count}-${count - 1}')`), `history ${count}`, 60_000).catch(async error => {
@@ -173,13 +175,16 @@ async function measureRendererSamples({ rpc, ui, chat, until, output, configId, 
   await ui('ui.settings.save');
   const cancellation = cancellationOnly ? await measureCommandCancellation({ rpc, ui, chat, until }) : undefined;
   const os = require('node:os'), cpus = os.cpus();
-  const report = { generatedAt: new Date().toISOString(), environment: cancellationOnly
+  const report = { generatedAt: new Date().toISOString(), environment: startupOnly
+    ? 'Electron offscreen, isolated startup and configured reload, single machine' : cancellationOnly
     ? 'Electron offscreen, synthetic history and owned foreground command, single machine'
     : 'Electron offscreen, synthetic history and local SSE, single machine',
     runtime: { electron: process.versions.electron, node: process.versions.node, platform: process.platform, arch: process.arch,
       cpuModel: cpus[0]?.model, cpuCount: cpus.length, memoryGiB: Math.round(os.totalmem() / 1024 ** 3), sourceCommit: process.env.GITHUB_SHA },
     // 启动从加载桌面入口开始，重载从 reload 开始；均止于输入框挂载，不包含 Electron 进程启动时间。
-    startupTiming, tracing: process.env.GRAYCODE_RENDER_TRACE === '1', samples, ...(cancellation ? { cancellation } : {}) };
+    startupTiming, pollingIntervalMilliseconds: POLL_INTERVAL_MS,
+    resourceTimingNote: '自定义协议的资源条目可能缺失或时长为零，只用于观察请求顺序，不代表磁盘或网络耗时。',
+    tracing: process.env.GRAYCODE_RENDER_TRACE === '1', samples, ...(cancellation ? { cancellation } : {}) };
   await fs.writeFile(path.join(output, 'renderer-performance.json'), JSON.stringify(report, null, 2));
   return report;
 }
@@ -285,10 +290,11 @@ async function measureRendererWorkload(options) {
       longest.filter(event => event.name === 'RunTask' && event.pid === options.contents.getOSProcessId()), options.output);
   }
 }
-module.exports = { seedRendererWorkload, streamRendererWorkload, measureRendererWorkload };
+module.exports = { seedRendererWorkload, streamRendererWorkload, measureRendererWorkload, pollIntervalMilliseconds: POLL_INTERVAL_MS };
 
 if (require.main === module) {
   if (process.argv.includes('--cancel')) process.env.GRAYCODE_RENDER_SCENARIO = 'cancel';
+  if (process.argv.includes('--startup')) process.env.GRAYCODE_RENDER_SCENARIO = 'startup';
   // 先由 Node 关闭准备数据的核心，再启动 Electron；不绕过数据目录的单实例锁。
   const { spawn } = require('node:child_process');
   const { randomUUID } = require('node:crypto');
@@ -296,7 +302,8 @@ if (require.main === module) {
   const output = path.join(root, '.tmp', `desktop-smoke-renderer-${randomUUID().slice(0, 8)}`);
   void seedRendererWorkload(path.join(output, 'data')).then(() => {
     const child = spawn(require('electron'), [path.join(__dirname, 'smoke-desktop.cjs')], { cwd: root, windowsHide: true, stdio: 'inherit',
-      env: { ...process.env, GRAYCODE_RENDER_BENCHMARK: '1', GRAYCODE_SMOKE_OUTPUT: output, GRAYCODE_BENCHMARK_ONLY: process.argv.includes('--only') ? '1' : '0',
+      env: { ...process.env, GRAYCODE_RENDER_BENCHMARK: '1', GRAYCODE_SMOKE_OUTPUT: output,
+        GRAYCODE_BENCHMARK_ONLY: process.argv.includes('--only') || process.argv.includes('--startup') ? '1' : '0',
         GRAYCODE_RENDER_TRACE: process.argv.includes('--trace') || process.env.GRAYCODE_RENDER_TRACE === '1' ? '1' : '0' } });
     child.once('error', error => { console.error(error); process.exitCode = 1; });
     child.once('exit', code => { process.exitCode = code ?? 1; });
