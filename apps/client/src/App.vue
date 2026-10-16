@@ -419,6 +419,10 @@ onMounted(() => {
   window.visualViewport?.addEventListener('resize', updateViewport);
   unsubscribeHost = subscribe((event) => {
     if (lifetime.signal.aborted) return;
+    if (event.type === 'desktop.saveAll' && !workbenchConnected) {
+      // 工作台尚未接管文档时没有本地文件草稿；设置保存退出仍需要文件参与者回执。
+      void guard(() => call('desktop.saveResult', { requestId: event.requestId, participant: 'documents' }));
+    }
     if (workbenchEventTypes.has(event.type)) {
       workbenchMounted.value = true;
       state.chatFocused = false;
