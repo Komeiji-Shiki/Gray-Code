@@ -18,6 +18,7 @@ import type { ConversationManager } from '../../../backend/modules/conversation/
 import { aggregateUsageStats } from '../../../backend/modules/conversation/usageStats';
 import type { Content } from '../../../backend/modules/conversation/types';
 import { fixture } from './fixtures';
+import { branchView, readBranches } from '../../../apps/server/src/conversations/branches';
 import {
     printHarnessBanner,
     printMetric,
@@ -64,6 +65,35 @@ describe('基准 ② 长对话（1 万条消息，真实磁盘）', () => {
     afterEach(async () => {
         await app.close();
         await f.cleanup();
+    });
+
+    test('分支预览：完整读取与轻量投影处理同一段大正文历史', async () => {
+        const conversationId = 'bench-branch-preview';
+        const count = 512;
+        const body = '大正文与工具上下文。'.repeat(3500);
+        await manager.createConversation(conversationId, 'Branch Preview Benchmark');
+        for (let start = 0; start < count; start += 64) {
+            await app.storage.appendHistory(conversationId, Array.from({ length: 64 }, (_, offset) => {
+                const index = start + offset;
+                return { id: `preview-${index}`, parentId: index ? `preview-${index - 1}` : null,
+                    role: index % 2 ? 'model' : 'user', timestamp: 1_700_000_000_000 + index,
+                    parts: [{ text: `${index}: ${body}` }], characterTurn: { snapshot: body } };
+            }));
+        }
+        const config = app.product.runtimeSettings().getCheckpointConfig();
+        const tools = new Set([...config.beforeTools, ...config.afterTools]);
+        // 比较同一份当前分支算法，仅改变读取策略；不把这组结果解释为整个应用启动耗时。
+        const full = await withTiming(async () => {
+            const branch = readBranches(await app.conversations.read('owner', conversationId));
+            await app.checkpoints.listMetadata('owner', conversationId);
+            return branchView(branch, tools);
+        });
+        const projected = await withTiming(() => app.conversations.graph('owner', conversationId));
+        expect(projected.result.graph).toEqual(full.result);
+        printSection('分支预览（512 条大正文消息，单机同库对照）');
+        printMetric({ label: '完整读取后重建', ms: full.ms, heapDeltaMB: full.heapDeltaMB, data: { messages: count } });
+        printMetric({ label: '存储投影后重建', ms: projected.ms, heapDeltaMB: projected.heapDeltaMB,
+            data: { messages: count, graphBytes: Buffer.byteLength(JSON.stringify(projected.result.graph)) } });
     });
 
     test('1 万条消息：append 增量写 / 全量读取 / usage 统计', async () => {

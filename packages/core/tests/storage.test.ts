@@ -155,23 +155,48 @@ describe('independent SQLite storage worker', () => {
     const value = { parts: [{ text: payload, functionCall: { id: 'call', name: 'read', args: { payload } } },
       { functionResponse: { id: 'call', response: { success: true, code: 'OK', data: payload } } }],
       manifest, binary: new Uint8Array([1, 2, 3]) };
-    await f.store.putRecord({ namespace: 'projection', id: 'nested', value });
-    const projected = await f.store.getVersionedRecord('projection', 'nested', {
+    await f.store.putRecord({ namespace: 'workspace-checkpoints', id: 'nested', value });
+    const projected = await f.store.getVersionedRecord('workspace-checkpoints', 'nested', {
       fields: ['parts', 'manifest', 'binary'], omitBinary: true,
       properties: {
         parts: { items: { fields: ['functionCall', 'functionResponse'], properties: {
           functionCall: { fields: ['id'] },
           functionResponse: { fields: ['id', 'response'], properties: { response: { fields: ['code'] } } },
         } } },
-        manifest: { fields: ['file-0'], properties: { 'file-0': { fields: ['size'] } } },
+        manifest: { values: { fields: ['size'] }, properties: { 'file-0': { fields: ['size', 'payload'],
+          properties: { payload: { maxStringLength: 3 } } } } },
       },
       paths: { firstSize: ['manifest', 'file-0', 'size'] },
       mapStats: { manifestStats: { path: ['manifest'], sumFields: ['size'] } },
     });
     expect(projected.value).toEqual({ parts: [{ functionCall: { id: 'call' } },
-      { functionResponse: { id: 'call', response: { code: 'OK' } } }], manifest: { 'file-0': { size: 0 } },
+      { functionResponse: { id: 'call', response: { code: 'OK' } } }], manifest: {
+        ...Object.fromEntries(Array.from({ length: 130 }, (_, index) => [`file-${index}`, { size: index }])),
+        'file-0': { size: 0, payload: payload.slice(0, 3) },
+      },
       binary: new Uint8Array(), firstSize: 0, manifestStats: { count: 130, size: 8385 } });
-    expect(await f.store.getRecord('projection', 'nested')).toEqual(value);
+    expect(await f.store.getRecord('workspace-checkpoints', 'nested')).toEqual(value);
+  });
+
+  test('文本前缀投影兼容内联、跨块 UTF-8、孤立代理项和特殊字典键，完整读取保持原文', async () => {
+    const texts = Object.fromEntries([
+      ['inline', 'A🐱中文'],
+      ['utf8', '🐱中文'.repeat(80_000)],
+      ['utf16', '\ud800中文🐱'.repeat(60_000)],
+      ['__proto__', '特殊字典键'.repeat(10_000)],
+      ['constructor', '字典构造属性仍按值投影'],
+      ['key\ud800', '键不可被截断'],
+    ]);
+    await f.store.putRecord({ namespace: 'projection', id: 'text-prefixes', value: texts });
+    for (const length of [0, 1, 2, 3, 180, 150_000]) {
+      const { value } = await f.store.getVersionedRecord('projection', 'text-prefixes', { values: { maxStringLength: length } });
+      expect(value).toEqual(Object.fromEntries(Object.entries(texts).map(([key, text]) => [key, text.slice(0, length)])));
+    }
+    const overridden = await f.store.getVersionedRecord('projection', 'text-prefixes', {
+      values: { maxStringLength: 3 }, properties: { inline: { maxStringLength: 2 } },
+    });
+    expect(overridden.value).toEqual(Object.fromEntries(Object.entries(texts).map(([key, text]) => [key, text.slice(0, key === 'inline' ? 2 : 3)])));
+    expect(await f.store.getRecord('projection', 'text-prefixes')).toEqual(texts);
   });
 
   test('detects corrupted external content instead of returning an empty attachment', async () => {

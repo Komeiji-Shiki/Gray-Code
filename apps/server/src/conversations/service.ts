@@ -9,6 +9,7 @@ import { deleteLogicalMessage, truncateFrom, restoreSummarizedRange } from '../.
 import { activePath, switchActivePath, softDeleteNode, restoreNode, renameBranchLabel,
   rebaseActivePathFromHistory, createEmptyBranchGraph, importLinearHistory, removeSubtree } from '../../../../backend/modules/conversation/branch/BranchGraph';
 import { assertBranchCapacity, branchMutation, branchNamespace, branchView, groupMessages, materializeBranch, readBranches, type BranchState } from './branches';
+import { BRANCH_MESSAGE_PROJECTION, BRANCH_RECORD_PROJECTION } from './branchPreview';
 
 export class ConversationService {
   constructor(private readonly app: PlatformApplication) {}
@@ -132,8 +133,12 @@ export class ConversationService {
     return this.commit(this.changed(state, messages, '结算已取消工具前', branches));
   }
   async graph(actorId: string, id: string) {
+    await this.app.conversation(actorId, id);
     const config = this.app.product.runtimeSettings().getCheckpointConfig();
-    const branches = await this.withCheckpoints(actorId, id, readBranches(await this.read(actorId, id)));
+    const state = await this.app.storage.readConversationState(id, [{ namespace: branchNamespace, id, projection: BRANCH_RECORD_PROJECTION }], {
+      historyProjection: BRANCH_MESSAGE_PROJECTION,
+    });
+    const branches = await this.withCheckpoints(actorId, id, readBranches(state));
     return { graph: branchView(branches, new Set([...config.beforeTools, ...config.afterTools])) };
   }
   private async withCheckpoints(actorId: string, id: string, branches: BranchState) {

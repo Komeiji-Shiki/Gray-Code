@@ -5,6 +5,7 @@ import { activePath, childrenIndex, createEmptyBranchGraph, importLinearHistory,
   rebaseActivePathFromHistory, validate } from '../../../../backend/modules/conversation/branch/BranchGraph';
 import { MAX_CANDIDATES_PER_PARENT } from '../../../../backend/modules/conversation/branch/branchServiceTypes';
 import { isRealUserMessage } from '../../../../backend/modules/conversation/helpers';
+import { BRANCH_PREVIEW_TEXT_LENGTH } from './branchPreview';
 
 export const branchNamespace = 'conversation-branches';
 export interface BranchState {
@@ -107,7 +108,15 @@ export function materializeBranch(branch: BranchState): PlatformMessage[] {
 }
 
 export function branchView(branch: BranchState, writeTools: ReadonlySet<string> = new Set()): ConversationBranchGraph {
-  const graph = structuredClone(branch.graph);
+  // 先取展示字段再复制，避免把不会显示的附件、签名和回合快照带入图回执。
+  const nodes = Object.fromEntries(Object.entries(branch.graph.nodes).map(([id, node]) => {
+    const { parts: _parts, contentMetadata: _contentMetadata, usageMetadata: _usageMetadata, usageMetadataPartial: _partial, ...metadata } = node;
+    const parts = (branch.groups[id]?.[0].parts ?? []).flatMap(part => typeof part.text === 'string'
+      ? [{ text: part.text.slice(0, BRANCH_PREVIEW_TEXT_LENGTH) }]
+      : part.functionCall ? [{ text: `[tool: ${(part.functionCall as { name: string }).name}]` }] : []);
+    return [id, { ...metadata, parts }];
+  }));
+  const graph = structuredClone({ ...branch.graph, nodes });
   const children = childrenIndex(graph);
   const pending: Array<{ id: string; wrote: boolean }> = graph.rootNodeId ? [{ id: graph.rootNodeId, wrote: false }] : [];
   while (pending.length) {
@@ -121,12 +130,6 @@ export function branchView(branch: BranchState, writeTools: ReadonlySet<string> 
     }));
     Object.assign(node, { hasWorkspaceState: !!node.workspaceCheckpointId, wroteToWorkspace: wrote || ownWrite });
     for (const child of children.get(id) ?? []) pending.push({ id: child, wrote: wrote || ownWrite });
-  }
-  for (const node of Object.values(graph.nodes)) {
-    // The tree is a preview. Full attachments and signatures are read from the selected history.
-    node.parts = (branch.groups[node.id]?.[0].parts ?? []).flatMap(part => typeof part.text === 'string'
-      ? [{ text: part.text.slice(0, 180) }]
-      : part.functionCall ? [{ text: `[tool: ${(part.functionCall as { name: string }).name}]` }] : []);
   }
   return graph;
 }

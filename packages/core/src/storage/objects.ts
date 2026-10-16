@@ -28,7 +28,11 @@ export interface ValueSelection {
   fields?: readonly string[];
   /** 只还原指定子字段，避免为了摘要解码工具载荷等大型引用。 */
   properties?: Record<string, ValueSelection>;
+  /** 字典的任意键共用投影；具名 properties 优先，键本身保持完整。 */
+  values?: ValueSelection;
   items?: ValueSelection;
+  /** 字符串按 UTF-16 长度截取，与 String.slice 的预览语义一致。 */
+  maxStringLength?: number;
 }
 
 export interface ValueProjection extends ValueSelection {
@@ -84,15 +88,25 @@ export class ObjectStore {
     return hash;
   }
 
-  get(hash: Buffer): Buffer {
+  get(hash: Buffer, maxBytes?: number): Buffer {
     const object = this.db.prepare('SELECT raw_bytes,chunk_count FROM objects WHERE hash=?').get(hash) as { raw_bytes: number; chunk_count: number } | undefined;
     if (!object) throw new PlatformStorageError('CORRUPT_DATA', 'Referenced content object is missing.');
     if (object.raw_bytes < 0 || object.raw_bytes > MAX_VALUE_BYTES) throw new PlatformStorageError('CORRUPT_DATA', 'Invalid content length.');
-    const chunks = this.db.prepare(`SELECT c.* FROM object_chunks oc JOIN chunks c ON c.hash=oc.chunk_hash
-      WHERE oc.object_hash=? ORDER BY oc.ordinal`).all(hash) as ChunkRow[];
-    if (chunks.length !== object.chunk_count) throw new PlatformStorageError('CORRUPT_DATA', 'Content chunks are missing.');
+    const prefix = maxBytes !== undefined && maxBytes < object.raw_bytes;
+    const expectedChunks = prefix ? Math.ceil(maxBytes / CHUNK_BYTES) : object.chunk_count;
+    const chunks = (prefix
+      ? this.db.prepare(`SELECT c.* FROM object_chunks oc JOIN chunks c ON c.hash=oc.chunk_hash
+        WHERE oc.object_hash=? AND oc.ordinal<? ORDER BY oc.ordinal`).all(hash, expectedChunks)
+      : this.db.prepare(`SELECT c.* FROM object_chunks oc JOIN chunks c ON c.hash=oc.chunk_hash
+        WHERE oc.object_hash=? ORDER BY oc.ordinal`).all(hash)) as ChunkRow[];
+    if (chunks.length !== expectedChunks) throw new PlatformStorageError('CORRUPT_DATA', 'Content chunks are missing.');
     const singleChunk = chunks.length === 1 ? chunks[0] : undefined;
     const bytes = singleChunk ? this.readChunk(singleChunk) : Buffer.concat(chunks.map(chunk => this.readChunk(chunk)));
+    if (prefix) {
+      // 预览只校验实际读取的块，完整读取仍校验整个对象；不为短文本展开后续正文。
+      if (bytes.length < maxBytes) throw new PlatformStorageError('CORRUPT_DATA', 'Content prefix is incomplete.');
+      return bytes.subarray(0, maxBytes);
+    }
     // 单块已在读取时校验正文，只需再核对对象与块的哈希关系；多块仍校验拼接后的整体哈希。
     if (bytes.length !== object.raw_bytes || !(singleChunk ? singleChunk.hash.equals(hash) : digest(bytes).equals(hash))) {
       throw new PlatformStorageError('CORRUPT_DATA', 'Content checksum does not match.');
@@ -210,6 +224,11 @@ export class ObjectStore {
   }
 
   getValue<T = unknown>(hash: Buffer, projection?: ValueProjection): T {
+    const propertySelection = (selection: ValueSelection | undefined, key: string) => {
+      const properties = selection?.properties;
+      // 字典可以包含 constructor、__proto__ 等键，继承属性不能覆盖字典值的默认投影。
+      return properties && Object.hasOwn(properties, key) ? properties[key] : selection?.values;
+    };
     const restore = (value: unknown, depth = 0, selection?: ValueSelection): unknown => {
       if (depth > 128) throw new PlatformStorageError('CORRUPT_DATA', 'Stored value nesting exceeds 128 levels.');
       if (value instanceof Uint8Array) return projection?.omitBinary ? new Uint8Array() : value;
@@ -222,7 +241,7 @@ export class ObjectStore {
             const key = restore(pair[0], depth + 1);
             if (typeof key !== 'string') throw new PlatformStorageError('CORRUPT_DATA', 'Invalid dictionary key.');
             if (selection?.fields && !selection.fields.includes(key)) return [];
-            return [[key, restore(pair[1], depth + 1, selection?.properties?.[key])]];
+            return [[key, restore(pair[1], depth + 1, propertySelection(selection, key))]];
           }));
         }
         if (![ATTACHMENT_REFERENCE, UTF8_REFERENCE, UTF16_REFERENCE, BINARY_REFERENCE, VALUE_REFERENCE].includes(value.type) || typeof value.data === 'function' || value.data.length !== 32) {
@@ -230,15 +249,21 @@ export class ObjectStore {
         }
         if (projection?.omitBinary && value.type === ATTACHMENT_REFERENCE) return '';
         if (projection?.omitBinary && value.type === BINARY_REFERENCE) return new Uint8Array();
-        const content = this.get(Buffer.from(value.data));
-        if (value.type === VALUE_REFERENCE) return restore(unpack(content), depth, selection);
-        if (value.type === BINARY_REFERENCE) return new Uint8Array(content);
-        return content.toString(value.type === ATTACHMENT_REFERENCE ? 'base64' : value.type === UTF16_REFERENCE ? 'utf16le' : 'utf8');
+        const hash = Buffer.from(value.data);
+        if (value.type === VALUE_REFERENCE) return restore(unpack(this.get(hash)), depth, selection);
+        if (value.type === BINARY_REFERENCE) return new Uint8Array(this.get(hash));
+        const limit = selection?.maxStringLength;
+        const encoding = value.type === ATTACHMENT_REFERENCE ? 'base64' : value.type === UTF16_REFERENCE ? 'utf16le' : 'utf8';
+        // UTF-8 每个 UTF-16 单位最多占三字节，多读三字节覆盖边界上的完整码点。
+        const maxBytes = limit === undefined ? undefined : limit === 0 ? 0
+          : encoding === 'base64' ? Math.ceil(limit / 4) * 3 : encoding === 'utf16le' ? limit * 2 : limit * 3 + 3;
+        return this.get(hash, maxBytes).toString(encoding).slice(0, limit);
       }
       if (Array.isArray(value)) return value.map(item => restore(item, depth + 1, selection?.items));
       if (value && typeof value === 'object') return Object.fromEntries(Object.entries(value)
         .filter(([key]) => !selection?.fields || selection.fields.includes(key))
-        .map(([key, item]) => [key, restore(item, depth + 1, selection?.properties?.[key])]));
+        .map(([key, item]) => [key, restore(item, depth + 1, propertySelection(selection, key))]));
+      if (typeof value === 'string') return value.slice(0, selection?.maxStringLength);
       return value;
     };
     const unpack = (bytes: Uint8Array) => decode(bytes, {

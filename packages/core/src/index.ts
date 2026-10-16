@@ -11,6 +11,7 @@ export { importLegacyArtifacts } from './migration/artifacts';
 export type { LegacyArtifactImportOptions, LegacyArtifactResult, LegacyCheckpointConverter } from './migration/artifacts';
 export type { ConversationList, ConversationListOptions, HistoryOutline, HistoryWriteResult, UsageConversation } from './storage/protocol';
 export type { HistoryOutlineEntry } from './storage/histories';
+export type { ValueSelection, ValueProjection } from './storage/objects';
 export type {
   PlatformMessage, PlatformConversation, HistoryPage, PageOptions, HistoryWriteOptions,
   StorageStatistics, MigrationReport, MigrationIssue, StoredRecord, SnapshotMetadata, PlatformSnapshot,
