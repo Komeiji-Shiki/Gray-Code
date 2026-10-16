@@ -30,7 +30,7 @@ export const SUPPORTED_LANGUAGES: LanguageOption[] = [
  * 已加载的语言包，挂载前由入口准备当前语言，切换时再加载目标语言。
  * composables/useI18n.ts re-export 此表供非组件上下文使用。
  */
-export const messages: Record<string, LanguageMessages> = shallowReactive({});
+export const messages = shallowReactive<Record<string, LanguageMessages>>({});
 
 /**
  * 当前语言设置

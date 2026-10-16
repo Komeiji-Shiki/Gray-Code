@@ -18,6 +18,9 @@ vi.mock('../../../../apps/client/src/appearance', async () => {
   const { ref } = await import('vue'); return { appearancePalette: ref({}), resolvedTheme: ref('dark'), useSystemAppearance() {} };
 });
 vi.mock('../../../../apps/client/src/webBridge', () => ({ webUi: { connection: 'connected' } }));
+// 调试订阅由渲染器单例维护，这里只检查外壳重试自身的订阅生命周期。
+vi.mock('../../../../apps/client/src/debugging', () => ({ connectDebugging: vi.fn(), debugControl: vi.fn(),
+  debugState: { activeId: undefined, sessions: [] } }));
 vi.mock('../../../../apps/client/src/components/PetSurface.vue', () => ({ default: { name: 'PetSurface', template: '<div />' } }));
 const wrappers: ReturnType<typeof shallowMount>[] = [];
 beforeEach(() => {
@@ -93,9 +96,9 @@ test('模式菜单打开聚焦当前模式，方向键与Tab循环，Escape返�
 });
 
 test('聊天宿主重复加载后只保留当前订阅，pagehide 释放父页面回调', async () => {
-  const { ref } = await import('vue');
   const previousHost = window.__GRAYCODE_HOST;
-  vi.doMock('../../i18n', () => ({ actualLanguage: ref('zh-CN') }));
+  vi.doMock('../../i18n', () => ({ getLanguage: () => 'zh-CN', setLanguage: vi.fn().mockResolvedValue(undefined),
+    SUPPORTED_LANGUAGES: [{ value: 'zh-CN' }] }));
   vi.doMock('../../platform/appearance', () => ({ applyDesktopAppearance() {} }));
   vi.doMock('../../components/common/markdown/markdownItCore', () => ({ invalidateWorkspaceAssets() {} }));
   vi.doMock('../../platform/settingsDraft', () => ({ desktopSettingsDraft: {}, saveDesktopSettings: vi.fn(),
@@ -103,7 +106,10 @@ test('聊天宿主重复加载后只保留当前订阅，pagehide 释放父页�
   vi.doMock('../../main', () => ({}));
   const listeners = new Set<(event: any) => void>();
   Object.defineProperty(window, 'graycode', { configurable: true, value: { kind: 'web',
-    call: async (method: string, params?: any) => method === 'ui.state.get' ? {} : params?.type === 'getPromptModes' ? { currentModeId: 'code' } : {},
+    call: async (method: string) => method === 'ui.startup' ? {
+      state: {}, appearance: {}, settings: { success: true, settings: { ui: { language: 'zh-CN' } } },
+      promptModes: { modes: [], currentModeId: 'code' }, activeChannel: {}, checkpoint: { config: {} }, workspaceUri: null,
+    } : {},
     subscribe: (listener: (event: any) => void) => { listeners.add(listener); return () => listeners.delete(listener); },
   } });
   try {
