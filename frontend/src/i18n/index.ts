@@ -4,11 +4,17 @@
  * 支持语言切换和翻译
  */
 
-import { ref, computed, readonly } from 'vue';
+import { ref, computed, readonly, shallowReactive } from 'vue';
 import type { SupportedLanguage, LanguageMessages, LanguageOption } from './types';
-import zhCN from './langs/zh-CN';
-import en from './langs/en';
-import ja from './langs/ja';
+
+type ResolvedLanguage = Exclude<SupportedLanguage, 'auto'>;
+const languageLoaders = {
+    'zh-CN': () => import('./langs/zh-CN'),
+    en: () => import('./langs/en'),
+    ja: () => import('./langs/ja')
+};
+const pendingLanguages = new Map<ResolvedLanguage, Promise<void>>();
+let languageRequest = 0;
 
 /**
  * 支持的语言列表
@@ -21,13 +27,10 @@ export const SUPPORTED_LANGUAGES: LanguageOption[] = [
 ];
 
 /**
- * 语言包（按语言代码索引；composables/useI18n.ts re-export 此表供非组件上下文使用）
+ * 已加载的语言包，挂载前由入口准备当前语言，切换时再加载目标语言。
+ * composables/useI18n.ts re-export 此表供非组件上下文使用。
  */
-export const messages: Record<string, LanguageMessages> = {
-    'zh-CN': zhCN,
-    'en': en,
-    'ja': ja
-};
+export const messages: Record<string, LanguageMessages> = shallowReactive({});
 
 /**
  * 当前语言设置
@@ -35,7 +38,7 @@ export const messages: Record<string, LanguageMessages> = {
 const currentLanguage = ref<SupportedLanguage>('auto');
 
 /**
- * VS Code 检测到的语言
+ * 浏览器或宿主检测到的语言
  */
 const detectedLanguage = ref<string>(
     typeof navigator === 'undefined' ? 'zh-CN' : (navigator.language || 'zh-CN')
@@ -44,36 +47,36 @@ const detectedLanguage = ref<string>(
 /**
  * 获取实际使用的语言（导出供外部读取当前生效语言；useI18n() 同样返回该引用）
  */
-export const actualLanguage = computed(() => {
-    if (currentLanguage.value === 'auto') {
-        // 尝试匹配检测到的语言
-        const detected = detectedLanguage.value;
-        if (detected && messages[detected]) {
-            return detected;
-        }
-        // 如果检测的语言包含 zh，使用中文
-        if (detected && detected.startsWith('zh')) {
-            return 'zh-CN';
-        }
-        // 如果检测的语言包含 en，使用英文
-        if (detected && detected.startsWith('en')) {
-            return 'en';
-        }
-        // 如果检测的语言包含 ja，使用日文
-        if (detected && detected.startsWith('ja')) {
-            return 'ja';
-        }
-        // 默认使用英文（未知语言的兜底；用户显式选择中文时走 currentLanguage 分支，不受影响）
-        return 'en';
+function resolveLanguage(language: SupportedLanguage): ResolvedLanguage {
+    if (language !== 'auto') return language;
+    const detected = detectedLanguage.value;
+    if (detected.startsWith('zh')) return 'zh-CN';
+    if (detected.startsWith('ja')) return 'ja';
+    return 'en';
+}
+
+const effectiveLanguage = ref<ResolvedLanguage>(resolveLanguage(currentLanguage.value));
+export const actualLanguage = computed(() => effectiveLanguage.value);
+
+/** 只准备资源，不提前改变正在显示的语言。 */
+export function preloadLanguage(language: SupportedLanguage = currentLanguage.value): Promise<void> {
+    const resolved = resolveLanguage(language);
+    if (messages[resolved]) return Promise.resolve();
+    let loading = pendingLanguages.get(resolved);
+    if (!loading) {
+        loading = languageLoaders[resolved]().then(module => {
+            messages[resolved] = module.default;
+        }).finally(() => pendingLanguages.delete(resolved));
+        pendingLanguages.set(resolved, loading);
     }
-    return currentLanguage.value;
-});
+    return loading;
+}
 
 /**
  * 当前语言的消息对象
  */
 const currentMessages = computed(() => {
-    return messages[actualLanguage.value] || messages['zh-CN'];
+    return messages[actualLanguage.value];
 });
 
 /**
@@ -89,15 +92,25 @@ const warnedMissingKeys = new Set<string>();
 /**
  * 设置语言
  */
-export function setLanguage(lang: SupportedLanguage) {
-    if (currentLanguage.value !== lang) {
-        translationCache.clear();
-        warnedMissingKeys.clear();
+export function setLanguage(lang: SupportedLanguage): Promise<void> {
+    const request = ++languageRequest;
+    const resolved = resolveLanguage(lang);
+    const apply = () => {
+        if (request !== languageRequest) return;
+        if (currentLanguage.value !== lang || effectiveLanguage.value !== resolved) {
+            translationCache.clear();
+            warnedMissingKeys.clear();
+        }
+        currentLanguage.value = lang;
+        effectiveLanguage.value = resolved;
+        if (typeof document !== 'undefined') document.documentElement.lang = resolved;
+    };
+    // 已加载语言保持同步切换；首次切换等待整包就绪，期间继续使用原有翻译。
+    if (messages[resolved]) {
+        apply();
+        return Promise.resolve();
     }
-    currentLanguage.value = lang;
-    if (typeof document !== 'undefined') {
-        document.documentElement.lang = actualLanguage.value;
-    }
+    return preloadLanguage(lang).then(apply);
 }
 
 /**
@@ -114,15 +127,9 @@ export function getLanguage(): SupportedLanguage {
  * 扩展侧偏好通过 setLanguage 注入。当前唯一调用方为测试环境（vitest.setup.ts 固定语言用），
  * 保留导出以兼容该调用。
  */
-export function setDetectedLanguage(lang: string) {
-    if (detectedLanguage.value !== lang) {
-        translationCache.clear();
-        warnedMissingKeys.clear();
-    }
+export function setDetectedLanguage(lang: string): Promise<void> {
     detectedLanguage.value = lang;
-    if (currentLanguage.value === 'auto' && typeof document !== 'undefined') {
-        document.documentElement.lang = actualLanguage.value;
-    }
+    return currentLanguage.value === 'auto' ? setLanguage('auto') : Promise.resolve();
 }
 
 /**
@@ -139,7 +146,7 @@ export function setDetectedLanguage(lang: string) {
  */
 export function translate(lang: string, key: string, params?: Record<string, any>): string {
     const resolvedLang = lang === 'auto' ? actualLanguage.value : lang;
-    const message = messages[resolvedLang] || messages['zh-CN'];
+    const message = messages[resolvedLang] || messages['zh-CN'] || messages[actualLanguage.value];
 
     const keys = key.split('.');
     let value: any = message;
@@ -246,6 +253,7 @@ export function useI18n() {
         currentLanguage: readonly(currentLanguage),
         actualLanguage,
         setLanguage,
+        preloadLanguage,
         getLanguage,
         setDetectedLanguage,
         SUPPORTED_LANGUAGES
@@ -255,6 +263,7 @@ export function useI18n() {
 export default {
     t,
     setLanguage,
+    preloadLanguage,
     getLanguage,
     setDetectedLanguage,
     useI18n,

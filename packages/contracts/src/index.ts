@@ -18,6 +18,7 @@ export * from './channels';
 export * from './subagents';
 export * from './contextManagement';
 export * from './uiRequests';
+export * from './uiStartup';
 export * from './subagentRequests';
 export * from './conversationMetadata';
 export * from './externalAgents';

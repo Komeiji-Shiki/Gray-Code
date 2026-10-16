@@ -91,10 +91,18 @@ export class SubagentExecutionService {
     this.byAgent.set(record.profile.id, record);
   }
   async initialize(): Promise<void> {
-    for (const id of await this.app.storage.listRecords(namespace)) {
-      const record = await this.app.storage.getRecord(namespace, id) as PlatformSubagent;
-      if (!terminal(record.status)) { record.status = 'interrupted'; record.error = '宿主重启，未自动重放子代理操作。'; await this.save(record); }
-      this.register(record);
+    let afterId: string | undefined;
+    for (;;) {
+      const page = await this.app.storage.readRecordPage(namespace, undefined, { afterId, limit: 200 });
+      for (const entry of page) {
+        const record = entry.value as PlatformSubagent;
+        if (!terminal(record.status)) {
+          record.status = 'interrupted'; record.error = '宿主重启，未自动重放子代理操作。'; await this.save(record);
+        }
+        this.register(record);
+      }
+      if (page.length < 200) break;
+      afterId = page.at(-1)!.id;
     }
     // 完整恢复父子关系后再接收结果，使嵌套任务沿用同一个主会话序号。
     for (const record of this.records.values()) if (record.background) {

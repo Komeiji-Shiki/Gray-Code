@@ -6,13 +6,15 @@ import { copyFileSync, mkdirSync, writeFileSync } from 'node:fs';
 import { DESKTOP_RUNTIME_EXTERNALS } from './desktop-runtime-dependencies.mjs';
 const require = createRequire(import.meta.url);
 const buildInfo = { ...distribution, buildTime: new Date().toISOString() };
-for (const name of ['main', 'preload', 'desktopDialogPreload']) {
-  const result = await build({ entryPoints: [`apps/desktop/src/${name === 'main' ? 'bootstrap' : name}.ts`], outfile: `apps/desktop/dist/${name}.cjs`,
+for (const [name, entry] of [['main', 'bootstrap'], ['runtime', 'main'], ['preload', 'preload'], ['desktopDialogPreload', 'desktopDialogPreload']]) {
+  const isolated = name === 'preload' || name === 'desktopDialogPreload';
+  const result = await build({ entryPoints: [`apps/desktop/src/${entry}.ts`], outfile: `apps/desktop/dist/${name}.cjs`,
     bundle: true, platform: 'node', format: 'cjs', target: 'node24', sourcemap: true, metafile: true,
+    minifyWhitespace: name === 'runtime',
     define: { __GRAYCODE_DESKTOP_BUILD__: JSON.stringify(buildInfo), __GRAYCODE_DISTRIBUTION__: JSON.stringify(distribution) },
     // 沙箱预加载不能 require 工作区包，纯契约代码必须随它一起打包。
-    external: name !== 'main' ? ['electron'] : ['electron', ...DESKTOP_RUNTIME_EXTERNALS] });
-  if (name !== 'main') {
+    external: isolated ? ['electron'] : ['electron', './runtime.cjs', ...DESKTOP_RUNTIME_EXTERNALS] });
+  if (isolated) {
     const imports = Object.values(result.metafile.outputs).flatMap(output => output.imports).filter(item => item.external && item.path !== 'electron');
     if (imports.length) throw new Error(`沙箱预加载包含无法加载的外部依赖：${imports.map(item => item.path).join(', ')}`);
   }

@@ -5,8 +5,8 @@
  *   帽子先落笔 → 身体/发丝 → 完稿定影提亮 → 呼吸待机
  * - 标题分层浮现（Gray 粗 / Code 细 + 蓝色终端光标）→ 副标题
  * - 格雷码等待线（3-bit 循环 000→001→011→010→110→111→101→100，每步恰好只变一位）
- *   等待 ready；ready 后三位归一为蓝色实线（保证至少完整播完一轮 8 步才归一）
- * - 最短展示 minDisplayMs，ready 后淡出（FADE_MS，blur+scale 消散）并 emit('done')
+ *   等待 ready；ready 后三位归一为蓝色实线，无需等待描线或循环播放完成
+ * - 可显式指定最短展示 minDisplayMs，ready 后淡出（FADE_MS，blur+scale 消散）并 emit('done')
  * - 支持 prefers-reduced-motion（动画即时完成/静止，淡出无过渡）
  *
  * 时间轴（相对挂载，与 CSS 动画严格对齐）：
@@ -18,8 +18,7 @@
  *   2.30s  DRAW_TOTAL_MS → drawDone → 呼吸待机
  *
  * 退场（ready 后两拍）：先归一（MERGE_MS，蓝线合并 + 光标定格）再淡出（FADE_MS）
- * ready 早到时（加载快）也强制等格雷码线完整播完一轮（挂载后 1.15s+2s=3.15s）再归一，
- * 保证每次启动都能看到完整 8 步循环
+ * 默认内容就绪即开始退场；尚未就绪时继续原动画，显式 minDisplayMs 仍约束最短展示时间
  *
  * 注：TPS 实时可视化条不在此处——它位于聊天面板底部（components/input/TpsBar.vue）。
  */
@@ -29,13 +28,13 @@ import { useI18n } from '../i18n'
 const { t } = useI18n()
 
 const props = withDefaults(defineProps<{
-  /** 外部 ready 信号：App.vue 传入 languageLoaded（语言/设置加载完成） */
+  /** 外部 ready 信号：内容就绪后开始退场 */
   ready?: boolean
-  /** 最短展示时长（ms）：默认与 DRAW_TOTAL_MS 一致，保证完整叙事（描线+上色+定影+格雷码起跳） */
+  /** 最短展示时长（ms）：从挂载起计算，默认不额外等待 */
   minDisplayMs?: number
 }>(), {
   ready: false,
-  minDisplayMs: 2300
+  minDisplayMs: 0
 })
 
 const emit = defineEmits<{
@@ -48,10 +47,6 @@ const FADE_MS = 450
 const MERGE_MS = 420
 /** 全部绘制动画完成（描线 0.05~1.6s + 上色 1.6~2.25s + 定影 2.0s 起） */
 const DRAW_TOTAL_MS = 2300
-/** 格雷码等待线：bit 循环动画延迟（与 CSS animation-delay 1.15s 对齐） */
-const GRAY_LINE_DELAY = 1150
-/** 格雷码等待线：单周期 2s（8 步 × 250ms，与 CSS 2s linear 对齐） */
-const GRAY_LINE_PERIOD = 2000
 
 function prefersReducedMotion(): boolean {
   return (
@@ -73,26 +68,16 @@ let drawTimer: number | null = null
 let mergeTimer: number | null = null
 let disposeTimer: number | null = null
 
-// ---------- 状态机：绘制完成 + ready + 最短时长 → 淡出 → done ----------
+// ---------- 状态机：ready + 显式最短时长 → 归一 → 淡出 → done ----------
 
 function tryFadeOut(): void {
   if (merging.value || done.value) return
-  if (!props.ready || !drawDone.value) return
-  const now = Date.now()
-  const elapsed = now - startedAt
+  if (!props.ready) return
+  const elapsed = Date.now() - startedAt
   if (elapsed < props.minDisplayMs) {
     if (fadeTimer !== null) window.clearTimeout(fadeTimer)
     fadeTimer = window.setTimeout(tryFadeOut, props.minDisplayMs - elapsed)
     return
-  }
-  // 加载再快也要让格雷码线完整播完一轮（8 步），否则看不到完整循环就淡出了
-  if (!reducedMotion) {
-    const remain = startedAt + GRAY_LINE_DELAY + GRAY_LINE_PERIOD - now
-    if (remain > 0) {
-      if (fadeTimer !== null) window.clearTimeout(fadeTimer)
-      fadeTimer = window.setTimeout(tryFadeOut, remain)
-      return
-    }
   }
   beginFadeOut()
 }

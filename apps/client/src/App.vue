@@ -5,20 +5,20 @@ import { appearanceSystemLight, useSystemAppearance } from './appearance';
 import { call, subscribe } from './api';
 import { CHAT_INITIALIZATION_MESSAGE } from '../../../shared/chatInitialization';
 import { SHELL_SHORTCUTS_MESSAGE, SHELL_SHORTCUT_MESSAGE, matchShellShortcut, shellShortcuts } from '../../../shared/shellShortcutBridge';
-import { debugControl, debugState } from './debugging';
+import { connectDebugging, debugControl, debugState } from './debugging';
 import { useConversationNavigation } from './conversationNavigation';
 import { shellText as t, setShellLanguage } from './i18n';
 import { applyAppearanceVariables } from '../../../shared/appearanceTokens';
 const { navigate, newConversation, selectWorkspace } = useConversationNavigation(finishNavigation);
 import { readWorkspacePanelMessage } from '../../../shared/workspacePanelNavigation';
 import { useFrameValue } from './useFrameValue';
-import Workbench from './components/Workbench.vue';
+const Workbench = defineAsyncComponent(() => import('./components/Workbench.vue'));
 import ErrorBanner from './components/ErrorBanner.vue';
 import ContentPreview from './components/ContentPreview.vue';
 import RunInspector from './components/RunInspector.vue';
 const ResourceLibrary = defineAsyncComponent(() => import('./components/ResourceLibrary.vue'));
 const CharacterSetup = defineAsyncComponent(() => import('./components/CharacterSetup.vue'));
-import AutomationsPanel from './components/AutomationsPanel.vue';
+const AutomationsPanel = defineAsyncComponent(() => import('./components/AutomationsPanel.vue'));
 import ConversationSidebar from './components/ConversationSidebar.vue';
 import WorkspaceSelector from './components/WorkspaceSelector.vue';
 import WebDialogs from './components/WebDialogs.vue';
@@ -28,7 +28,41 @@ import ComputerStatus from './components/ComputerStatus.vue';
 const CompanionSetup = defineAsyncComponent(() => import('./components/CompanionSetup.vue'));
 import PetSurface from './components/PetSurface.vue';
 import ScreenSenseStatus from './components/ScreenSenseStatus.vue';
+import { computerState } from './computer';
+connectDebugging();
 const productChatFrame = ref<HTMLIFrameElement>();
+const workbenchMounted = ref(false);
+const workbenchVisible = computed(() => !state.chatFocused && !state.settingsOpen);
+const pendingWorkbenchEvents: Record<string, any>[] = [];
+let workbenchConnected = false;
+const workbenchEventTypes = new Set([
+  'workspace.terminal.open', 'browser.opened', 'workspace.file.open', 'workspace.subagents.open', 'workspace.diff.open',
+]);
+watch(workbenchVisible, visible => {
+  if (visible) workbenchMounted.value = true;
+}, { immediate: true });
+function attachWorkbench(handleRequest: (event: Record<string, any>) => void) {
+  workbenchConnected = true;
+  // 仅回放工作台负责的导航事件，避免动态模块加载期间丢失首次打开请求。
+  for (const event of pendingWorkbenchEvents.splice(0)) handleRequest(event);
+}
+function detachWorkbench() {
+  workbenchConnected = false;
+}
+watch(() => state.workbenchPanelRequest, request => {
+  if (!request) return;
+  workbenchMounted.value = true;
+  state.chatFocused = false;
+  state.settingsOpen = false;
+  if (!workbenchConnected) pendingWorkbenchEvents.push({ type: 'workbench.panel.open', id: request.id });
+}, { flush: 'sync', immediate: true });
+watch(() => computerState.openRequest, request => {
+  if (!request) return;
+  workbenchMounted.value = true;
+  state.chatFocused = false;
+  state.settingsOpen = false;
+  if (!workbenchConnected) pendingWorkbenchEvents.push({ type: 'workbench.panel.open', id: 'computer' });
+}, { flush: 'sync', immediate: true });
 function jumpToMessage(target: { conversationId: string; messageIndex: number; messageId?: string }) {
   productChatFrame.value?.contentWindow?.postMessage(
     { type: 'graycode.jumpToMessage', ...target },
@@ -37,7 +71,9 @@ function jumpToMessage(target: { conversationId: string; messageIndex: number; m
 }
 function openWorkspacePanel(event: MessageEvent) {
   if (event.source === productChatFrame.value?.contentWindow && event.origin === window.location.origin) {
-    if (event.data?.type === 'graycode.language' && typeof event.data.language === 'string') setShellLanguage(event.data.language);
+    if (event.data?.type === 'graycode.language' && typeof event.data.language === 'string') {
+      void setShellLanguage(event.data.language).catch(report);
+    }
     if (event.data?.type === CHAT_INITIALIZATION_MESSAGE && ['ready', 'failed'].includes(event.data.status)) {
       chatInitialized.value = event.data.status === 'ready';
       chatLoadFailed.value = !chatInitialized.value;
@@ -69,6 +105,10 @@ function openLibrary(tab: 'resources' | 'memory' = 'resources') {
   libraryOpen.value = true;
 }
 const automationsOpen = ref(false);
+const automationsMounted = ref(false);
+watch(automationsOpen, open => {
+  if (open) automationsMounted.value = true;
+});
 const companionGreeting = ref<{ conversationId: string }>();
 function openCompanionGreeting(conversationId: string) {
   companionGreeting.value = { conversationId };
@@ -379,6 +419,14 @@ onMounted(() => {
   window.visualViewport?.addEventListener('resize', updateViewport);
   unsubscribeHost = subscribe((event) => {
     if (lifetime.signal.aborted) return;
+    if (workbenchEventTypes.has(event.type)) {
+      workbenchMounted.value = true;
+      state.chatFocused = false;
+      state.settingsOpen = false;
+      if (!workbenchConnected) {
+        pendingWorkbenchEvents.push(event.type === 'workspace.diff.open' && !event.workspaceId ? { ...event, workspaceId: state.workspaceId } : event);
+      }
+    }
     if (event.type === 'ui.ready') chatReady.value = true;
     if (event.type === 'desktop.shortcut' && enabledShortcuts.value.some(binding => binding.command === event.command))
       executeShellShortcut(event.command);
@@ -567,7 +615,7 @@ onUnmounted(() => {
     />
     <ContentPreview />
     <WebDialogs v-if="isWeb" />
-    <AutomationsPanel :open="automationsOpen" :companion-request="companionGreeting" @close="closeAutomations" />
+    <AutomationsPanel v-if="automationsMounted" :open="automationsOpen" :companion-request="companionGreeting" @close="closeAutomations" />
     <RunInspector v-if="state.ready && !state.settingsOpen" />
     <div
       v-if="!state.ready"
@@ -680,7 +728,13 @@ onUnmounted(() => {
             endSplit();
           "
         ></div>
-        <Workbench v-show="!state.chatFocused && !state.settingsOpen" :compact="compactViewport" />
+        <Workbench
+          v-if="workbenchMounted"
+          v-show="workbenchVisible"
+          :compact="compactViewport"
+          @ready="attachWorkbench"
+          @vue:unmounted="detachWorkbench"
+        />
       </div>
     </div>
     <footer class="statusbar">

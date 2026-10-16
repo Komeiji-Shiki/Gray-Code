@@ -3,13 +3,13 @@ import PetSurface from '../components/PetSurface.vue';
 import { call, subscribe } from '../api';
 import { appearance, loadSettings } from '../state';
 import { appearanceSystemLight, useSystemAppearance } from '../appearance';
-import { setShellLanguage } from '../i18n';
+import { preloadShellLanguage, setShellLanguage } from '../i18n';
 import { applyAppearanceVariables } from '../../../../shared/appearanceTokens';
 import '../../../../frontend/src/styles/tokens.css';
 import '../styles/base.css';
 import './floating.css';
 
-createApp({
+const mountPet = () => createApp({
   setup() {
     useSystemAppearance();
     watchEffect(() => {
@@ -19,9 +19,7 @@ createApp({
     const language = async () => {
       const value = await call<{ settings: { ui?: { language?: string } } }>('ui.request', { type: 'getSettings', data: {} });
       const selected = value.settings.ui?.language;
-      const locale = selected && selected !== 'auto' ? selected : navigator.language;
-      setShellLanguage(locale);
-      document.documentElement.lang = locale;
+      await setShellLanguage(selected ?? 'auto');
     };
     const refresh = () => Promise.all([loadSettings(), language()]).catch(error => console.error(error));
     onMounted(() => {
@@ -38,3 +36,4 @@ createApp({
     });
   },
 }).mount('#app');
+void preloadShellLanguage().then(mountPet);

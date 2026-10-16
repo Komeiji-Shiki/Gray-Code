@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { defineAsyncComponent, nextTick, onBeforeUnmount, ref, watch } from 'vue'
-import { actualLanguage, useI18n } from '@/i18n'
+import { getLanguage, useI18n } from '@/i18n'
 import Modal from '../common/Modal.vue'
 import { setShellLanguage } from '../../../../apps/client/src/i18n'
 
@@ -14,9 +14,22 @@ const screenSenseDirty = ref(false)
 const confirmLeave = ref(false)
 const discarding = ref(false)
 const error = ref('')
+const shellLanguageReady = ref(false)
 let pendingNavigation: ((allowed: boolean) => void) | undefined
 
-watch(actualLanguage, setShellLanguage, { immediate: true })
+watch(() => getLanguage(), async (language, _previous, onCleanup) => {
+  let current = true
+  onCleanup(() => { current = false })
+  try {
+    await setShellLanguage(language)
+    if (!current) return
+    // 聊天 iframe 有独立的外壳语言实例，首次准备好后再挂载共享设置，后续切换保留未保存内容。
+    shellLanguageReady.value = true
+    error.value = ''
+  } catch (cause) {
+    if (current) error.value = cause instanceof Error ? cause.message : String(cause)
+  }
+}, { immediate: true })
 function prepareNavigation(): Promise<boolean> {
   if (!petsDirty.value && !screenSenseDirty.value) return Promise.resolve(true)
   if (pendingNavigation) return Promise.resolve(false)
@@ -49,10 +62,11 @@ defineExpose({ prepareNavigation })
 <template>
   <div class="companion-settings" data-preference-transient>
     <p class="save-hint">{{ t('components.settings.companionSettings.saveHint') }}</p>
-    <section data-search-anchor="companion-pet-preferences">
+    <p v-if="error" class="error" role="alert">{{ error }}</p>
+    <section v-if="shellLanguageReady" data-search-anchor="companion-pet-preferences">
       <PetManager ref="pets" embedded section="preferences" @dirty="petsDirty = $event" />
     </section>
-    <section data-search-anchor="companion-vision-defaults">
+    <section v-if="shellLanguageReady" data-search-anchor="companion-vision-defaults">
       <ScreenSenseSettings ref="screenSense" embedded section="defaults" @dirty="screenSenseDirty = $event" />
     </section>
   </div>

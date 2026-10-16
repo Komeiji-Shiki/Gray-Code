@@ -712,7 +712,7 @@ export const useChatStore = defineStore('chat', () => {
   /** 平滑档位同步 watcher 的停止句柄（重复 initialize 前先停止旧句柄，避免重复监听） */
   let stopSmoothStreamingWatcher: (() => void) | null = null
   
-  async function initialize(): Promise<void> {
+  async function initialize(options: { deferConversationList?: boolean } = {}): Promise<void> {
     // 首次状态建立必须发生在任何 await 之前：启动加载期间界面或内部消息可能触发首条发送，
     // 发送流程需要一个稳定的 activeTabId 来绑定懒创建的会话。旧实现把清空/建标签页放在
     // 全部 IPC 完成之后，会把在途首条消息和会话 ID 整体覆盖，表现为消息闪现后消失。
@@ -769,9 +769,8 @@ export const useChatStore = defineStore('chat', () => {
     }
     
     await loadSavedConfigId(state)
-    await loadCurrentConfig(state)
     await loadCheckpointConfig(state)
-    await loadConversations()
+    if (!options.deferConversationList) await loadConversations()
   }
 
   // ============ 工具确认回合 ============

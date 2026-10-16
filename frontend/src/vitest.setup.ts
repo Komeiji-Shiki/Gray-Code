@@ -1,6 +1,6 @@
 import { beforeEach } from 'vitest'
-import { setDetectedLanguage, setLanguage } from './i18n'
-import { setShellLanguage } from '../../apps/client/src/i18n'
+import { preloadLanguage, setDetectedLanguage, setLanguage } from './i18n'
+import { preloadShellLanguage, setShellLanguage } from '../../apps/client/src/i18n'
 
 // jsdom 不计算布局；需要模拟尺寸变化的用例提供自己的回调夹具，默认环境提供观察器接口。
 globalThis.ResizeObserver = class implements ResizeObserver {
@@ -28,6 +28,12 @@ if (jsdomEnvironment) {
     value: jsdomEnvironment.window.localStorage
   })
 }
+
+// 组件用例直接同步切换语言，测试夹具预载全部语言，不影响生产入口的按需加载。
+await Promise.all(['zh-CN', 'en', 'ja'].flatMap(language => [
+  preloadLanguage(language as 'zh-CN' | 'en' | 'ja'),
+  preloadShellLanguage(language)
+]))
 
 beforeEach(() => {
   // 测试文案断言不应依赖运行机器的 navigator.language。

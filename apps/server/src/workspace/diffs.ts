@@ -37,12 +37,21 @@ export class WorkspaceDiffs {
       data: { pendingDiffs, allProcessed: pendingDiffs.every(item => item.status !== 'pending') } } });
   }
   async initialize(): Promise<void> {
-    for (const id of await this.app.storage.listRecords(namespace)) {
-      const value = await this.app.storage.getRecord(namespace, id) as WorkspaceDiff;
-      if (value.status === 'pending') {
+    let afterId: string | undefined;
+    for (;;) {
+      // 已处理提案通常占绝大多数；恢复只读状态，避免展开历史文件的修改前后全文。
+      const page = await this.app.storage.readRecordPage(namespace, undefined, {
+        afterId, limit: 200, projection: { fields: ['status'] },
+      });
+      for (const entry of page) {
+        if ((entry.value as Pick<WorkspaceDiff, 'status'>).status !== 'pending') continue;
+        const value = await this.app.storage.getRecord(namespace, entry.id) as WorkspaceDiff | null;
+        if (value?.status !== 'pending') continue;
         value.status = 'cancelled'; value.error = '程序已重启，未自动重放文件修改。';
         await this.save(value);
       }
+      if (page.length < 200) break;
+      afterId = page.at(-1)!.id;
     }
   }
   private save(value: WorkspaceDiff) {

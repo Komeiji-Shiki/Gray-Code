@@ -69,7 +69,7 @@ const UsageTimeSection = defineAsyncComponent(() => import('../usage/UsageTimeSe
 const UsageSummaryCard = defineAsyncComponent(() => import('./panel/UsageSummaryCard.vue'))
 
 const settingsStore = useSettingsStore()
-const { t, setLanguage } = useI18n()
+const { t, setLanguage, getLanguage } = useI18n()
 const panelElement = ref<HTMLElement>()
 useSettingsFocus(panelElement, () => settingsStore.currentView === 'settings', closeSettings)
 
@@ -220,7 +220,7 @@ async function loadSettings() {
     const language = response?.settings?.ui?.language
     if (language && isSupportedLanguage(language)) {
       languageSetting.value = language
-      setLanguage(language)
+      await setLanguage(language)
     }
     // 加载自动更新检查开关（默认开启）
     checkUpdatesEnabled.value = response?.settings?.checkForUpdates !== false
@@ -297,27 +297,33 @@ function isSupportedLanguage(value: string): value is SupportedLanguage {
 }
 
 // 更新语言设置
+let languageUpdateSequence = 0
 async function updateLanguage(lang: string) {
   // 非法语言值（越出 SUPPORTED_LANGUAGES）直接忽略，不再用 as any 把运行时风险带进 i18n
   if (!isSupportedLanguage(lang)) return
-  const previous = languageSetting.value
+  const sequence = ++languageUpdateSequence
+  const previous = getLanguage()
   languageSetting.value = lang
-  setLanguage(lang)
 
   try {
+    await setLanguage(lang)
+    // 首次加载语言包可能较慢，只保存用户最后一次选择。
+    if (sequence !== languageUpdateSequence) return
     const response = await sendToExtension<any>(MESSAGE_NAMES.updateUISettings, {
       ui: { language: lang }
     })
+    if (sequence !== languageUpdateSequence) return
     // 失败时 resolve { success: false }（不抛错）：回滚语言选择与运行时语言，
     // 否则界面显示已切换而实际未保存
     if (response?.success === false) {
       languageSetting.value = previous
-      setLanguage(previous)
+      await setLanguage(previous)
       console.error('Failed to save language setting:', response?.error?.message || response?.error)
     }
   } catch (error) {
+    if (sequence !== languageUpdateSequence) return
     languageSetting.value = previous
-    setLanguage(previous)
+    await setLanguage(previous)
     console.error('Failed to save language setting:', error)
   }
 }

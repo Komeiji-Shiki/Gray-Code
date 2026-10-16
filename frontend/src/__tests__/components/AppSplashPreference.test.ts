@@ -210,6 +210,7 @@ describe('App 开屏动画启动偏好', () => {
       retryStatus: null,
       hasPendingToolConfirmation: false,
       initialize: vi.fn().mockResolvedValue(undefined),
+      loadConversations: vi.fn().mockResolvedValue(undefined),
       createNewConversation: vi.fn(),
       createNewTab: vi.fn(),
       switchTab: vi.fn(),

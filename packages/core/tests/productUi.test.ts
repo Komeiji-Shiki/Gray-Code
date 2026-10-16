@@ -20,7 +20,7 @@ test('客户端清理后恢复代码模式和项目，空白会话首条输入�
     const createDraft = jest.spyOn(app.product, 'draft');
     try {
       await ui('ui.conversation.focus', { conversationId: null, resynchronized: true });
-      expect(createDraft).toHaveBeenCalledTimes(1);
+      expect(createDraft).not.toHaveBeenCalled();
       expect(await ui('getWorkspaceUri')).toBe(pathToFileURL(f.source).toString());
       const created = await ui('conversation.createConversation', { conversationId: 'after-reconnect', title: '重连后输入' });
       expect(created.workspaceId).toBe('project');

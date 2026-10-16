@@ -31,8 +31,15 @@ const BACKEND_LANGS_DIR = path.join(ROOT, 'backend', 'i18n', 'langs');
 const FRONTEND_LANGS_DIR = path.join(ROOT, 'frontend', 'src', 'i18n', 'langs');
 const SHARED_DIR = path.join(FRONTEND_LANGS_DIR, '_shared');
 const SHELL_PATH = path.join(ROOT, 'apps/client/src/i18n.generated.ts');
+const SHELL_LANGS_DIR = path.join(ROOT, 'apps/client/src/i18n');
 function shellTranslations(backend) {
-    return `${GENERATED_HEADER}\nexport default ${JSON.stringify(Object.fromEntries(LANGS.map(lang => [lang, backend[lang].desktop.shell])), null, 2)};\n`;
+    return new Map([
+        [SHELL_PATH, `${GENERATED_HEADER}\nexport type ShellMessages = typeof import('./i18n/en.generated').default;\n`],
+        ...LANGS.map(lang => [
+            path.join(SHELL_LANGS_DIR, `${lang}.generated.ts`),
+            `${GENERATED_HEADER}\nexport default ${JSON.stringify(backend[lang].desktop.shell, null, 2)};\n`,
+        ]),
+    ]);
 }
 const MANIFEST_PATH = path.join(ROOT, 'scripts', 'i18n-shared-manifest.json');
 
@@ -232,7 +239,8 @@ function generate() {
     }
 
     fs.mkdirSync(SHARED_DIR, { recursive: true });
-    fs.writeFileSync(SHELL_PATH, shellTranslations(backend));
+    fs.mkdirSync(SHELL_LANGS_DIR, { recursive: true });
+    for (const [filePath, content] of shellTranslations(backend)) fs.writeFileSync(filePath, content);
     for (const lang of LANGS) {
         const content = renderSharedTree(manifest.mappings, lang, backend[lang]);
         fs.writeFileSync(path.join(SHARED_DIR, `${lang}.ts`), content);
@@ -261,9 +269,11 @@ function check() {
     }
 
     let failed = false;
-    if (!fs.existsSync(SHELL_PATH) || fs.readFileSync(SHELL_PATH, 'utf8').replace(/\r\n?/g, '\n') !== shellTranslations(backend)) {
-        console.error('[i18n-sync --check] 外壳词条与来源不一致，请运行 i18n-sync。');
-        failed = true;
+    for (const [filePath, expected] of shellTranslations(backend)) {
+        if (!fs.existsSync(filePath) || fs.readFileSync(filePath, 'utf8').replace(/\r\n?/g, '\n') !== expected) {
+            console.error(`[i18n-sync --check] 外壳词条与来源不一致: ${filePath}，请运行 i18n-sync。`);
+            failed = true;
+        }
     }
 
     // 1) 生成物与重新生成结果逐字节一致（防手改 / 防漏跑脚本）

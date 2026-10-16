@@ -1,6 +1,5 @@
 import path from 'node:path';
 import { readFile, stat } from 'node:fs/promises';
-import Database from 'better-sqlite3';
 import { parse, type ParseError } from 'jsonc-parser';
 import type { PlatformApplication } from '../../server/src/application';
 import { SettingsTransfer } from '../../server/src/settings/transfer';
@@ -26,6 +25,7 @@ export async function migrateLegacySettings(application: PlatformApplication, ap
     const databasePath = path.join(user, 'globalStorage', 'state.vscdb');
     try {
       await stat(databasePath);
+      const { default: Database } = await import('better-sqlite3');
       const database = new Database(databasePath, { readonly: true, fileMustExist: true, timeout: 1000 });
       try {
         const row = database.prepare('SELECT value FROM ItemTable WHERE lower(key)=?').get('komeiji-shiki.graycode') as { value: string } | undefined;

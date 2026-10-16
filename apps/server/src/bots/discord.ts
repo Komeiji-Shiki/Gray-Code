@@ -1,12 +1,16 @@
 import type { PlatformApplication } from '../application';
 import { BoundBotService } from './service';
-import { DiscordJsGateway, type DiscordGateway } from './discordGateway';
+import type { DiscordGateway } from './discordGateway';
 import type { BotInteraction } from './gateway';
 import { DiscordControls } from './discordControls';
 export type { BotStatus as DiscordStatus } from './service';
 export class DiscordBotService extends BoundBotService {
   private readonly controls: DiscordControls;
-  constructor(app: PlatformApplication, factory: () => DiscordGateway = () => new DiscordJsGateway()) {
+  constructor(app: PlatformApplication, factory: () => DiscordGateway | Promise<DiscordGateway> = async () => {
+    // 未启用 Discord 时不加载 SDK；连接生命周期仍由共享 Bot 服务管理。
+    const { DiscordJsGateway } = await import('./discordGateway');
+    return new DiscordJsGateway();
+  }) {
     super(app, 'discord', factory);
     this.controls = new DiscordControls(app, this.sessions, input => this.context(input));
   }

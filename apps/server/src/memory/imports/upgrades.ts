@@ -30,5 +30,17 @@ export async function upgradeLifeBookGraphAssociations(storage: PlatformStorage,
 }
 
 export async function upgradeImportedMemoryGraphs(storage: PlatformStorage) {
-  for (const id of await storage.listRecords(MEMORY_IMPORT_NAMESPACE)) await upgradeLifeBookGraphAssociations(storage, id);
+  let afterId: string | undefined;
+  for (;;) {
+    const page = await storage.readRecordPage(MEMORY_IMPORT_NAMESPACE, undefined, {
+      afterId, limit: 200, projection: { fields: ['format', 'version', 'graph', 'graphAssociationsVersion'] },
+    });
+    for (const entry of page) {
+      const header = entry.value as MemoryImportDataset;
+      if (header.format === 'lifebook' && header.version === 1 && header.graph && header.graphAssociationsVersion !== 1)
+        await upgradeLifeBookGraphAssociations(storage, entry.id);
+    }
+    if (page.length < 200) break;
+    afterId = page.at(-1)!.id;
+  }
 }

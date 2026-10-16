@@ -6,6 +6,7 @@ import type { ComputerAction, ComputerObservation, ComputerObserveInput, Compute
 import type { BrowserLayout, BrowserProfile, BrowserState, BrowserTab } from './browser';
 import type { VisualActionResult } from './visual';
 import type { UiRequestEnvelope, UiRequestName, UiRequestResult } from './uiRequests';
+import type { UiStartupSnapshot } from './uiStartup';
 import type { ScreenSenseRpcMethods } from './screenSense';
 import type { PetRpcMethods } from './pets';
 import type { CompanionRpcMethods } from './companion';
@@ -26,6 +27,7 @@ export type BrowserControlAction = 'navigate' | 'back' | 'forward' | 'reload' | 
 /** 每个领域只在这里声明参数和返回值，桌面与 Web 共用同一调用签名。 */
 export interface RpcMethods extends ScreenSenseRpcMethods, PetRpcMethods, CompanionRpcMethods, PetInteractionRpcMethods {
   'ui.request': Method<UiRequestEnvelope, UiRequestResult<UiRequestName>>;
+  'ui.startup': Method<Empty, UiStartupSnapshot>;
   'diagnostics.get': Method<Empty, RuntimeDiagnostics>;
   'settings.get': Method<Empty, SettingsSnapshot>;
   'settings.save': Method<SettingsDraft, SettingsSnapshot>;
@@ -121,6 +123,7 @@ const checks: { [M in RpcMethod]: { [K in keyof RpcParams<M>]-?: Check } } = {
   'pets.inbox': { conversationId: optional(text) },
   // 旧 UI 操作的数据形态继续兼容，稳定接口的参数与结果由 UiRequests 关联。
   'ui.request': { type: text, data: optional(unknownValue) },
+  'ui.startup': {},
   'diagnostics.get': {},
   'settings.get': {}, 'settings.save': { settings: object, expectedRevision: number, credentials: optional(object) },
   'files.list': { workspaceId: text, path: optional(text) }, 'files.inspect': file, 'files.downloadInfo': file, 'files.download': file, 'files.reveal': file, 'files.openOffice': file,

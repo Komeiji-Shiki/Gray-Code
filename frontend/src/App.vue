@@ -467,13 +467,9 @@ onMounted(async () => {
     }
   })
 
-  // 语言与聊天初始化并行启动，但保持 getSettings 先入队：
-  // - loadLanguageSettings() 先调用，延续既有设置加载顺序；
-  // - initialize() 随即执行其首个 await 前的同步准备段，立即建立空白标签页；
-  // - 因此 BackendHost 尚未就绪、任一请求仍在途时，newChat 也有可操作的本地状态，
-  //   无需也不得挂起到完整初始化结束。
+  // 先建立空白标签页与订阅；独立端优先恢复上次会话，完整列表随后加载。
   const languageSettingsPromise = loadLanguageSettings()
-  const chatInitializationPromise = chatStore.initialize().then(
+  const chatInitializationPromise = chatStore.initialize({ deferConversationList: isDesktopHost }).then(
     () => ({ ok: true as const }),
     error => ({ ok: false as const, error })
   )
@@ -508,6 +504,7 @@ onMounted(async () => {
   } finally {
     stopDesktopNavigationWatcher?.()
     if (!disposed) mainViewInitialized.value = true
+    if (isDesktopHost && !disposed) void chatStore.loadConversations()
   }
 })
 

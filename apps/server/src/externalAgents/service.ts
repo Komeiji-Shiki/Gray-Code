@@ -43,13 +43,19 @@ export class ExternalAgents {
     this.app.tools.replaceNamespace('coding_agent', enabled ? [externalAgentTool(this)] : []);
   }
   async initialize() {
-    for (const id of await this.app.storage.listRecords(sessionsNamespace)) {
-      const record = await this.app.storage.getRecord(sessionsNamespace, id) as SessionRecord;
-      if (record.status === 'running') {
-        record.status = 'interrupted'; record.error = '应用重新启动，未自动重放上次请求。';
-        await this.save(record);
+    let afterId: string | undefined;
+    for (;;) {
+      const page = await this.app.storage.readRecordPage(sessionsNamespace, undefined, { afterId, limit: 200 });
+      for (const entry of page) {
+        const record = entry.value as SessionRecord;
+        if (record.status === 'running') {
+          record.status = 'interrupted'; record.error = '应用重新启动，未自动重放上次请求。';
+          await this.save(record);
+        }
+        this.sessions.set(entry.id, { record });
       }
-      this.sessions.set(id, { record });
+      if (page.length < 200) break;
+      afterId = page.at(-1)!.id;
     }
     this.refreshTools();
   }

@@ -1,4 +1,4 @@
-import { shellText as t } from './i18n';
+import { preloadShellLanguage, shellText as t } from './i18n';
 import { createApp, defineComponent, h, ref } from 'vue';
 import type { AppearanceSettings } from '../../../packages/contracts/src/settings';
 import { applyAppearanceVariables } from '../../../shared/appearanceTokens';
@@ -22,7 +22,7 @@ subscribe((event) => {
   if (event.type === 'ui.message' && (event as { message?: { command?: string; data?: AppearanceSettings } }).message?.command === 'platform.appearance')
     applyAppearance((event as { message?: { data?: AppearanceSettings } }).message?.data);
 });
-createApp(
+const mountBrowser = () => createApp(
   defineComponent({
     setup() {
       const address = ref('about:blank');
@@ -71,3 +71,4 @@ createApp(
     },
   }),
 ).mount('#browser-toolbar');
+void preloadShellLanguage().then(mountBrowser);

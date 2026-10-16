@@ -6,20 +6,20 @@ import { EditorBatchHistory, type EditBatchHandle } from '../../../../shared/edi
 import { call, subscribe } from '../api';
 import { guard, report, state } from '../state';
 import { shellText as t } from '../i18n';
-import MarkdownIt from 'markdown-it';
-import BrowserPane from './BrowserPane.vue';
-import FileTree from './FileTree.vue';
+const BrowserPane = defineAsyncComponent(() => import('./BrowserPane.vue'));
+const FileTree = defineAsyncComponent(() => import('./FileTree.vue'));
 import { useWorkbenchDocuments, workbenchDocumentKey } from '../useWorkbenchDocuments';
 import type { WorkbenchDocumentModels } from '../workbenchModels';
 import { useNavigationIntent } from '../navigationIntent';
 import { useFrameValue } from '../useFrameValue';
-import GitPanel from './GitPanel.vue';
-import ProblemsPanel from './ProblemsPanel.vue';
-import SearchPanel from './SearchPanel.vue';
-import OutlinePanel from './OutlinePanel.vue';
-import DebugPanel from './DebugPanel.vue';
-import ComputerPane from './ComputerPane.vue';
-import NodePane from './NodePane.vue';
+const GitPanel = defineAsyncComponent(() => import('./GitPanel.vue'));
+const ProblemsPanel = defineAsyncComponent(() => import('./ProblemsPanel.vue'));
+const SearchPanel = defineAsyncComponent(() => import('./SearchPanel.vue'));
+const OutlinePanel = defineAsyncComponent(() => import('./OutlinePanel.vue'));
+const DebugPanel = defineAsyncComponent(() => import('./DebugPanel.vue'));
+const ComputerPane = defineAsyncComponent(() => import('./ComputerPane.vue'));
+const NodePane = defineAsyncComponent(() => import('./NodePane.vue'));
+const MarkdownPreview = defineAsyncComponent(() => import('./WorkbenchMarkdownPreview.vue'));
 import { computerState } from '../computer';
 import DebugControls from './DebugControls.vue';
 import { connectDebugging, toggleBreakpoint } from '../debugging';
@@ -28,6 +28,7 @@ import WorkbenchTabs from './WorkbenchTabs.vue';
 import NavigationIcon from './navigation/NavigationIcon.vue';
 import { workbenchPanels, type WorkbenchTab } from './workbenchPanels';
 const props = withDefaults(defineProps<{ compact?: boolean }>(), { compact: false });
+const emit = defineEmits<{ ready: [handleRequest: (event: Record<string, any>) => void] }>();
 const navigate = useNavigationIntent();
 connectDebugging();
 const TerminalPanel = defineAsyncComponent(() => import('./TerminalPanel.vue'));
@@ -79,6 +80,7 @@ watch(
   { flush: 'sync' },
 );
 const openedPanels = ref<string[]>([]);
+const treeMounted = ref(false);
 const treeVisible = ref(localStorage.getItem('graycode.fileTreeVisible') !== 'false');
 const mobileTreeVisible = ref(true);
 const showingTree = computed({
@@ -93,8 +95,6 @@ const treeWidth = ref(Number.isFinite(savedTreeWidth) && savedTreeWidth > 0 ? Ma
 const treeResizing = ref(false);
 const panel = ref<HTMLElement>();
 const markdownPreview = ref(true);
-const markdown = new MarkdownIt({ html: false, linkify: true });
-const renderedMarkdown = computed(() => markdown.render(active.value?.text ?? ''));
 const treeResizeFrame = useFrameValue(clientX => {
   if (!panel.value) return;
   const rect = panel.value.getBoundingClientRect();
@@ -130,6 +130,7 @@ function resetTreeWidth() {
 }
 watch(treeVisible, (value) => localStorage.setItem('graycode.fileTreeVisible', String(value)));
 watch(pane, (value) => {
+  if (value === 'editor') treeMounted.value = true;
   if (!['editor', 'empty'].includes(value) && !openedPanels.value.includes(value)) openedPanels.value.push(value);
 });
 function activatePanel(id: string) {
@@ -140,17 +141,6 @@ function activatePanel(id: string) {
   state.chatFocused = false;
   if (id === 'editor') showingTree.value = true;
 }
-watch(
-  () => state.workbenchPanelRequest,
-  (request) => {
-    if (request) activatePanel(request.id);
-  },
-  { flush: 'sync' },
-);
-watch(
-  () => computerState.openRequest,
-  () => activatePanel('computer'),
-);
 let browserCreated = false;
 let browserStarting = false;
 watch(pane, (value) => {
@@ -355,7 +345,11 @@ async function close(doc: DocumentState, discard = false) {
   }
   await closeDocument(doc, discard);
 }
-const unsubscribe = subscribe((event) => {
+function handleRequest(event: Record<string, any>) {
+  if (event.type === 'workbench.panel.open') {
+    activatePanel(event.id);
+    return;
+  }
   if (event.type === 'workspace.terminal.open') {
     terminalSession.value = event.id;
     activatePanel('terminal');
@@ -382,7 +376,23 @@ const unsubscribe = subscribe((event) => {
     activatePanel('diff');
     return;
   }
-});
+}
+watch(
+  () => state.workbenchPanelRequest,
+  request => {
+    if (request) activatePanel(request.id);
+  },
+  { flush: 'sync' },
+);
+watch(
+  () => computerState.openRequest,
+  request => {
+    if (request) activatePanel('computer');
+  },
+);
+const unsubscribe = subscribe(handleRequest);
+// 先接管后续事件，再同步接收外壳在加载模块期间保存的导航请求。
+emit('ready', handleRequest);
 onUnmounted(() => {
   disposed = true;
   editorRegistry.value?.dispose();
@@ -418,7 +428,12 @@ onUnmounted(() => {
       :aria-label="t('uiWorkbenchCollapseFileList')"
       @click="showingTree = false"
     ></button>
-    <FileTree v-show="pane === 'editor' && showingTree" @open="(path, workspaceId) => guard(() => open(path, workspaceId))" @hide="showingTree = false" />
+    <FileTree
+      v-if="treeMounted"
+      v-show="pane === 'editor' && showingTree"
+      @open="(path, workspaceId) => guard(() => open(path, workspaceId))"
+      @hide="showingTree = false"
+    />
     <div
       v-if="!compact && pane === 'editor' && showingTree"
       class="tree-splitter"
@@ -509,12 +524,11 @@ onUnmounted(() => {
             @problems="activatePanel('problems')"
             @outline="activatePanel('outline')"
           />
-          <article
+          <MarkdownPreview
             v-if="active && markdownPreview && /\.md$/i.test(active.path)"
-            class="markdown-preview"
+            :text="active.text"
             @click="markdownLink"
-            v-html="renderedMarkdown"
-          ></article>
+          />
           <div v-if="!documents.length" class="editor-empty file-select-empty">
             <NavigationIcon name="file" />
             <h2>{{ t('uiWorkbenchSelectFile') }}</h2>
@@ -522,7 +536,7 @@ onUnmounted(() => {
           </div>
         </div>
       </div>
-      <BrowserPane :active="pane === 'browser'" v-show="pane === 'browser'" />
+      <BrowserPane v-if="openedPanels.includes('browser')" :active="pane === 'browser'" v-show="pane === 'browser'" />
       <ComputerPane
         v-if="openedPanels.includes('computer')"
         v-show="pane === 'computer'"

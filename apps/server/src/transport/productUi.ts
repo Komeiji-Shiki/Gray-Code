@@ -37,7 +37,7 @@ import { removePermissionAccount, resolveBotGuestActor } from '../bots/permissio
 import { activateConversationWorkspace } from '../conversations/workspace';
 import { validateDecisionProvider } from '../model/decisionReviewer';
 import type { WorkspaceDiff } from '../workspace/diffs';
-import type { UiRequestHandlers } from '@graycode/contracts';
+import type { UiRequestHandlers, UiStartupSnapshot } from '@graycode/contracts';
 
 interface UiSession { mode?: 'chat' | 'code' | 'character'; preferences: ProductSettingsDraft; editing: boolean; workspaceId?: string }
 export class ProductUi {
@@ -96,6 +96,11 @@ export class ProductUi {
   }
   async call(client: ClientSession, type: string, data: Record<string, any> = {}): Promise<unknown> {
     this.clientConnected(client.clientId);
+    if (type === 'conversation.listConversations') {
+      this.app.requireOwner(client.actorId);
+      // 全量 ID 扫描只读已保存会话，不能排在首次发送和会话切换前占用交互队列。
+      return conversationMetadataUiHandlers(this.app, this.conversations)['conversation.listConversations']({});
+    }
     // 回调交换不能挡住状态查询和取消；开始登录仍串行，避免同客户端遗留多个监听器。
     if (['chatgpt.status', 'chatgpt.complete', 'chatgpt.cancel', 'chatgpt.disconnect'].includes(type)) return this.invoke(client, type, data);
     // 总结由会话级控制器和提交版本约束，模型等待期间不能占住整个界面的交互队列。
@@ -175,9 +180,95 @@ export class ProductUi {
   private invoke(client: ClientSession, type: string, data: Record<string, any>, signal?: AbortSignal): Promise<unknown> {
     return withDependencyRuntime(this.app.dependencies, () => this.invokeScoped(client, type, data, signal));
   }
+  private async uiState(client: ClientSession): Promise<unknown> {
+    const id = JSON.stringify([client.actorId, client.uiStateKey ?? client.clientId]);
+    const state = await this.app.storage.getRecord('ui-state', id);
+    if (state !== null && state !== undefined) return state;
+    const legacy = await this.app.storage.getRecord('ui-state', client.actorId) as Record<string, unknown> | null;
+    if (!legacy) return {};
+    // 旧记录没有标签页归属，只有固定桌面身份继承上次会话，其它偏好仍可读取。
+    const { desktopConversationId, ...preferences } = legacy;
+    return client.uiStateKey === 'desktop' ? legacy : preferences;
+  }
   private async invokeScoped(client: ClientSession, type: string, data: Record<string, any>, signal?: AbortSignal): Promise<unknown> {
     signal?.throwIfAborted();
     this.app.requireOwner(client.actorId);
+    const notify = (message: unknown) => this.app.publish({ type: 'ui.message', clientId: client.clientId, message });
+    // 启动同步只需要导航上下文和通知，不应提前复制设置、渠道与 MCP 编辑草稿。
+    switch (type) {
+      case 'ui.state.get': return this.uiState(client);
+      case 'ui.state.set':
+        await this.app.storage.putRecord({ namespace: 'ui-state', id: JSON.stringify([client.actorId, client.uiStateKey ?? client.clientId]), value: data.value }); return;
+      case 'ui.command': notify({ type: 'command', command: data.command, data: data.data }); return;
+      case 'ui.view.set': this.app.publish({ type: 'ui.view.changed', clientId: client.clientId, view: data.view }); return;
+      case 'ui.conversation.views': {
+        const views = (Array.isArray(data.views) ? data.views : []).slice(0, 100).map((item: any) => ({
+          id: String(item.id), conversationId: typeof item.conversationId === 'string' ? item.conversationId : null,
+          title: String(item.title), isStreaming: item.isStreaming === true, hasDraft: item.hasDraft === true, active: item.active === true,
+        }));
+        this.app.publish({ type: 'ui.conversation.views', clientId: client.clientId, views }); return { success: true };
+      }
+      case 'webviewReady': this.app.publish({ type: 'ui.ready', clientId: client.clientId }); return { success: true };
+    }
+    if (type === 'ui.context.set' || type === 'ui.conversation.focus') {
+      const existing = await this.clients.get(client.clientId);
+      const context: Pick<UiSession, 'mode' | 'workspaceId'> = existing ?? this.clientContexts.get(client.clientId) ?? {};
+      if (!existing) this.clientContexts.set(client.clientId, context);
+      if (context.workspaceId && !this.app.settings.find('workspaces', context.workspaceId)) {
+        context.workspaceId = undefined; notify({ type: 'workspaceUri', data: null });
+      }
+      if (type === 'ui.context.set') {
+        const nextWorkspace = data.workspaceId ? this.app.workspace(client.actorId, data.workspaceId, ['workspace_read']) : undefined;
+        context.workspaceId = nextWorkspace?.id;
+        const mode = resolvePlatformMode(data.mode);
+        if (mode) context.mode = mode;
+        notify({ type: 'workspaceUri', data: nextWorkspace ? pathToFileURL(nextWorkspace.directory).toString() : null }); return;
+      }
+      let conversation = data.conversationId ? await this.app.conversation(client.actorId, data.conversationId) : null;
+      if (conversation) {
+        try { conversation = await activateConversationWorkspace(this.app, client.actorId, conversation); }
+        catch (error) { this.app.publish({ type: 'notification', clientId: client.clientId, message: `项目工作区未打开：${error instanceof Error ? error.message : String(error)}` }); }
+      }
+      const focusedWorkspace = this.app.settings.find('workspaces',
+        typeof conversation?.workspaceId === 'string' ? conversation.workspaceId : undefined);
+      if (conversation && !data.resynchronized) context.workspaceId = focusedWorkspace?.id;
+      const focusedMode = resolvePlatformMode((conversation?.custom as Record<string, unknown> | undefined)?.platformMode);
+      if (focusedMode) context.mode = focusedMode;
+      this.app.publish({ type: 'ui.conversation.focused', clientId: client.clientId, conversationId: conversation?.id ?? null,
+        workspaceId: focusedWorkspace?.id ?? null, mode: (conversation?.custom as Record<string, unknown> | undefined)?.platformMode,
+        resynchronized: data.resynchronized === true,
+        defaultPromptModeId: this.app.settings.read('modeProfiles').modeProfiles?.[context.mode ?? 'chat']?.promptModeId
+          ?? this.app.product.runtimeSettings().getCurrentPromptModeId() });
+      return { mode: (conversation?.custom as Record<string, unknown> | undefined)?.platformMode };
+    }
+    if (type === 'platform.settings.get' && !this.clients.has(client.clientId)) return this.app.settings.snapshot().settings;
+    if (type === 'ui.startup') {
+      const state = await this.uiState(client);
+      // 首屏只读取已有设置；完整编辑草稿在用户开始交互后按原入口建立。
+      // 重载 iframe 时仍尊重同一客户端已有的草稿与导航上下文。
+      const ui = await this.clients.get(client.clientId);
+      const draft = ui && (ui.editing || ui.preferences.dirty || ui.preferences.revision === this.app.settings.revision)
+        ? ui.preferences : undefined;
+      const settings = draft?.settings ?? this.app.product.runtimeSettings();
+      const context = ui ?? this.clientContexts.get(client.clientId);
+      const appSettings = draft?.app ?? this.app.settings.read('appearance', 'modeProfiles');
+      const workspace = context?.workspaceId && this.app.settings.find('workspaces', context.workspaceId)
+        ? this.app.workspace(client.actorId, context.workspaceId, ['workspace_read']) : undefined;
+      return {
+        state,
+        appearance: appSettings.appearance,
+        settings: { success: true, settings: settings.getSettings() },
+        promptModes: { modes: settings.getAllPromptModes(),
+          currentModeId: appSettings.modeProfiles?.[context?.mode ?? 'chat']?.promptModeId ?? settings.getCurrentPromptModeId(),
+          dynamicContextStrategy: settings.resolveDynamicContextStrategy() },
+        activeChannel: { channelId: settings.getActiveChannelId() },
+        checkpoint: { config: settings.getCheckpointConfig() },
+        workspaceUri: workspace ? pathToFileURL(workspace.directory).toString() : null,
+        // 未保存草稿继续由原配置入口读取，启动快照只携带已保存渠道的凭据占位符。
+        channels: !draft || !draft.dirty && draft.revision === this.app.settings.revision ? this.app.product.uiChannels() : undefined,
+      } satisfies UiStartupSnapshot<ReturnType<typeof settings.getSettings>, ReturnType<typeof settings.getAllPromptModes>[number],
+        ReturnType<typeof settings.getCheckpointConfig>>;
+    }
     if (['plan.getSourceStatus', 'plan.confirmExecution', 'design.confirmPlanGeneration', 'review.confirmPlanGeneration'].includes(type)) return new ArtifactApproval(this.app).confirm(client.actorId, type, data);
     if (type.startsWith('characters.conversation.')) return characterConversation(this.app, client, type, data);
     const ui = await this.client(client.clientId);
@@ -199,7 +290,6 @@ export class ProductUi {
     if (!ui.editing && !ui.preferences.dirty && ui.preferences.revision !== this.app.settings.revision)
       ui.preferences = await this.app.product.draft();
     signal?.throwIfAborted();
-    const notify = (message: unknown) => this.app.publish({ type: 'ui.message', clientId: client.clientId, message });
     // 工作区删除后清掉会话中的旧选择，控制请求和下一次切换不能依赖已不存在的对象。
     if (ui.workspaceId && !this.app.settings.find('workspaces', ui.workspaceId)) {
       ui.workspaceId = undefined; notify({ type: 'workspaceUri', data: null });
@@ -402,40 +492,7 @@ export class ProductUi {
         this.app.publish({ type: 'workspace.diff.open', clientId: client.clientId, conversationId: value.conversationId,
           workspaceId: value.workspaceId, path: value.path, toolCallId: value.toolCallId, id: value.id }); return { success: true };
       }
-      case 'ui.state.get': {
-        const id = JSON.stringify([client.actorId, client.uiStateKey ?? client.clientId]);
-        const state = await this.app.storage.getRecord('ui-state', id);
-        if (state !== null && state !== undefined) return state;
-        const legacy = await this.app.storage.getRecord('ui-state', client.actorId) as Record<string, unknown> | null;
-        if (!legacy) return {};
-        // 旧记录没有标签页归属，只让固定桌面身份继承旧会话位置；其它偏好仍可读取。
-        const { desktopConversationId, ...preferences } = legacy;
-        return client.uiStateKey === 'desktop' ? legacy : preferences;
-      }
-      case 'ui.state.set':
-        await this.app.storage.putRecord({ namespace: 'ui-state', id: JSON.stringify([client.actorId, client.uiStateKey ?? client.clientId]), value: data.value }); return;
-      case 'ui.command': notify({ type: 'command', command: data.command, data: data.data }); return;
-      case 'ui.view.set': this.app.publish({ type: 'ui.view.changed', clientId: client.clientId, view: data.view }); return;
-      case 'ui.conversation.focus': {
-        let conversation = data.conversationId ? await this.app.conversation(client.actorId, data.conversationId) : null;
-        if (conversation) {
-          try { conversation = await activateConversationWorkspace(this.app, client.actorId, conversation); }
-          catch (error) { this.app.publish({ type: 'notification', clientId: client.clientId, message: `项目工作区未打开：${error instanceof Error ? error.message : String(error)}` }); }
-        }
-        const focusedWorkspace = this.app.settings.find('workspaces', typeof conversation?.workspaceId === 'string' ? conversation.workspaceId : undefined);
-        if (conversation && !data.resynchronized) ui.workspaceId = focusedWorkspace?.id;
-        const focusedMode = resolvePlatformMode((conversation?.custom as Record<string, unknown> | undefined)?.platformMode);
-        if (focusedMode) ui.mode = focusedMode;
-        this.app.publish({ type: 'ui.conversation.focused', clientId: client.clientId, conversationId: conversation?.id ?? null, workspaceId: focusedWorkspace?.id ?? null, mode: (conversation?.custom as Record<string, unknown> | undefined)?.platformMode, resynchronized: data.resynchronized === true,
-          defaultPromptModeId: this.app.settings.read('modeProfiles').modeProfiles?.[ui.mode ?? 'chat']?.promptModeId ?? this.app.product.runtimeSettings().getCurrentPromptModeId() });
-        return { mode: (conversation?.custom as Record<string, unknown> | undefined)?.platformMode };
-      }
       case 'chat.resumeConversationStream': return this.chat.resumeConversationStream(client, data.conversationId);
-      case 'ui.conversation.views': {
-        const views = (Array.isArray(data.views) ? data.views : []).slice(0, 100).map((item: any) => ({ id: String(item.id), conversationId: typeof item.conversationId === 'string' ? item.conversationId : null,
-          title: String(item.title), isStreaming: item.isStreaming === true, hasDraft: item.hasDraft === true, active: item.active === true }));
-        this.app.publish({ type: 'ui.conversation.views', clientId: client.clientId, views }); return { success: true };
-      }
       case 'ui.mode.select': {
         const mode = resolvePlatformMode(data.mode);
         if (!mode) throw new Error('未知对话模式。');
@@ -499,13 +556,6 @@ export class ProductUi {
         if (!ui.editing) await this.app.product.save(ui.preferences);
         notify({ type: 'command', command: 'platform.settingsDraftChanged', data: { dirty: ui.preferences.dirty } });
         return { success: true };
-      }
-      case 'ui.context.set': {
-        const nextWorkspace = data.workspaceId ? this.app.workspace(client.actorId, data.workspaceId, ['workspace_read']) : undefined;
-        ui.workspaceId = nextWorkspace?.id;
-        const mode = resolvePlatformMode(data.mode);
-        if (mode) ui.mode = mode;
-        notify({ type: 'workspaceUri', data: nextWorkspace ? pathToFileURL(nextWorkspace.directory).toString() : null }); return;
       }
       case 'ui.settings.begin':
         if (!ui.editing) {
@@ -576,7 +626,6 @@ export class ProductUi {
         notify({ type: 'command', command: 'platform.settingsDraftChanged', data: { dirty: ui.preferences.dirty } });
         return { success: true };
       }
-      case 'webviewReady': this.app.publish({ type: 'ui.ready', clientId: client.clientId }); return { success: true };
       case 'checkAnnouncement': return { shouldShow: false, version: packageMetadata.version, changelog: '' };
       case 'getUpdateStatus':
       case 'checkUpdateNow': return { status: { state: 'unavailable', message: '请在桌面应用中检查独立版更新。' }, currentVersion: packageMetadata.version, runtime: 'server' };

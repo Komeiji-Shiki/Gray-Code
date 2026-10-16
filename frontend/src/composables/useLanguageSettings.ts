@@ -65,7 +65,8 @@ export function useLanguageSettings(settingsStore: SettingsStore) {
       if (language && SUPPORTED_LANGUAGES.some(l => l.value === language)) {
         const lang = language as SupportedLanguage
         settingsStore.setLanguage(lang)
-        setLanguage(lang)
+        await setLanguage(lang)
+        if (sequence !== loadSequence) return
       }
 
       // 清空/重置外观同样应立即恢复默认文案。

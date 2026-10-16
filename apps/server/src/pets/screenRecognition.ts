@@ -1,4 +1,3 @@
-import sharp from 'sharp';
 import type { ComputerCapture, PlatformMessage, ScreenSenseConfiguration, ScreenSenseUsage } from '@graycode/contracts';
 import type { PlatformApplication } from '../application';
 import { extractMessageTokens } from '../../../../backend/modules/conversation/usageStats';
@@ -6,6 +5,7 @@ import type { Content } from '../../../../backend/modules/conversation/types';
 
 /** 缩小后的明度保留内容轮廓和亮度变化，避免 JPEG 编码差异触发重复识图。 */
 export async function screenFingerprint(capture: ComputerCapture): Promise<Uint8Array> {
+  const { default: sharp } = await import('sharp');
   return sharp(Buffer.from(capture.data, 'base64')).resize(32, 32, { fit: 'fill' }).removeAlpha().greyscale().raw().toBuffer();
 }
 

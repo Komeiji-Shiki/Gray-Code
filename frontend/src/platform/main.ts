@@ -4,7 +4,10 @@ import completeSound from '../../../resources/sound/taskComplete.mp3?url';
 import taskErrorSound from '../../../resources/sound/taskError.mp3?url';
 import type { HostTransport } from '../utils/hostTransport';
 import { watch } from 'vue';
-import { actualLanguage } from '../i18n';
+import { getLanguage, setLanguage, SUPPORTED_LANGUAGES } from '../i18n';
+import type { SupportedLanguage } from '../i18n/types';
+import type { UiStartupSnapshot } from '../../../packages/contracts/src/uiStartup';
+import type { GlobalSettings, PromptMode, CheckpointConfig } from '../../../backend/modules/settings/types';
 import { WORKSPACE_PANEL_MESSAGE } from '@shared/workspacePanelNavigation';
 import { CHAT_INITIALIZATION_MESSAGE } from '@shared/chatInitialization';
 import { SHELL_SHORTCUTS_MESSAGE, SHELL_SHORTCUT_MESSAGE, matchShellShortcut, type ShellShortcutBinding } from '@shared/shellShortcutBridge';
@@ -15,6 +18,7 @@ import { applyDesktopAppearance } from './appearance';
 import { invalidateWorkspaceAssets } from '../components/common/markdown/markdownItCore';
 import { trackPreferenceRequest, desktopSettingsDraft, saveDesktopSettings } from './settingsDraft';
 import { characterPresentation } from './characterPresentation';
+import { setChannelConfigsCache } from '../services/channelConfigCache';
 
 const bridge = (window.parent as unknown as { graycode: DesktopBridge }).graycode;
 if (!bridge) throw new Error('The desktop host is unavailable.');
@@ -28,12 +32,18 @@ if (isMonitorView) {
   (window as unknown as { __GRAYCODE_INITIAL_RUN_ID?: string }).__GRAYCODE_INITIAL_RUN_ID = viewQuery.get('runId') ?? undefined;
 }
 const subscribers = new Set<(message: unknown) => void>();
+// 启动快照只供每项首次读取使用，后续刷新继续取得服务端的最新设置。
+const startupResponses = new Map<string, unknown>();
+let startupSnapshotPending = true;
+let startupSnapshotVersion = 0;
 const lifetime = new AbortController();
 let shellShortcutBindings: ShellShortcutBinding[] = [];
 function receiveShellMessage(event: MessageEvent) {
   if (event.source !== window.parent || event.origin !== window.location.origin) return;
   if (event.data?.type === SHELL_SHORTCUTS_MESSAGE && Array.isArray(event.data.bindings)) shellShortcutBindings = event.data.bindings;
   if (event.data?.type === 'command' && event.data.command === 'platform.modeSelected') {
+    if (startupSnapshotPending) startupSnapshotVersion++;
+    startupResponses.delete('getPromptModes'); startupResponses.delete('getWorkspaceUri');
     const mode = event.data.data?.mode;
     if (mode === 'chat' || mode === 'code' || mode === 'character') characterPresentation.mode = mode;
   }
@@ -53,7 +63,9 @@ if (!isMonitorView) {
 let unsubscribeDesktop: (() => void) | undefined;
 let activityTimer: number | undefined;
 let assetTimer: ReturnType<typeof setTimeout> | undefined;
-const stopLanguageWatch = watch(actualLanguage, language => window.parent.postMessage({ type: 'graycode.language', language }, window.location.origin === 'null' ? '*' : window.location.origin), { immediate: true });
+const notifyLanguage = () => window.parent.postMessage({ type: 'graycode.language', language: getLanguage() },
+  window.location.origin === 'null' ? '*' : window.location.origin);
+const stopLanguageWatch = watch(() => getLanguage(), notifyLanguage);
 function disposePlatform() {
   lifetime.abort(); unsubscribeDesktop?.(); stopLanguageWatch(); subscribers.clear();
   window.clearInterval(activityTimer); clearTimeout(assetTimer);
@@ -82,8 +94,12 @@ const host: HostTransport = {
     const data = isMonitorView && message.type.startsWith('subagents.')
       ? { conversationId: viewQuery.get('conversationId') ?? undefined, runId: viewQuery.get('runId') ?? undefined, ...message.data as Record<string, unknown> }
       : message.data;
+    if (message.type === 'ui.settings.begin') startupResponses.clear();
     const request = () => desktop.call('ui.request', { type: message.type, data });
-    void trackPreferenceRequest(message.type, message.data, request(), request).then(
+    const responseKey = message.type === 'config.getConfig' ? `${message.type}:${(data as { configId?: string }).configId}` : message.type;
+    const initialResponse = startupResponses.has(responseKey) ? Promise.resolve(startupResponses.get(responseKey)) : request();
+    startupResponses.delete(responseKey);
+    void trackPreferenceRequest(message.type, message.data, initialResponse, request).then(
       data => dispatch({ type: 'response', success: true, requestId: message.requestId, data }),
       error => dispatch({ type: 'error', success: false, requestId: message.requestId, error: { code: error.code ?? 'HOST_ERROR', message: error.message } }),
     );
@@ -101,6 +117,14 @@ const changedAssetPaths = new Set<string>();
 function resetWorkspaceAssets() { if (assetTimer) clearTimeout(assetTimer); assetTimer = undefined; changedAssetPaths.clear(); invalidateWorkspaceAssets(); }
 function receiveDesktopEvent(event: Record<string, any>) {
   if (lifetime.signal.aborted) return;
+  if (startupSnapshotPending && (['workspace.selected', 'ui.conversation.focused', 'settings.changed', 'transport.resumed'].includes(event.type)
+    || event.type === 'ui.message' && (event.message?.type === 'workspaceUri'
+      || ['platform.modeSelected', 'platform.appearance', 'channels.configChanged', 'mcp.configChanged', 'settings.imported'].includes(event.message?.command))))
+    startupSnapshotVersion++;
+  if (event.type === 'workspace.selected' || event.type === 'ui.conversation.focused'
+    || event.type === 'ui.message' && event.message?.type === 'workspaceUri') startupResponses.delete('getWorkspaceUri');
+  if (event.type === 'ui.conversation.focused') startupResponses.delete('getPromptModes');
+  if (event.type === 'transport.resumed') startupResponses.clear();
   if (event.type === 'desktop.saveAll' && !isMonitorView) {
     void (async () => {
       let error: string | undefined;
@@ -126,8 +150,9 @@ function receiveDesktopEvent(event: Record<string, any>) {
   }
   if (event.type === 'ui.message' && event.message?.command === 'platform.modeSelected') resetWorkspaceAssets();
   if (event.type === 'settings.changed') {
+    startupResponses.clear();
     dispatch({ type: 'settingsChanged' });
-    void desktop.call('ui.request', { type: 'getPromptModes', data: {} })
+    if (!startupSnapshotPending) void desktop.call('ui.request', { type: 'getPromptModes', data: {} })
       .then(result => { defaultPromptModeId = result.currentModeId || 'code'; }).catch(() => {});
   }
   if (event.type === 'ui.conversation.focused' && event.defaultPromptModeId) defaultPromptModeId = event.defaultPromptModeId;
@@ -140,6 +165,11 @@ function receiveDesktopEvent(event: Record<string, any>) {
   if (event.type === 'event' && (event.event?.type?.startsWith('question.') || event.event?.type?.startsWith('approval.') || event.event?.type?.startsWith('run.')))
     dispatch({ type: 'platformQuestionsChanged' });
   if (event.type === 'ui.message') {
+    if (event.message?.command === 'platform.modeSelected') {
+      startupResponses.delete('getPromptModes'); startupResponses.delete('getWorkspaceUri');
+    }
+    if (['channels.configChanged', 'mcp.configChanged', 'settings.imported'].includes(event.message?.command)) startupResponses.clear();
+    if (['channels.configChanged', 'settings.imported'].includes(event.message?.command)) setChannelConfigsCache(null);
     if (event.message?.command === 'platform.modeSelected' && event.message.data?.promptModeId) defaultPromptModeId = event.message.data.promptModeId;
     if (event.message?.command === 'platform.appearance') applyDesktopAppearance(event.message.data);
     if (event.message?.command === 'platform.settingsDraftChanged') desktopSettingsDraft.dirty = event.message.data.dirty;
@@ -148,8 +178,27 @@ function receiveDesktopEvent(event: Record<string, any>) {
 }
 
 async function initializePlatform() {
-  persistedState = await desktop.call('ui.state.get');
+  unsubscribeDesktop = desktop.subscribe(receiveDesktopEvent);
+  let startup: UiStartupSnapshot<Readonly<GlobalSettings>, PromptMode, Readonly<CheckpointConfig>>;
+  let version: number;
+  do {
+    version = startupSnapshotVersion;
+    startup = await callDesktopBridge<typeof startup>(bridge, 'ui.startup');
+    // 在途设置或上下文变更使整份快照失效；顺序重读，不能把旧响应重新写回已失效的缓存。
+  } while (!lifetime.signal.aborted && version !== startupSnapshotVersion);
+  startupSnapshotPending = false;
+  persistedState = startup.state;
   if (lifetime.signal.aborted) return;
+  for (const [type, value] of [
+    ['getSettings', startup.settings], ['getPromptModes', startup.promptModes],
+    ['settings.getActiveChannelId', startup.activeChannel], ['checkpoint.getConfig', startup.checkpoint],
+    ['getWorkspaceUri', startup.workspaceUri],
+  ] as const) startupResponses.set(type, value);
+  if (startup.channels) {
+    setChannelConfigsCache(startup.channels);
+    const activeConfig = startup.channels.find(config => config.id === startup.activeChannel.channelId);
+    if (activeConfig) startupResponses.set(`config.getConfig:${activeConfig.id}`, activeConfig);
+  }
   window.__GRAYCODE_HOST = host;
   window.__GRAYCODE_BUILTIN_SOUND_ASSETS = { warning: { url: warningSound, name: 'warning.mp3' }, error: { url: errorSound, name: 'error.mp3' },
     taskComplete: { url: completeSound, name: 'taskComplete.mp3' }, taskError: { url: taskErrorSound, name: 'taskError.mp3' } };
@@ -164,17 +213,14 @@ async function initializePlatform() {
   recordActivity();
 
   document.documentElement.classList.add('platform-host');
-  const [platformSettings, startupSettings, startupPresets] = await Promise.all([
-    desktop.call('ui.request', { type: 'platform.settings.get', data: {} }),
-    isMonitorView ? Promise.resolve(undefined) : desktop.call('ui.request', { type: 'getSettings', data: {} }),
-    desktop.call('ui.request', { type: 'getPromptModes', data: {} }),
-  ]);
-  if (lifetime.signal.aborted) return;
-  defaultPromptModeId = startupPresets.currentModeId || 'code';
+  defaultPromptModeId = startup.promptModes.currentModeId || 'code';
   // 主界面挂载前读取已保存偏好，查看子代理不重复播放启动动画。
-  window.__GRAYCODE_STARTUP_SPLASH_ENABLED = !isMonitorView && startupSettings?.settings?.ui?.appearance?.splashEnabled !== false;
-  applyDesktopAppearance(platformSettings.appearance);
-  unsubscribeDesktop = desktop.subscribe(receiveDesktopEvent);
+  window.__GRAYCODE_STARTUP_SPLASH_ENABLED = !isMonitorView && startup.settings.settings.ui?.appearance?.splashEnabled !== false;
+  applyDesktopAppearance(startup.appearance);
+  const language = startup.settings.settings.ui?.language;
+  if (SUPPORTED_LANGUAGES.some(item => item.value === language)) await setLanguage(language as SupportedLanguage);
+  if (lifetime.signal.aborted) return;
+  notifyLanguage();
   await import('../main');
 }
 

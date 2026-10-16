@@ -48,18 +48,19 @@ beforeEach(() => {
   Object.assign(state, { workspaceId: 'project', snapshot: { settings: { workspaces: [] } }, chatFocused: false, workbenchPanelRequest: null });
 });
 afterEach(() => { wrappers.splice(0).forEach(wrapper => wrapper.unmount()); mocks.listeners.clear(); });
-function workbench(compact = false) {
+async function workbench(compact = false) {
   const wrapper = shallowMount(Workbench, { props: { compact }, global: { stubs: {
     CodeEditor: { name: 'CodeEditor', props: ['document', 'models', 'selection'], template: '<div />' },
   } } }); wrappers.push(wrapper);
   const tabs = () => wrapper.findComponent(WorkbenchTabs);
   tabs().vm.$emit('add', 'editor');
+  await flushPromises();
   const open = (file: string) => wrapper.findComponent(FileTree).vm.$emit('open', file, 'project');
   return { wrapper, tabs, open };
 }
 
 test('窄屏首次打开后扩大窗口会准备共享编辑器，反复切换布局仍沿用文档模型注册表', async () => {
-  const view = workbench(true);
+  const view = await workbench(true);
   view.open('compact.ts');
   await flushPromises();
   expect(view.wrapper.findComponent({ name: 'CodeEditor' }).exists()).toBe(false);
@@ -82,7 +83,7 @@ test('窄屏首次打开后扩大窗口会准备共享编辑器，反复切换�
 test('迟到的打开响应可以保留标签，但不能抢回较新文件的焦点', async () => {
   const slow = deferred<ReturnType<typeof document>>();
   mocks.call.mockImplementation(async (method, params) => method === 'documents.open' ? params.path === 'slow.ts' ? slow.promise : document(params.path) : undefined);
-  const view = workbench();
+  const view = await workbench();
   view.open('slow.ts'); view.open('latest.ts'); await flushPromises();
   expect(view.tabs().props('active')).toBe('file:project:latest.ts');
   slow.resolve(document('slow.ts')); await flushPromises();
@@ -93,7 +94,7 @@ test('迟到的打开响应可以保留标签，但不能抢回较新文件的�
 test('用户选择其他面板后，旧打开失败不覆盖当前界面错误', async () => {
   const slow = deferred<ReturnType<typeof document>>();
   mocks.call.mockImplementation(async method => method === 'documents.open' ? slow.promise : undefined);
-  const view = workbench(); view.open('slow.ts');
+  const view = await workbench(); view.open('slow.ts');
   state.workbenchPanelRequest = { id: 'terminal' }; await flushPromises();
   slow.reject(new Error('旧文件读取失败')); await flushPromises();
   expect(view.tabs().props('active')).toBe('panel:terminal');
@@ -103,14 +104,14 @@ test('用户选择其他面板后，旧打开失败不覆盖当前界面错误',
 test('侧栏产生新意图后，同工作区中迟到的文件打开也不能抢回焦点', async () => {
   const slow = deferred<ReturnType<typeof document>>();
   mocks.call.mockImplementation(async method => method === 'documents.open' ? slow.promise : undefined);
-  const view = workbench(); view.open('slow.ts');
+  const view = await workbench(); view.open('slow.ts');
   const scope = effectScope(); scope.run(() => useNavigationIntent()({ workspaceId: 'project', tabId: 'conversation' }));
   slow.resolve(document('slow.ts')); await flushPromises();
   expect(view.tabs().props('active')).not.toBe('file:project:slow.ts'); scope.stop();
 });
 
 test('退出保存收集文件失败并保留草稿，仍尝试保存其他文件并回报错误', async () => {
-  const view = workbench(true); view.open('conflict.ts'); view.open('other.ts'); await flushPromises();
+  const view = await workbench(true); view.open('conflict.ts'); view.open('other.ts'); await flushPromises();
   for (const editor of view.wrapper.findAllComponents(MobileCodeEditor)) editor.vm.$emit('change', 'new draft');
   await flushPromises();
   mocks.call.mockImplementation(async (method, params) => {
@@ -130,14 +131,14 @@ test('退出保存收集文件失败并保留草稿，仍尝试保存其他文�
 test('切换项目会使原项目的待打开请求失去焦点优先权', async () => {
   const slow = deferred<ReturnType<typeof document>>();
   mocks.call.mockImplementation(async method => method === 'documents.open' ? slow.promise : undefined);
-  const view = workbench(); view.open('slow.ts');
+  const view = await workbench(); view.open('slow.ts');
   state.workspaceId = 'second'; await flushPromises();
   slow.resolve(document('slow.ts')); await flushPromises();
   expect(view.tabs().props('active')).not.toBe('file:project:slow.ts');
 });
 
 test('关闭回执返回前文档已被移除，不会误删最后一个未保存标签', async () => {
-  const view = workbench(true); view.open('closing.ts'); await flushPromises(); view.open('draft.ts'); await flushPromises();
+  const view = await workbench(true); view.open('closing.ts'); await flushPromises(); view.open('draft.ts'); await flushPromises();
   const editor = view.wrapper.findAllComponents(MobileCodeEditor).find(component => component.props('path') === 'draft.ts')!;
   editor.vm.$emit('change', '用户未保存的内容'); await flushPromises();
   const closing = deferred<void>();
@@ -151,7 +152,7 @@ test('关闭回执返回前文档已被移除，不会误删最后一个未保�
 });
 
 test('同一路径重新打开后，旧关闭回执不删除新标签或抑制新焦点', async () => {
-  const view = workbench(true); view.open('same.ts'); await flushPromises();
+  const view = await workbench(true); view.open('same.ts'); await flushPromises();
   const closing = deferred<void>();
   mocks.call.mockImplementation(async (method, params) => {
     if (method === 'documents.close') return closing.promise;
@@ -170,7 +171,7 @@ test('同一路径重新打开后，旧关闭回执不删除新标签或抑制�
 });
 
 test('外部文件刷新与后续输入共用文档队列，新文本使用刷新后的版本且不覆盖', async () => {
-  const view = workbench(true); view.open('refresh.ts'); await flushPromises();
+  const view = await workbench(true); view.open('refresh.ts'); await flushPromises();
   const slow = deferred<ReturnType<typeof document>>();
   mocks.call.mockImplementation(async (method, params) => {
     if (method === 'documents.open' && params.reload) return slow.promise;
@@ -188,7 +189,7 @@ test('外部文件刷新与后续输入共用文档队列，新文本使用刷�
 });
 
 test('重建快照刷新打开的干净文档并恢复焦点，完整补发的重连不额外读取', async () => {
-  const view = workbench(true); view.open('resumed.ts'); await flushPromises();
+  const view = await workbench(true); view.open('resumed.ts'); await flushPromises();
   mocks.call.mockClear();
   for (const listener of mocks.listeners) listener({ type: 'transport.resumed', snapshotRequired: false });
   await flushPromises(); expect(mocks.call).not.toHaveBeenCalled();
@@ -201,7 +202,7 @@ test('重建快照刷新打开的干净文档并恢复焦点，完整补发的�
 });
 
 test('离线输入等核对原基线后再同步，重连不会丢文本或重复更新', async () => {
-  const view = workbench(true); view.open('offline.ts'); await flushPromises(); mocks.call.mockClear();
+  const view = await workbench(true); view.open('offline.ts'); await flushPromises(); mocks.call.mockClear();
   for (const listener of mocks.listeners) listener({ type: 'transport.disconnected' });
   view.wrapper.findComponent(MobileCodeEditor).vm.$emit('change', 'offline input'); await flushPromises();
   expect(mocks.call.mock.calls.filter(([method]) => method === 'documents.update')).toHaveLength(0);
@@ -214,7 +215,7 @@ test('离线输入等核对原基线后再同步，重连不会丢文本或重�
 });
 
 test.each([1, 4])('重连时服务器版本为 %s 但磁盘基线已变化，保留离线正文且阻止自动覆盖与保存', async version => {
-  const view = workbench(true); view.open('conflict.ts'); await flushPromises();
+  const view = await workbench(true); view.open('conflict.ts'); await flushPromises();
   for (const listener of mocks.listeners) listener({ type: 'transport.disconnected' });
   view.wrapper.findComponent(MobileCodeEditor).vm.$emit('change', 'retained local text'); await flushPromises();
   mocks.call.mockClear().mockImplementation(async (method, params) => method === 'documents.open' ? { ...document(params.path), version, text: 'new server text', baseHash: 'new-hash' } : undefined);
@@ -228,7 +229,7 @@ test.each([1, 4])('重连时服务器版本为 %s 但磁盘基线已变化，保
 });
 
 test('更新回执丢失后服务器正文已等于离线输入，恢复版本而不重复发送', async () => {
-  const view = workbench(true); view.open('ack.ts'); await flushPromises();
+  const view = await workbench(true); view.open('ack.ts'); await flushPromises();
   for (const listener of mocks.listeners) listener({ type: 'transport.disconnected' });
   view.wrapper.findComponent(MobileCodeEditor).vm.$emit('change', 'already accepted'); await flushPromises();
   mocks.call.mockClear().mockImplementation(async (method, params) => method === 'documents.open' ? { ...document(params.path), version: 2, text: 'already accepted', dirty: true } : undefined);
@@ -240,7 +241,7 @@ test('更新回执丢失后服务器正文已等于离线输入，恢复版本�
 });
 
 test.each([1, 2])('已同步但未保存的草稿遇到重启版本 %s，磁盘未变时恢复正文并使用新版本保存', async version => {
-  const view = workbench(true); view.open('accepted.ts'); await flushPromises();
+  const view = await workbench(true); view.open('accepted.ts'); await flushPromises();
   view.wrapper.findComponent(MobileCodeEditor).vm.$emit('change', 'accepted unsaved text'); await flushPromises();
   for (const listener of mocks.listeners) listener({ type: 'transport.disconnected' });
   mocks.call.mockClear().mockImplementation(async (method, params) => {
@@ -258,7 +259,7 @@ test.each([1, 2])('已同步但未保存的草稿遇到重启版本 %s，磁盘�
 });
 
 test.each([1, 2])('已同步但未保存的草稿遇到重启版本 %s，磁盘变化时保留正文并阻止覆盖', async version => {
-  const view = workbench(true); view.open('accepted.ts'); await flushPromises();
+  const view = await workbench(true); view.open('accepted.ts'); await flushPromises();
   view.wrapper.findComponent(MobileCodeEditor).vm.$emit('change', 'accepted unsaved text'); await flushPromises();
   for (const listener of mocks.listeners) listener({ type: 'transport.disconnected' });
   mocks.call.mockClear().mockImplementation(async (method, params) => method === 'documents.open'
@@ -273,7 +274,7 @@ test.each([1, 2])('已同步但未保存的草稿遇到重启版本 %s，磁盘�
 });
 
 test('已同步草稿遇到同磁盘基线的较新远端脏版本，保留本地正文并要求处理冲突', async () => {
-  const view = workbench(true); view.open('accepted.ts'); await flushPromises();
+  const view = await workbench(true); view.open('accepted.ts'); await flushPromises();
   view.wrapper.findComponent(MobileCodeEditor).vm.$emit('change', 'accepted unsaved text'); await flushPromises();
   for (const listener of mocks.listeners) listener({ type: 'transport.disconnected' });
   mocks.call.mockClear().mockImplementation(async (method, params) => method === 'documents.open'
@@ -286,7 +287,7 @@ test('已同步草稿遇到同磁盘基线的较新远端脏版本，保留本�
 });
 
 test('重连读取失败保持输入暂停，用户重试保存先恢复版本后才写入', async () => {
-  const view = workbench(true); view.open('retry.ts'); await flushPromises();
+  const view = await workbench(true); view.open('retry.ts'); await flushPromises();
   for (const listener of mocks.listeners) listener({ type: 'transport.disconnected' });
   view.wrapper.findComponent(MobileCodeEditor).vm.$emit('change', 'retry input'); await flushPromises();
   let reads = 0;

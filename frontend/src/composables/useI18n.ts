@@ -15,6 +15,7 @@ export {
     translate,
     hasMessage,
     setLanguage,
+    preloadLanguage,
     getLanguage,
     setDetectedLanguage,
     actualLanguage,

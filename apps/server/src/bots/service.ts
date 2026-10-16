@@ -35,7 +35,8 @@ export class BoundBotService {
   readonly outbox: BotOutbox;
   readonly summaries: BotSummaries;
   private readonly streams: BotStreams;
-  constructor(protected readonly app: PlatformApplication, protected readonly platform: BotPlatform, private readonly factory: () => BotGateway) {
+  constructor(protected readonly app: PlatformApplication, protected readonly platform: BotPlatform,
+    private readonly factory: () => BotGateway | Promise<BotGateway>) {
     this.sessions = new BotSessions(app);
     this.sessions.inbox.observe = (context, stage, reason, conversationId, runId) => this.diagnostics.update(context.id, stage, reason, conversationId, runId);
     this.summaries = new BotSummaries(app, platform, this.sessions);
@@ -126,7 +127,10 @@ export class BoundBotService {
       if (epoch !== this.connectionEpoch) return this.status();
       if (settings.credentialRef && !token) throw new Error('Bot 凭据不可用，请重新填写。');
       this.current = { status: 'connecting' }; this.notifyConnectionChange();
-      gateway = this.gateway = this.factory();
+      gateway = await this.factory();
+      // SDK 加载期间也可能停止或重连，旧轮次不能发布迟到的网关。
+      if (epoch !== this.connectionEpoch) { await gateway.disconnect(); return this.status(); }
+      this.gateway = gateway;
       gateway.setInteractionHandler?.(input => this.gateway === gateway && epoch === this.connectionEpoch
         ? this.interaction(input) : input.respond({ content: '连接已经变化，请重新打开 /gray 面板。' }));
       const allMessages = this.platform === 'discord' ? discordNeedsMessageContent(this.app.settings.read('discord').discord) : !settings.mentionOnly;

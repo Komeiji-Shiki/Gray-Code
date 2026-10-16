@@ -1,5 +1,4 @@
 import { createHash, randomUUID } from 'node:crypto';
-import sharp from 'sharp';
 import {
   PET_SPRITE_CELL_HEIGHT, PET_SPRITE_CELL_WIDTH, type PetImport, type PetResource,
   type PetResourceAnnotation, type RecordMutation,
@@ -145,6 +144,7 @@ export class PetResources {
     if (!input.files.length || input.files.length > 2000) {
       throw new Error('请选择桌宠资源目录中的清单及引用文件。');
     }
+    const { default: sharp } = await import('sharp');
     const entry = petAssetPath(input.entry);
     const uploaded = new Map<string, Buffer>();
     let total = 0;

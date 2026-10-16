@@ -526,10 +526,10 @@ export async function loadConversations(state: ChatStoreState): Promise<void> {
     state.persistedConversationIds.value = window.__GRAYCODE_HOST ? orderedIds : sortConversationIds(orderedIds)
     state.persistedConversationsLoaded.value = 0
 
-    // 保留未持久化会话，以及远端快照尚未包含、但本次加载期间刚创建的持久化会话。
+    // 列表在首屏恢复之后加载，保留已有摘要，避免正在显示的会话被分页重置暂时移除。
     const concurrentlyCreatedIdSet = new Set(concurrentlyCreatedIds)
     state.conversations.value = state.conversations.value.filter(conversation =>
-      !conversation.isPersisted || concurrentlyCreatedIdSet.has(conversation.id)
+      !conversation.isPersisted || concurrentlyCreatedIdSet.has(conversation.id) || remoteIdSet.has(conversation.id)
     )
 
     // 加载第一页

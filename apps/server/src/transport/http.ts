@@ -3,7 +3,7 @@ import type { AddressInfo } from 'node:net';
 import type { PlatformApplication } from '../application';
 import { ApplicationRouter, type ClientSession } from './router';
 import { WebSessions, type WebSessionSnapshot } from './webSessions';
-import { serveWebAsset } from './webAssets';
+import { createWebAssetHandler } from './webAssets';
 import { WebHost } from './webHost';
 import { randomUUID } from 'node:crypto';
 import { normalizeWebOrigin } from './webOrigin';
@@ -76,6 +76,7 @@ export async function startHttpServer(application: PlatformApplication, options:
   const recent: { id: string; event: Record<string, unknown>; frame: Buffer; bytes: number }[] = [];
   const host = new WebHost(application, router);
   const failures = new Map<string, { count: number; until: number }>();
+  const serveWebAsset = options.clientDirectory ? createWebAssetHandler(options.clientDirectory) : undefined;
   const server = createServer(async (request, response) => {
     let validSession: (() => boolean) | undefined;
     response.on('error', () => response.destroy());
@@ -119,7 +120,7 @@ export async function startHttpServer(application: PlatformApplication, options:
       }
       if (request.method === 'GET' && !['/events', '/auth/session'].includes(url.pathname)
         && !url.pathname.startsWith('/assets/background/') && !url.pathname.startsWith('/preview/') && !url.pathname.startsWith('/files/')) {
-        if (options.clientDirectory && await serveWebAsset(options.clientDirectory, url.pathname, response, validSession)) return;
+        if (serveWebAsset && await serveWebAsset(url.pathname, request, response, validSession)) return;
       }
       if (!auth) { response.writeHead(401); response.end(JSON.stringify({ error: 'Authentication required.' })); return; }
       if (auth.browser && request.method === 'POST' && request.headers.origin !== ownOrigin) {

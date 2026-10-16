@@ -73,7 +73,6 @@ protocol.registerSchemesAsPrivileged([
   },
 ]);
 const argumentsList = process.argv.slice(1);
-app.setName("GrayCode");
 const dataIndex = argumentsList.indexOf("--data");
 let dataDirectory =
   dataIndex >= 0
@@ -84,6 +83,16 @@ const storageLocation = new DesktopStorageLocation(app.getPath('userData'), path
 let notifications: ReturnType<typeof desktopNotifications> | undefined;
 let petWindowController: DesktopPetWindow | undefined;
 let application: PlatformApplication;
+let startupOperation: Promise<void> | undefined;
+let startupCompleted = false;
+let resolveDesktopRequests!: (requests: DesktopRequests) => void;
+let rejectDesktopRequests!: (error: unknown) => void;
+const desktopRequestsReady = new Promise<DesktopRequests>((resolve, reject) => {
+  resolveDesktopRequests = resolve;
+  rejectDesktopRequests = reject;
+});
+// 启动可能先于渲染器请求失败，由统一恢复界面处理拒绝。
+void desktopRequestsReady.catch(() => {});
 let backups: ApplicationBackups | undefined;
 let window: BrowserWindow | undefined;
 let tray: Tray | undefined;
@@ -147,6 +156,8 @@ function quit(relaunch = false, beforeExit?: () => void): Promise<void> {
   exitPhase = 'closing';
   closePending = false;
   exitOperation = Promise.resolve().then(async () => {
+    // 窗口已提前显示，启动期间关闭仍须等初始化交回资源后统一释放。
+    await startupOperation?.catch(() => {});
     let progress: DesktopProgress | undefined;
     if (application && window && !window.isDestroyed() && window.isVisible()) {
       progress = await showDesktopProgress({ language: getActualLanguage(), title: t('desktop.closingTitle'), message: t('desktop.closingMessage'),
@@ -275,6 +286,7 @@ function setApplicationMenu(): void {
   applicationMenuLanguage = language;
 }
 function desktopColors(): Record<string, string> {
+  if (!application) return resolveAppearancePalette('dark', {}, false);
   const appearance = application.settings.snapshot().settings.appearance;
   return resolveAppearancePalette(appearance.theme, appearance.colors, !nativeTheme.shouldUseDarkColors, appearance.darkPalette);
 }
@@ -378,16 +390,17 @@ async function createWindow(): Promise<void> {
   });
   windowState?.bind(window);
   if (geometry.maximized) window.maximize();
-  bindDesktopAppearance(window, application);
+  if (application) bindDesktopAppearance(window, application);
   desktopFiles.suspend();
   window.webContents.on('did-start-navigation', (_event, _url, inPlace, mainFrame) => { if (mainFrame && !inPlace) desktopFiles.suspend(); });
   trust(window);
-  window.webContents.on('render-process-gone', () => { void application.computer.clientClosed(client.clientId); void application.nodes.clientClosed(client.clientId); });
-  window.on('closed', () => { void application.computer.clientClosed(client.clientId); void application.nodes.clientClosed(client.clientId); });
+  window.webContents.on('render-process-gone', () => { void application?.computer.clientClosed(client.clientId); void application?.nodes.clientClosed(client.clientId); });
+  window.on('closed', () => { void application?.computer.clientClosed(client.clientId); void application?.nodes.clientClosed(client.clientId); });
   window.on("close", (event) => {
     if (exitPhase === 'ready') return;
     event.preventDefault();
     if (exitPhase !== 'idle') return;
+    if (!startupCompleted) { void quit(); return; }
     void confirmQuit('window');
   });
   await window.loadURL("graycode://app/index.html");
@@ -420,6 +433,20 @@ async function main(): Promise<void> {
       return new Response("Forbidden", { status: 403 });
     return net.fetch(pathToFileURL(file).toString());
   });
+  ipcMain.handle(
+    "graycode:rpc",
+    (event, method: string, params: Record<string, any> = {}) => desktopRpcReply(async () => {
+      const trustedContents = trustedWindows.has(event.sender.id);
+      if (!isTrustedApplicationFrame(trustedContents, event.senderFrame, event.sender.mainFrame)) {
+        throw new Error("Untrusted application frame.");
+      }
+      const requests = await desktopRequestsReady;
+      return requests.call(event.sender.id, method, params);
+    }),
+  );
+  // 资源加载与平台恢复重叠；所有业务请求仍等待同一启动结果。
+  const initialWindowLoad = createWindow();
+  void initialWindowLoad.catch(() => {});
   const secretCodec = {
     encrypt: async (value: string) => {
       if (!safeStorage.isEncryptionAvailable() || process.platform === 'linux' && safeStorage.getSelectedStorageBackend() === 'basic_text')
@@ -439,6 +466,7 @@ async function main(): Promise<void> {
     remoteAccess: application => new RemoteAccessService(application, { clientDirectory }),
     secretCodec,
   });
+  if (window && !window.isDestroyed()) bindDesktopAppearance(window, application);
   backups = new ApplicationBackups(application.storage, { appVersion: app.getVersion(), secretCodec,
     skillsDirectory: application.skills.directory(), notify: progress => application.publish({ type: 'ui.message',
       message: { type: 'command', command: 'backup.progress', data: progress } }) });
@@ -483,6 +511,7 @@ async function main(): Promise<void> {
   });
   petWindowController = new DesktopPetWindow(application, client, preload, trust);
   const webPortIndex = argumentsList.indexOf('--web-port');
+  let remoteStartup: import('../../server/src/transport/remotePort').RemoteStartupOptions | undefined;
   if (webPortIndex >= 0) {
     const port = Number(argumentsList[webPortIndex + 1]);
     const tokenIndex = argumentsList.indexOf('--web-token-env');
@@ -490,10 +519,8 @@ async function main(): Promise<void> {
     const variable = tokenIndex >= 0 ? argumentsList[tokenIndex + 1] : undefined;
     const token = variable ? process.env[variable] : undefined;
     if (!Number.isInteger(port) || port < 0 || port > 65535 || !token) throw new Error('Web 入口需要有效的 --web-port 和 --web-token-env 参数。');
-    await application.remoteAccess!.initialize({ port, token, publicOrigin: originIndex >= 0 ? argumentsList[originIndex + 1] : undefined });
-  } else await application.remoteAccess!.initialize();
-  if (application.remoteAccess!.status().address) console.log(`GrayCode Web: ${application.remoteAccess!.status().address}`);
-  await application.nodes.activate();
+    remoteStartup = { port, token, publicOrigin: originIndex >= 0 ? argumentsList[originIndex + 1] : undefined };
+  }
   application.subscribe((event) => {
     notify(event);
     if (event.type === 'settings.changed') {
@@ -517,47 +544,51 @@ async function main(): Promise<void> {
     setDirtySettings: dirty => { dirtySettings = dirty; },
     activeTasks, quit, notify,
   });
-  ipcMain.handle(
-    "graycode:rpc",
-    (event, method: string, params: Record<string, any> = {}) => desktopRpcReply(async () => {
-      const trustedContents = trustedWindows.has(event.sender.id);
-      if (!isTrustedApplicationFrame(trustedContents, event.senderFrame, event.sender.mainFrame)) {
-        throw new Error("Untrusted application frame.");
-      }
-      return desktopRequests.call(event.sender.id, method, params);
-    }),
-  );
+  resolveDesktopRequests(desktopRequests);
   setApplicationMenu();
-  await createWindow();
+  await initialWindowLoad;
+  if (exitPhase !== 'idle') return;
+  startupCompleted = true;
+  // 本地界面无需等监听器启动；命令行显式指定的 Web 启动失败仍进入统一恢复流程。
+  await application.remoteAccess!.initialize(remoteStartup);
+  if (application.remoteAccess!.status().address) console.log(`GrayCode Web: ${application.remoteAccess!.status().address}`);
+  if (exitPhase !== 'idle') return;
+  await application.nodes.activate();
+  if (exitPhase !== 'idle') return;
   // 窗口可用后分别连接；一个平台连接失败不会阻塞另一个平台和桌面启动。
   void application.discord.autoConnect();
   void application.onebot.autoConnect();
 }
-if (!app.requestSingleInstanceLock({ dataDirectory, files: startupFiles })) app.quit();
-else {
+{
   desktopFiles.enqueue(startupFiles);
-  app.on('open-file', (event, file) => { event.preventDefault(); desktopFiles.enqueue([file]); if (application && window) void createWindow(); });
+  app.on('open-file', (event, file) => { event.preventDefault(); desktopFiles.enqueue([file]); if (window) void createWindow(); });
   app.on("second-instance", (_event, commandLine, workingDirectory, additionalData) => {
     const supplied = additionalData as { files?: unknown } | undefined;
     const files = Array.isArray(supplied?.files) && supplied.files.every(file => typeof file === 'string')
       ? supplied.files : desktopFileArguments(commandLine.slice(process.defaultApp ? 2 : 1), workingDirectory);
     desktopFiles.enqueue(files);
     closePending = false;
-    if (application && window) void createWindow();
+    if (window) void createWindow();
   });
   app.on("activate", () => {
-    if (application) void createWindow();
+    if (window || application) void createWindow();
   });
   app.on("before-quit", (event) => {
-    if (exitPhase !== 'ready' && application) {
+    if (exitPhase !== 'ready' && startupOperation) {
       event.preventDefault();
-      if (exitPhase === 'idle') void confirmQuit();
+      if (exitPhase === 'idle') {
+        if (startupCompleted) void confirmQuit();
+        else void quit();
+      }
     }
   });
   app.on("window-all-closed", () => {
     /* Lifetime is controlled by the close policy and running tasks. */
   });
-  void main().catch(async (error) => {
+  startupOperation = main();
+  void startupOperation.catch(async (error) => {
+    rejectDesktopRequests(error);
+    if (exitPhase !== 'idle') return;
     try {
       await recoverStartup(error, args => quit(false, () => app.relaunch(args ? { args } : undefined)));
       await quit();

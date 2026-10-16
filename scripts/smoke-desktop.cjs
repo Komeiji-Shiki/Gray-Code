@@ -347,6 +347,10 @@ async function main() {
   await evaluate('window.__smokeProjectFocused = false; window.graycode.subscribe(event => { if (event.type === "ui.conversation.focused" && event.workspaceId === "smoke" && event.conversationId) window.__smokeProjectFocused = true; }); undefined');
   await evaluate('Array.from(document.querySelectorAll(".navigation-project-select")).find(node => node.textContent.includes("桌面验证项目")).closest(".navigation-group-heading").querySelector(".navigation-project-add").click()');
   await until(() => evaluate('window.__smokeProjectFocused'), 'project conversation focused');
+  // 文件树按需加载，先通过实际面板菜单打开，不能再点击隐藏工作台中的常驻 DOM。
+  await evaluate('if (document.querySelector(".desktop-workspace").classList.contains("chat-focused")) document.querySelector(".titlebar .panel-toggle").click(); document.querySelector(".workbench-tabbar .add-panel").click();');
+  await until(() => evaluate('!!document.querySelector(".workbench-add-menu")'), 'workbench panel menu');
+  await evaluate('Array.from(document.querySelectorAll(".workbench-add-menu button")).find(node => node.querySelector("span")?.textContent === "文件").click()');
   await until(() => evaluate('Array.from(document.querySelectorAll(".tree-row")).some(node => node.textContent.includes("hello.ts"))'), 'workspace file tree');
   await evaluate('Array.from(document.querySelectorAll(".tree-row")).find(node=>node.textContent.includes("hello.ts")).click()');
   await until(() => evaluate('!!document.querySelector(".monaco-editor")'), 'Monaco editor');

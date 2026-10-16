@@ -35,6 +35,11 @@ export interface ProductSettingsDraft {
 const secretPlaceholder = '••••••••';
 const reference = (id: string) => `channel_${id}`;
 
+function maskChannelCredentials(channels: ChannelConfig[], providers: AppSettings['providers']): void {
+  const credentials = new Set(providers.filter(profile => profile.credentialRef).map(profile => profile.id));
+  for (const channel of channels) channel.apiKey = credentials.has(channel.id) ? secretPlaceholder : '';
+}
+
 function uiLanguage(settings: SettingsManager): SupportedLanguage {
   const language = settings.getUISettings().language;
   return language === 'zh-CN' || language === 'en' || language === 'ja' ? language : 'auto';
@@ -74,6 +79,12 @@ export class ProductConfiguration {
   get features(): GlobalSettings { return structuredClone(this.saved.features); }
   runtimeSettings(): SettingsManager { return this.activeSettings; }
   mcpConfigs(): McpServerConfig[] { return structuredClone(this.saved.mcpServers ?? []); }
+  /** 启动与设置编辑共享凭据占位语义，普通界面读取无需访问凭据存储。 */
+  uiChannels(): ChannelConfig[] {
+    const channels = structuredClone(this.saved.channels);
+    maskChannelCredentials(channels, this.application.settings.read('providers').providers);
+    return channels;
+  }
   async channel(id: string, options: { includeCredential?: boolean } = {}): Promise<ChannelConfig | null> {
     const config = this.saved.channels.find(channel => channel.id === id);
     if (!config) return null;
@@ -87,10 +98,7 @@ export class ProductConfiguration {
   async draft(input?: ProductSettingsDraft): Promise<ProductSettingsDraft> {
     const snapshot = input ? { settings: structuredClone(input.app), revision: input.revision } : this.application.settings.snapshot();
     const value = structuredClone(input?.value ?? this.saved);
-    if (!input) for (const channel of value.channels) {
-      const profile = snapshot.settings.providers.find(profile => profile.id === channel.id);
-      channel.apiKey = profile?.credentialRef ? secretPlaceholder : '';
-    }
+    if (!input) maskChannelCredentials(value.channels, snapshot.settings.providers);
     const draft = { value, app: snapshot.settings, credentials: structuredClone(input?.credentials ?? {}), revision: snapshot.revision, dirty: input?.dirty ?? false,
       memoryConfig: input?.memoryConfig ? structuredClone(input.memoryConfig) : undefined,
       baseApp: structuredClone(input?.baseApp ?? snapshot.settings), basePreferences: structuredClone(input?.basePreferences ?? this.saved) } as ProductSettingsDraft;
