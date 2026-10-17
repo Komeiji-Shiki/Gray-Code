@@ -28,9 +28,13 @@ import ComputerStatus from './components/ComputerStatus.vue';
 const CompanionSetup = defineAsyncComponent(() => import('./components/CompanionSetup.vue'));
 import PetSurface from './components/PetSurface.vue';
 import ScreenSenseStatus from './components/ScreenSenseStatus.vue';
+import Splash from '../../../frontend/src/components/Splash.vue';
 import { computerState } from './computer';
 connectDebugging();
 const productChatFrame = ref<HTMLIFrameElement>();
+// 外壳等待本地核心期间也显示开屏动画；聊天初始化完成或启动失败后再淡出。
+// 外壳的设置快照不含聊天页的 splashEnabled，启动阶段先按默认开启处理。
+const shellSplashDone = ref(false);
 const workbenchMounted = ref(false);
 const workbenchVisible = computed(() => !state.chatFocused && !state.settingsOpen);
 const pendingWorkbenchEvents: Record<string, any>[] = [];
@@ -498,6 +502,12 @@ onUnmounted(() => {
     :style="{ '--gc-viewport-height': viewportHeight + 'px', '--gc-chat-min-width': minimumChatWidth + 'px' }"
     :data-density="appearance?.density"
   >
+    <Splash
+      v-if="!shellSplashDone"
+      :ready="chatInitialized || chatLoadFailed || Boolean(state.initializationError)"
+      :loading-label="t('connecting')"
+      @done="shellSplashDone = true"
+    />
     <header class="titlebar">
       <button
         v-if="!state.settingsOpen"

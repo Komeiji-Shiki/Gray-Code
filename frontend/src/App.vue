@@ -537,6 +537,7 @@ onBeforeUnmount(() => {
     <Splash
       v-if="!splashDone && startupSplashEnabled"
       :ready="languageLoaded"
+      :loading-label="t('common.loading')"
       @done="splashDone = true"
     />
     

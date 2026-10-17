@@ -23,18 +23,18 @@
  * 注：TPS 实时可视化条不在此处——它位于聊天面板底部（components/input/TpsBar.vue）。
  */
 import { onMounted, onBeforeUnmount, ref, watch } from 'vue'
-import { useI18n } from '../i18n'
-
-const { t } = useI18n()
 
 const props = withDefaults(defineProps<{
   /** 外部 ready 信号：内容就绪后开始退场 */
   ready?: boolean
   /** 最短展示时长（ms）：从挂载起计算，默认不额外等待 */
   minDisplayMs?: number
+  /** 屏幕阅读器读取的加载文案；组件本身不依赖聊天语言包，外壳也能直接复用。 */
+  loadingLabel?: string
 }>(), {
   ready: false,
-  minDisplayMs: 0
+  minDisplayMs: 0,
+  loadingLabel: 'Loading'
 })
 
 const emit = defineEmits<{
@@ -140,7 +140,7 @@ onBeforeUnmount(() => {
 
 <template>
   <div class="splash" :class="{ leaving: fading, merged: merging }" role="status" aria-live="polite">
-    <span class="gc-visually-hidden">{{ t('common.loading') }}</span>
+    <span class="gc-visually-hidden">{{ loadingLabel }}</span>
     <div class="splash-inner" :class="{ settled: drawDone }">
       <!-- Gray logo：色块层（下）先渗入上色，线稿层（上）描完后退位为细描边 -->
       <svg
