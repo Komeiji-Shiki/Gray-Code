@@ -283,4 +283,5 @@ export default {
     "uimemoryImportsFileChunkOrderMismatch": "受信したファイルの分割データの順序が一致しません。ファイルを開き直してください。",
     "uimemoryImportsOriginalFileLengthMismatch": "原本ファイルの長さの検証に失敗しました。",
     "uimemoryImportsOriginalFileVerificationFailed": "原本ファイルの検証に失敗しました。バックアップから復元してください。",
+    "uimemoryImportsSecureContextRequired": "LAN の HTTP ではファイルのダイジェストを検証できません。HTTPS またはローカルアクセスを使用してください。",
 };

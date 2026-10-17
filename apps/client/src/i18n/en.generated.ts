@@ -1359,6 +1359,7 @@ export default {
   "uimemoryImportsFileChunkOrderMismatch": "File chunks arrived in an inconsistent order. Reopen the file.",
   "uimemoryImportsOriginalFileLengthMismatch": "Original file length verification failed.",
   "uimemoryImportsOriginalFileVerificationFailed": "Original file verification failed. Restore it from a backup.",
+  "uimemoryImportsSecureContextRequired": "File digest verification is unavailable over LAN HTTP. Use HTTPS or local access.",
   "uiNodePaneOnline": "Online",
   "uiNodePaneOffline": "Offline",
   "uiNodePaneConnecting": "Connecting",

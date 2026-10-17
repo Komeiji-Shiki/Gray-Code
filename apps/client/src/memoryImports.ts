@@ -18,6 +18,7 @@ export async function loadMemoryImportFile(datasetId: string, file: MemoryImport
   }
   const blob = new Blob(chunks, { type: file.mimeType });
   if (bytes !== file.bytes) throw new Error(t('uimemoryImportsOriginalFileLengthMismatch'));
+  if (!crypto.subtle) throw new Error(t('uimemoryImportsSecureContextRequired'));
   const digest = await crypto.subtle.digest('SHA-256', await blob.arrayBuffer());
   signal.throwIfAborted();
   if (Array.from(new Uint8Array(digest), (value) => value.toString(16).padStart(2, '0')).join('') !== file.sha256)

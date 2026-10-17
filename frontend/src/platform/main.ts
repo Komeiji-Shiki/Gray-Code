@@ -1,3 +1,5 @@
+// 局域网 HTTP 不是安全上下文，先补齐 crypto.randomUUID，再加载聊天界面。
+import '@shared/randomUuid';
 import warningSound from '../../../resources/sound/warning.mp3?url';
 import errorSound from '../../../resources/sound/error.mp3?url';
 import completeSound from '../../../resources/sound/taskComplete.mp3?url';

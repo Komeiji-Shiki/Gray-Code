@@ -1,3 +1,5 @@
+// 局域网 HTTP 不是安全上下文，先补齐 crypto.randomUUID，再加载使用它的外壳模块。
+import "../../../shared/randomUuid";
 import { createApp } from "vue";
 import App from './Bootstrap.vue';
 import { resolveAppearancePalette } from '../../../shared/appearance';

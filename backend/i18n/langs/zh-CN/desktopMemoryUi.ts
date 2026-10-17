@@ -277,4 +277,5 @@ export default {
     "uimemoryImportsFileChunkOrderMismatch": "收到的文件块顺序不一致，请重新打开。",
     "uimemoryImportsOriginalFileLengthMismatch": "原始文件长度校验失败。",
     "uimemoryImportsOriginalFileVerificationFailed": "原始文件校验失败，请从备份恢复。",
+    "uimemoryImportsSecureContextRequired": "局域网 HTTP 访问无法校验文件摘要，请使用 HTTPS 或本机访问。",
 };
