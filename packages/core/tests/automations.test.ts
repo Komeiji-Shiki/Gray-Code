@@ -4,6 +4,8 @@ import type { AutomationRecord, ModelInput, PlatformMessage } from '@graycode/co
 import { PlatformApplication } from '../../../apps/server/src/application';
 import { PlatformPromptService } from '../../../apps/server/src/prompt/service';
 import { nextScheduledTime, validateSchedule } from '../../../apps/server/src/automations/schedule';
+import { ApplicationAutomations } from '../../../apps/server/src/automations/service';
+import { SubagentFeedback } from '../../../apps/server/src/subagents/feedback';
 import { fixture } from './fixtures';
 
 describe('持久目标和定时触发', () => {
@@ -217,6 +219,87 @@ describe('持久目标和定时触发', () => {
     const goal = await create(); expect(app.automations.keepsAlive).toBe(true);
     await app.automations.remove('owner', goal.id);
     expect(app.automations.keepsAlive).toBe(false); expect(await app.storage.getConversation('auto-chat')).not.toBeNull(); expect(calls).toEqual([]);
+  });
+
+  test.each([true, false])('后台回执先恢复时，按原重启策略处理等待标记 %s 并保留唤醒', async awaitingBackground => {
+    const task = await create({ kind: 'schedule', schedule: { type: 'interval', startAt: now + 1000, everyMinutes: 1 }, missedRunPolicy: 'once' });
+    now += 1000; await app.automations.tick(now);
+    const first = await until(task.id, record => record.completedRuns === 1 && !record.currentRequestKey);
+    await app.storage.appendHistory('auto-chat', [{ id: 'restart-result', role: 'user', userFeedback: true, isUserInput: false,
+      parts: [{ text: '重启前保存的后台结果。' }] }]);
+    await app.storage.commitRecords([
+      { namespace: 'automations', id: task.id, ownerId: 'auto-chat', value: { ...first, awaitingBackground,
+        ...(awaitingBackground ? { nextRunAt: undefined } : {}) } },
+      { namespace: 'background-followups', id: 'restart-result', ownerId: 'auto-chat', value: { id: 'restart-result', conversationId: 'auto-chat',
+        actorId: 'owner', sourceRunId: first.lastRunId, status: 'pending', createdAt: now } },
+      { namespace: 'background-followup-pending', id: 'restart-result', ownerId: 'auto-chat', value: true },
+    ]);
+    await app.close();
+    let woke!: () => void;
+    const wakeFinished = new Promise<void>(resolve => { woke = resolve; });
+    const nativeWake = ApplicationAutomations.prototype.wake;
+    jest.spyOn(ApplicationAutomations.prototype, 'wake').mockImplementation(async function (this: ApplicationAutomations, id) {
+      await nativeWake.call(this, id);
+      if (id === task.id) woke();
+    });
+    const initialize = SubagentFeedback.prototype.initialize;
+    jest.spyOn(SubagentFeedback.prototype, 'initialize').mockImplementationOnce(async function (this: SubagentFeedback) {
+      await initialize.call(this);
+      // 固定生产中已有的先后关系：后台回执已唤醒，自动任务尚未开始恢复。
+      await wakeFinished;
+    });
+    app = await open();
+    const restored = (await app.automations.list('owner')).find(record => record.id === task.id)!;
+    if (awaitingBackground) {
+      expect(restored).toMatchObject({ status: 'paused', pauseReason: 'restart', awaitingBackground: true });
+      expect(restored.followupPending).not.toBe(true);
+      await app.automations.tick(now);
+      expect(calls).toHaveLength(1);
+      expect(await app.subagents.feedback.continuation.hasPending('auto-chat')).toBe(true);
+    } else {
+      expect(restored).toMatchObject({ status: 'active', followupPending: true, nextRunAt: now });
+      await app.automations.tick(now);
+      await until(task.id, record => record.completedRuns === 2 && !record.currentRequestKey);
+      expect(calls).toHaveLength(2);
+      expect(JSON.stringify(calls[1].messages)).toContain('重启前保存的后台结果');
+      expect(await app.subagents.feedback.continuation.hasPending('auto-chat')).toBe(false);
+    }
+  });
+
+  test('自动任务已经关闭后，迟到的后台唤醒不再更改记录', async () => {
+    const task = await create();
+    const before = await app.storage.getVersionedRecord('automations', task.id);
+    await app.automations.close();
+    await app.automations.wake(task.id);
+    expect(await app.storage.getVersionedRecord('automations', task.id)).toEqual(before);
+  });
+
+  test.each(['初次读取', '队列读取'])('后台唤醒的%s期间关闭后不再提交状态', async stage => {
+    const task = await create();
+    const before = await app.storage.getVersionedRecord('automations', task.id);
+    let enter!: () => void, release!: () => void;
+    const entered = new Promise<void>(resolve => { enter = resolve; });
+    const waiting = new Promise<void>(resolve => { release = resolve; });
+    if (stage === '初次读取') {
+      const read = app.storage.getRecord.bind(app.storage);
+      jest.spyOn(app.storage, 'getRecord').mockImplementationOnce(async (...args) => {
+        const result = await read(...args); enter(); await waiting; return result;
+      });
+    } else {
+      const read = app.storage.getVersionedRecord.bind(app.storage);
+      jest.spyOn(app.storage, 'getVersionedRecord').mockImplementationOnce(async (...args) => {
+        const result = await read(...args); enter(); await waiting; return result;
+      });
+    }
+    const waking = app.automations.wake(task.id);
+    let closing: Promise<void> | undefined;
+    try {
+      await entered;
+      closing = app.automations.close();
+      release();
+      await Promise.all([waking, closing]);
+      expect(await app.storage.getVersionedRecord('automations', task.id)).toEqual(before);
+    } finally { release(); await Promise.allSettled([waking, ...(closing ? [closing] : [])]); }
   });
 
   test('暂停后可以修改目标和模型选择，原用量与对话保持，保存本身不执行', async () => {

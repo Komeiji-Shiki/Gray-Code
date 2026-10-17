@@ -24,6 +24,7 @@ export class ApplicationAutomations {
   private readonly records = new Map<string, AutomationRecord>();
   private readonly queues = new Map<string, Promise<unknown>>();
   private readonly starts = new Map<string, { controller: AbortController; done: Promise<void> }>();
+  private readonly pendingWakes = new Set<string>();
   private timer?: ReturnType<typeof setTimeout>;
   private timerAt?: number;
   private ready = false;
@@ -148,6 +149,8 @@ export class ApplicationAutomations {
         }
       });
     }
+    // 后台回执先恢复；等全部任务应用重启策略后，再决定哪些唤醒仍然有效。
+    for (const id of this.pendingWakes) { await this.applyWake(id); this.pendingWakes.delete(id); }
     this.ready = true; await this.eventSources.sync(); await this.eventSources.replayCompleted(); this.arm();
   }
   async list(actorId: string) {
@@ -283,8 +286,16 @@ export class ApplicationAutomations {
     });
   }
   async wake(id: string) {
-    const existing = await this.read(id); if (!existing || existing.status !== 'active') return;
-    await this.mutate(id, record => { if (record.status === 'active') { record.awaitingBackground = false; record.followupPending = true; record.nextRunAt = Date.now(); } });
+    if (this.closing) return;
+    if (!this.ready) { this.pendingWakes.add(id); return; }
+    await this.applyWake(id);
+  }
+  private async applyWake(id: string) {
+    const existing = await this.read(id);
+    if (this.closing || !existing || existing.status !== 'active') return;
+    await this.mutate(id, record => {
+      record.awaitingBackground = false; record.followupPending = true; record.nextRunAt = Date.now();
+    }, record => !this.closing && record.status === 'active');
   }
   private async receiveEvent(id: string, event: AutomationEventOccurrence, change: EventSourceChange) {
     if (this.closing || !this.ready) return;
@@ -474,6 +485,7 @@ export class ApplicationAutomations {
   }
   async close() {
     this.closing = true; this.unsubscribe(); if (this.timer) clearTimeout(this.timer); this.timer = undefined;
+    this.pendingWakes.clear();
     for (const pending of this.starts.values()) pending.controller.abort(new Error('应用正在退出。'));
     await this.eventSources.close(); await Promise.allSettled(this.queues.values());
   }
