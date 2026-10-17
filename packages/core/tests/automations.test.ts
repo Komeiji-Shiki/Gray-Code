@@ -5,7 +5,9 @@ import { PlatformApplication } from '../../../apps/server/src/application';
 import { PlatformPromptService } from '../../../apps/server/src/prompt/service';
 import { nextScheduledTime, validateSchedule } from '../../../apps/server/src/automations/schedule';
 import { ApplicationAutomations } from '../../../apps/server/src/automations/service';
+import { AutomationEventSources } from '../../../apps/server/src/automations/events';
 import { SubagentFeedback } from '../../../apps/server/src/subagents/feedback';
+import { createIdleCloseCheck } from '../../../apps/desktop/src/idleClose';
 import { fixture } from './fixtures';
 
 describe('持久目标和定时触发', () => {
@@ -117,6 +119,212 @@ describe('持久目标和定时触发', () => {
     expect((await app.storage.getRecord('run-configurations', runs[0].id) as any).automationId).toBe(goal.id);
     expect(calls[0].systemPrompt).toContain('长期目标'); expect(calls[0].tools.some(tool => tool.name === 'goal_update')).toBe(true);
     now += 100000; await app.automations.tick(now); expect(calls).toHaveLength(2);
+  });
+
+  test.each(['schedule', 'goal'])('%s 的运行已经完成后，结算写入失败可以恢复且只计数一次', async kind => {
+    if (kind === 'goal') generate = async () => complete();
+    const task = await create(kind === 'schedule'
+      ? { kind, schedule: { type: 'interval', startAt: now + 1000, everyMinutes: 1 }, missedRunPolicy: 'once' } : { kind });
+    const commit = app.storage.commitRecords.bind(app.storage);
+    let failed = false, notified!: () => void;
+    const failureNotice = new Promise<void>(resolve => { notified = resolve; });
+    const unsubscribe = app.subscribe(event => {
+      if (event.type === 'notification' && String(event.message).includes('fixture automation settlement')) notified();
+    });
+    jest.spyOn(app.storage, 'commitRecords').mockImplementation(async changes => {
+      if (!failed && changes.some(change => change.namespace === 'automations' && change.id === task.id && 'value' in change
+        && (change.value as AutomationRecord | undefined)?.completedRuns === 1 && !(change.value as AutomationRecord).currentRequestKey)) {
+        failed = true;
+        throw new Error('fixture automation settlement');
+      }
+      return commit(changes);
+    });
+    try {
+      now += 1000; await app.automations.tick(now); await failureNotice;
+      const waiting = (await app.automations.list('owner')).find(record => record.id === task.id)!;
+      const finished = await app.storage.getRunByRequestKey(waiting.currentRequestKey!);
+      expect(finished?.status).toBe('completed');
+      expect(waiting.completedRuns).toBe(0);
+      expect(app.automations.keepsAlive).toBe(true);
+      await app.automations.tick(now);
+      const recovered = await until(task.id, record => record.completedRuns === 1 && !record.currentRequestKey);
+      expect(recovered.lastRunId).toBe(finished!.id);
+      await app.automations.tick(now);
+      expect((await app.automations.list('owner')).find(record => record.id === task.id)!.completedRuns).toBe(1);
+      expect(calls).toHaveLength(1);
+      if (kind === 'schedule') {
+        now = recovered.nextRunAt!; await app.automations.tick(now);
+        await until(task.id, record => record.completedRuns === 2 && !record.currentRequestKey);
+        expect(calls).toHaveLength(2);
+      } else expect(recovered.status).toBe('completed');
+    } finally { unsubscribe(); }
+  });
+
+  test('一个任务持续结算失败不阻塞其他到期任务，恢复后不重新运行已完成模型', async () => {
+    const failing = await create({ kind: 'schedule', schedule: { type: 'once', at: now + 1000 }, missedRunPolicy: 'once' });
+    const commit = app.storage.commitRecords.bind(app.storage);
+    let notified!: () => void;
+    const failureNotice = new Promise<void>(resolve => { notified = resolve; });
+    const unsubscribe = app.subscribe(event => {
+      if (event.type === 'notification' && String(event.message).includes('fixture persistent settlement')) notified();
+    });
+    const failure = jest.spyOn(app.storage, 'commitRecords').mockImplementation(async changes => {
+      if (changes.some(change => change.namespace === 'automations' && change.id === failing.id && 'value' in change
+        && (change.value as AutomationRecord | undefined)?.completedRuns === 1)) throw new Error('fixture persistent settlement');
+      return commit(changes);
+    });
+    try {
+      now += 1000; await app.automations.tick(now); await failureNotice;
+      await app.createConversation('owner', '正常到期任务', undefined, { platformMode: 'chat' }, undefined, { id: 'healthy-chat' });
+      const healthy = await create({ kind: 'schedule', conversationId: 'healthy-chat', schedule: { type: 'once', at: now + 1000 }, missedRunPolicy: 'once' });
+      now += 1000; await app.automations.tick(now);
+      await until(healthy.id, record => record.completedRuns === 1 && record.status === 'completed' && !record.currentRequestKey);
+      expect(calls).toHaveLength(2);
+      expect((await app.automations.list('owner')).find(record => record.id === failing.id)!.currentRequestKey).toBeDefined();
+      failure.mockRestore();
+      await app.automations.tick(now);
+      await until(failing.id, record => record.completedRuns === 1 && record.status === 'completed' && !record.currentRequestKey);
+      expect(calls).toHaveLength(2);
+    } finally { failure.mockRestore(); unsubscribe(); }
+  });
+
+  test('完成事件部分交付失败后补齐其余收据，已收到的任务只执行一次', async () => {
+    await app.createConversation('owner', '来源任务', undefined, { platformMode: 'chat' }, undefined, { id: 'retry-source' });
+    await app.createConversation('owner', '第二个事件任务', undefined, { platformMode: 'chat' }, undefined, { id: 'retry-recipient' });
+    const event = { trigger: { type: 'run_completed', conversationId: 'retry-source' }, busyPolicy: 'latest', restartPolicy: 'resume' };
+    const first = await create({ kind: 'event', event });
+    const second = await create({ kind: 'event', event, conversationId: 'retry-recipient' });
+    const commit = app.storage.commitRecords.bind(app.storage);
+    let failed = false, notified!: () => void;
+    const failureNotice = new Promise<void>(resolve => { notified = resolve; });
+    const unsubscribe = app.subscribe(value => {
+      if (value.type === 'notification' && String(value.message).includes('fixture event delivery')) notified();
+    });
+    jest.spyOn(app.storage, 'commitRecords').mockImplementation(async changes => {
+      if (!failed && changes.some(change => change.namespace === 'automation-event-receipts' && change.id.startsWith(second.id + ':run:'))) {
+        failed = true;
+        throw new Error('fixture event delivery');
+      }
+      return commit(changes);
+    });
+    try {
+      const run = await app.runtime.start({ actorId: 'owner', conversationId: 'retry-source', agentId: 'default', providerId,
+        requestKey: 'delivery-failure', message: { role: 'user', parts: [{ text: '完成本次来源任务。' }] } });
+      await app.runtime.wait(run.id); await failureNotice;
+      expect((await app.automations.list('owner')).find(record => record.id === first.id)!.pendingEvent?.sourceRunId).toBe(run.id);
+      expect((await app.automations.list('owner')).find(record => record.id === second.id)!.pendingEvent).toBeUndefined();
+      await app.automations.tick(now);
+      await app.automations.tick(now);
+      for (const task of [first, second]) {
+        const record = await until(task.id, value => value.completedRuns === 1 && !value.currentRequestKey);
+        expect(record.recentEvents?.filter(value => value.sourceRunId === run.id)).toHaveLength(1);
+      }
+      expect(calls).toHaveLength(3);
+    } finally { unsubscribe(); }
+  });
+
+  test('终态重试还在等待事件源校验时，其他到期任务可以开始运行', async () => {
+    const task = await create({ kind: 'schedule', schedule: { type: 'once', at: now + 1000 }, missedRunPolicy: 'once' });
+    const commit = app.storage.commitRecords.bind(app.storage);
+    let failed = false, notified!: () => void;
+    const failureNotice = new Promise<void>(resolve => { notified = resolve; });
+    const unsubscribe = app.subscribe(event => {
+      if (event.type === 'notification' && String(event.message).includes('fixture slow settlement')) notified();
+    });
+    jest.spyOn(app.storage, 'commitRecords').mockImplementation(async changes => {
+      if (!failed && changes.some(change => change.namespace === 'automations' && change.id === task.id && 'value' in change
+        && (change.value as AutomationRecord | undefined)?.completedRuns === 1)) {
+        failed = true; throw new Error('fixture slow settlement');
+      }
+      return commit(changes);
+    });
+    let release!: () => void, enter!: () => void, started!: () => void;
+    const waiting = new Promise<void>(resolve => { release = resolve; });
+    const entered = new Promise<void>(resolve => { enter = resolve; });
+    const healthyStarted = new Promise<void>(resolve => { started = resolve; });
+    let ticking: Promise<void> | undefined, timer: ReturnType<typeof setTimeout> | undefined;
+    try {
+      now += 1000; await app.automations.tick(now); await failureNotice;
+      const pending = (await app.automations.list('owner')).find(record => record.id === task.id)!;
+      const run = await app.storage.getRunByRequestKey(pending.currentRequestKey!);
+      const settle = AutomationEventSources.prototype.settleFiles;
+      let held = false;
+      jest.spyOn(AutomationEventSources.prototype, 'settleFiles').mockImplementation(async function (this: AutomationEventSources, value) {
+        await settle.call(this, value);
+        if (!held && value.id === run!.id) { held = true; enter(); await waiting; }
+      });
+      await app.createConversation('owner', '独立任务', undefined, { platformMode: 'chat' }, undefined, { id: 'independent-chat' });
+      await create({ kind: 'schedule', conversationId: 'independent-chat', schedule: { type: 'once', at: now + 1000 }, missedRunPolicy: 'once' });
+      generate = async input => { if (input.conversationId === 'independent-chat') started(); return answer(); };
+      now += 1000; ticking = app.automations.tick(now); await entered;
+      await Promise.race([healthyStarted, new Promise<never>((_resolve, reject) => {
+        timer = setTimeout(() => reject(new Error('慢终态重试阻塞了独立的到期任务')), 5000);
+      })]);
+      expect(calls).toHaveLength(2);
+      release(); await ticking;
+      await until(task.id, record => record.completedRuns === 1 && !record.currentRequestKey);
+    } finally { clearTimeout(timer); release(); await ticking; unsubscribe(); }
+  });
+
+  test('关闭自动任务会等待已经开始但尚未进入写入队列的终态处理', async () => {
+    generate = async () => complete();
+    const task = await create(); await app.automations.tick(now);
+    const finished = await until(task.id, record => record.completedRuns === 1 && !record.currentRequestKey);
+    const read = app.storage.getRun.bind(app.storage);
+    let enter!: () => void, release!: () => void, held = false;
+    const entered = new Promise<void>(resolve => { enter = resolve; });
+    const waiting = new Promise<void>(resolve => { release = resolve; });
+    jest.spyOn(app.storage, 'getRun').mockImplementation(async (...args) => {
+      const result = await read(...args);
+      if (!held && args[0] === finished.lastRunId) { held = true; enter(); await waiting; }
+      return result;
+    });
+    app.publish({ type: 'event', event: { type: 'run.completed', runId: finished.lastRunId } });
+    let closing: Promise<void> | undefined, closed = false;
+    try {
+      await entered;
+      closing = app.automations.close().then(() => { closed = true; });
+      await new Promise(resolve => setImmediate(resolve));
+      expect(closed).toBe(false);
+      release(); await closing;
+      expect((await app.automations.list('owner')).find(record => record.id === task.id)!.completedRuns).toBe(1);
+      expect(calls).toHaveLength(1);
+    } finally { release(); await closing; }
+  });
+
+  test('最后一条终态交付结束后，桌面等待退出能再次收到空闲状态', async () => {
+    let enter!: () => void, release!: () => void, checked!: () => void, closed!: () => void;
+    const entered = new Promise<void>(resolve => { enter = resolve; });
+    const waiting = new Promise<void>(resolve => { release = resolve; });
+    const firstCheck = new Promise<void>(resolve => { checked = resolve; });
+    const exited = new Promise<void>(resolve => { closed = resolve; });
+    const completeEvent = AutomationEventSources.prototype.completed;
+    jest.spyOn(AutomationEventSources.prototype, 'completed').mockImplementationOnce(async function (this: AutomationEventSources, id) {
+      await completeEvent.call(this, id); enter(); await waiting;
+    });
+    let pendingClose = false, timer: ReturnType<typeof setTimeout> | undefined;
+    const close = jest.fn(async () => { pendingClose = false; closed(); });
+    const report = jest.fn();
+    const check = createIdleCloseCheck({ pending: () => pendingClose,
+      active: async () => {
+        const active = !!(await app.storage.listRuns({ activeOnly: true, limit: 1 })).length || app.automations.keepsAlive;
+        checked(); return active;
+      }, close, report });
+    const unsubscribe = app.subscribe(event => { if (event.type === 'event' || event.type === 'automation.changed') check(); });
+    try {
+      const run = await app.runtime.start({ actorId: 'owner', conversationId: 'auto-chat', agentId: 'default', providerId,
+        requestKey: 'idle-final-completion', message: { role: 'user', parts: [{ text: '完成后退出。' }] } });
+      await app.runtime.wait(run.id); await entered;
+      pendingClose = true; check(); await firstCheck;
+      expect(close).not.toHaveBeenCalled();
+      release();
+      await Promise.race([exited, new Promise<never>((_resolve, reject) => {
+        timer = setTimeout(() => reject(new Error('终态清空后没有通知桌面重新检查退出')), 5000);
+      })]);
+      expect(close).toHaveBeenCalledTimes(1);
+      expect(app.automations.keepsAlive).toBe(false);
+      expect(report).not.toHaveBeenCalled();
+    } finally { pendingClose = false; release(); clearTimeout(timer); unsubscribe(); await app.automations.close(); }
   });
 
   test('总结和子任务的用量归属同一目标，旧请求中的预算字段不限制持续执行', async () => {
