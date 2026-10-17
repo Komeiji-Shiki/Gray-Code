@@ -6,6 +6,7 @@ import WorkbenchTabs from '../../../../apps/client/src/components/WorkbenchTabs.
 import MobileCodeEditor from '../../../../apps/client/src/components/MobileCodeEditor.vue';
 import { state } from '../../../../apps/client/src/state';
 import { effectScope } from 'vue';
+import { useWorkbenchDocuments } from '../../../../apps/client/src/useWorkbenchDocuments';
 import { useNavigationIntent } from '../../../../apps/client/src/navigationIntent';
 
 const mocks = vi.hoisted(() => ({ call: vi.fn(), report: vi.fn(), listeners: new Set<(event: any) => void>() }));
@@ -89,6 +90,140 @@ test('迟到的打开响应可以保留标签，但不能抢回较新文件的�
   slow.resolve(document('slow.ts')); await flushPromises();
   expect(view.tabs().props('active')).toBe('file:project:latest.ts');
   expect(view.tabs().props('tabs')).toEqual(expect.arrayContaining([expect.objectContaining({ id: 'file:project:slow.ts' })]));
+});
+
+test.each(['folder/a.ts', 'alias/a.ts'])('打开 %s 的响应到达前先收到连续移动，使用最终路径和正文', async requested => {
+  const slow = deferred<ReturnType<typeof document>>();
+  mocks.call.mockImplementation(async method => method === 'documents.open' ? slow.promise : undefined);
+  const view = await workbench(true);
+  view.open(requested);
+  const original = document('folder/a.ts');
+  const moved = { ...original, path: 'folder/b.ts', text: '第一次移动后的正文', version: 2 };
+  const latest = { ...moved, path: 'folder/c.ts', text: '最终位置的正文', version: 3 };
+  for (const listener of mocks.listeners) listener({ type: 'document.reset', workspaceId: 'project', path: original.path,
+    previousText: original.text, previousVersion: original.version, document: moved });
+  for (const listener of mocks.listeners) listener({ type: 'document.reset', workspaceId: 'project', path: moved.path,
+    previousText: moved.text, previousVersion: moved.version, document: latest });
+  slow.resolve(original);
+  await flushPromises();
+  expect(view.tabs().props('active')).toBe('file:project:folder/c.ts');
+  expect(view.tabs().props('tabs')).not.toEqual(expect.arrayContaining([expect.objectContaining({ id: 'file:project:folder/a.ts' })]));
+  expect(view.wrapper.findComponent(MobileCodeEditor).props('value')).toBe(latest.text);
+  expect(mocks.report).not.toHaveBeenCalled();
+});
+
+test('打开响应到达前文件已删除，迟到响应不会重新加入标签', async () => {
+  const slow = deferred<ReturnType<typeof document>>();
+  mocks.call.mockImplementation(async method => method === 'documents.open' ? slow.promise : undefined);
+  const view = await workbench(true);
+  view.open('removed.ts');
+  const original = document('removed.ts');
+  for (const listener of mocks.listeners) listener({ type: 'document.reset', workspaceId: 'project', path: original.path,
+    previousText: original.text, previousVersion: original.version, removed: true });
+  slow.resolve(original);
+  await flushPromises();
+  expect(view.tabs().props('tabs')).not.toEqual(expect.arrayContaining([expect.objectContaining({ id: 'file:project:removed.ts' })]));
+  expect(mocks.report).not.toHaveBeenCalled();
+});
+
+test('并发打开在回放移动后只保留一个文档，并保留先到文档的新草稿', async () => {
+  const first = deferred<ReturnType<typeof document>>(), second = deferred<ReturnType<typeof document>>();
+  let calls = 0;
+  mocks.call.mockImplementation(async (method, params) => {
+    if (method === 'documents.open') return calls++ === 0 ? first.promise : second.promise;
+    if (method === 'documents.update') return { ...document(params.path), text: params.text, version: params.version + 1, dirty: true };
+  });
+  // 标签列表会按键合并，直接检查文档模型身份，避免展示层掩盖重复状态。
+  let lifecycle!: ReturnType<typeof useWorkbenchDocuments>;
+  wrappers.push(shallowMount({ setup() {
+    lifecycle = useWorkbenchDocuments({ disposed: () => false, changed() {}, saveFailed() {} });
+    return () => null;
+  } }));
+  const firstOpening = lifecycle.open('folder/a.ts', 'project');
+  const secondOpening = lifecycle.open('alias/a.ts', 'project');
+  const original = document('folder/a.ts');
+  const moved = { ...original, path: 'folder/b.ts', version: 2 };
+  for (const listener of mocks.listeners) listener({ type: 'document.reset', workspaceId: 'project', path: original.path,
+    previousText: original.text, previousVersion: original.version, document: moved });
+  first.resolve({ ...original });
+  const opened = await firstOpening;
+  await flushPromises();
+  lifecycle.change(opened!, '先到文档的新草稿');
+  await flushPromises();
+  second.resolve({ ...original });
+  const continued = await secondOpening;
+  await flushPromises();
+  expect(lifecycle.documents).toHaveLength(1);
+  expect(continued).toBe(opened);
+  expect(lifecycle.documents[0]).toMatchObject({ path: moved.path, text: '先到文档的新草稿', dirty: true });
+  expect(mocks.report).not.toHaveBeenCalled();
+});
+
+test('关闭先到的文档后丢弃原有迟到打开，之后的新打开仍正常生效', async () => {
+  const first = deferred<ReturnType<typeof document>>(), second = deferred<ReturnType<typeof document>>();
+  let calls = 0;
+  mocks.call.mockImplementation(async (method, params) => {
+    if (method === 'documents.open') return calls++ === 0 ? first.promise : calls === 2 ? second.promise
+      : { ...document(params.path), text: '明确重新打开的正文', version: 4 };
+  });
+  const view = await workbench(true);
+  view.open('closed.ts');
+  view.open('closed.ts');
+  first.resolve(document('closed.ts'));
+  await flushPromises();
+  view.tabs().vm.$emit('close', 'file:project:closed.ts');
+  await flushPromises();
+  second.resolve(document('closed.ts'));
+  await flushPromises();
+  expect(view.tabs().props('tabs')).not.toEqual(expect.arrayContaining([expect.objectContaining({ id: 'file:project:closed.ts' })]));
+  view.open('closed.ts');
+  await flushPromises();
+  expect(view.wrapper.findComponent(MobileCodeEditor).props('value')).toBe('明确重新打开的正文');
+  expect(mocks.report).not.toHaveBeenCalled();
+});
+
+test('首次打开期间收到文件变更，登记后读取最新磁盘内容', async () => {
+  const slow = deferred<ReturnType<typeof document>>();
+  const latest = { ...document('changed.ts'), text: '磁盘后来写入的正文', version: 2, baseHash: 'latest-hash' };
+  mocks.call.mockImplementation(async (method, params) => method === 'documents.open' ? params.reload ? latest : slow.promise : undefined);
+  const view = await workbench(true);
+  view.open('changed.ts');
+  for (const listener of mocks.listeners) listener({ type: 'file.changed', workspaceId: 'project', path: 'changed.ts' });
+  slow.resolve(document('changed.ts'));
+  await flushPromises();
+  expect(view.wrapper.findComponent(MobileCodeEditor).props('value')).toBe(latest.text);
+  expect(mocks.call).toHaveBeenCalledWith('documents.open', { workspaceId: 'project', path: 'changed.ts', reload: true });
+});
+
+test('重连完成后旧打开响应不登记文档，再次明确打开可读取当前版本', async () => {
+  const slow = deferred<ReturnType<typeof document>>();
+  let calls = 0;
+  mocks.call.mockImplementation(async (method, params) => method === 'documents.open'
+    ? calls++ === 0 ? slow.promise : { ...document(params.path), text: '重连后的正文', version: 4 } : undefined);
+  const view = await workbench(true);
+  view.open('reconnected.ts');
+  for (const listener of mocks.listeners) listener({ type: 'transport.disconnected' });
+  for (const listener of mocks.listeners) listener({ type: 'transport.resumed', snapshotRequired: true });
+  slow.resolve(document('reconnected.ts'));
+  await flushPromises();
+  expect(view.tabs().props('tabs')).not.toEqual(expect.arrayContaining([expect.objectContaining({ id: 'file:project:reconnected.ts' })]));
+  view.open('reconnected.ts');
+  await flushPromises();
+  expect(view.wrapper.findComponent(MobileCodeEditor).props('value')).toBe('重连后的正文');
+  expect(mocks.report).not.toHaveBeenCalled();
+});
+
+test('打开响应已包含更新版本时，期间缓存的重置不会倒退正文', async () => {
+  const slow = deferred<ReturnType<typeof document>>();
+  mocks.call.mockImplementation(async method => method === 'documents.open' ? slow.promise : undefined);
+  const view = await workbench(true);
+  view.open('latest.ts');
+  const original = document('latest.ts');
+  for (const listener of mocks.listeners) listener({ type: 'document.reset', workspaceId: 'project', path: original.path,
+    previousText: original.text, previousVersion: original.version, document: { ...original, text: '较早的重置', version: 2 } });
+  slow.resolve({ ...original, text: '回执中的最新正文', version: 3 });
+  await flushPromises();
+  expect(view.wrapper.findComponent(MobileCodeEditor).props('value')).toBe('回执中的最新正文');
 });
 
 test('用户选择其他面板后，旧打开失败不覆盖当前界面错误', async () => {

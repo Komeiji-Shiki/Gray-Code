@@ -17,6 +17,14 @@ interface WorkbenchDocumentOptions {
   changed(change: WorkbenchDocumentChange): void;
   saveFailed(document: DocumentState): void;
 }
+interface PendingDocumentOpen {
+  workspaceId: string; valid: boolean; resets: Record<string, unknown>[]; changedPaths: Set<string>;
+  closedKeys: Set<string>;
+}
+type DocumentResetResult =
+  | { kind: 'unchanged' }
+  | { kind: 'removed'; error?: Error }
+  | { kind: 'updated'; document: DocumentState; synchronized?: { text: string; version: number }; resendText?: string; error?: Error };
 
 /** 文档同步、保存与断线恢复共用同一队列，不随可见编辑器切换而重建。 */
 export function useWorkbenchDocuments(options: WorkbenchDocumentOptions) {
@@ -29,6 +37,7 @@ export function useWorkbenchDocuments(options: WorkbenchDocumentOptions) {
   const recoveringDocuments = new Set<DocumentState>();
   const documentConflicts = new WeakSet<DocumentState>();
   const closingDocuments = new Set<DocumentState>();
+  const pendingOpens = new Set<PendingDocumentOpen>();
   let connected = true;
   let focusedDocument: DocumentState | undefined;
   const recoveryConflict = (doc: DocumentState) => new Error(`${doc.path}: ${t('documentRecoveryConflict')}`);
@@ -144,23 +153,56 @@ export function useWorkbenchDocuments(options: WorkbenchDocumentOptions) {
   async function open(path: string, workspaceId: string): Promise<DocumentState | undefined> {
     const existing = documents.find(document => document.workspaceId === workspaceId && document.path === path);
     if (existing) return existing;
-    const opened = await call<DocumentState>('documents.open', { workspaceId, path });
-    if (isDisposed()) return;
-    const concurrent = documents.find(document => key(document) === key(opened));
-    if (concurrent) return concurrent;
-    documents.push(opened);
-    const document = documents[documents.length - 1];
-    synchronizedText.set(document, { text: document.text, version: document.version });
-    return document;
+    const pending: PendingDocumentOpen = { workspaceId, valid: true, resets: [], changedPaths: new Set(), closedKeys: new Set() };
+    pendingOpens.add(pending);
+    try {
+      const opened = await call<DocumentState>('documents.open', { workspaceId, path });
+      if (isDisposed() || !connected || !pending.valid) return;
+      let current = opened;
+      let synchronized = { text: opened.text, version: opened.version };
+      let resendText: string | undefined;
+      let error: Error | undefined;
+      const identities = new Set([key(opened)]);
+      // 先确定最终身份再登记，多个旧路径回执不能因移动回放建立重复文档。
+      for (const event of pending.resets) {
+        if (current.workspaceId !== event.workspaceId || current.path !== event.path) continue;
+        const result = resetResult(current, event);
+        if (result.kind === 'unchanged') continue;
+        if (result.kind === 'removed') { if (result.error) throw result.error; return; }
+        current = result.document;
+        identities.add(key(current));
+        if (result.synchronized) { synchronized = result.synchronized; resendText = result.resendText; }
+        error = result.error;
+      }
+      if ([...identities].some(identity => pending.closedKeys.has(identity))) return;
+      const concurrent = documents.find(document => key(document) === key(current));
+      if (concurrent) return concurrent;
+      documents.push(current);
+      const document = documents[documents.length - 1];
+      synchronizedText.set(document, synchronized);
+      if (resendText !== undefined) change(document, resendText);
+      if (error) report(error);
+      if (pending.changedPaths.has(document.path)) refreshFile(document.workspaceId, document.path);
+      return document;
+    } catch (error) {
+      if (!isDisposed() && pending.valid) throw error;
+    } finally { pendingOpens.delete(pending); }
   }
 
   async function close(document: DocumentState, discard: boolean): Promise<void> {
     if (closingDocuments.has(document)) return;
     closingDocuments.add(document);
+    const pendingBeforeClose = [...pendingOpens].filter(pending => pending.workspaceId === document.workspaceId);
+    const closedKeys = new Set([key(document)]);
     try {
       await flushDocument(document).catch(() => undefined);
       if (documents.includes(document)) {
+        closedKeys.add(key(document));
         await call('documents.close', { workspaceId: document.workspaceId, path: document.path, discard });
+      }
+      closedKeys.add(key(document));
+      for (const pending of pendingBeforeClose) if (pendingOpens.has(pending)) {
+        for (const identity of closedKeys) pending.closedKeys.add(identity);
       }
       const index = documents.indexOf(document);
       if (index >= 0) documents.splice(index, 1);
@@ -198,35 +240,52 @@ export function useWorkbenchDocuments(options: WorkbenchDocumentOptions) {
     }
   }
 
-  function reset(event: Record<string, any>): void {
+  function reset(event: Record<string, unknown>): void {
+    for (const pending of pendingOpens) if (pending.workspaceId === event.workspaceId) pending.resets.push(event);
     const document = documents.find(item => item.workspaceId === event.workspaceId && item.path === event.path);
     if (!document) return;
-    if (typeof event.previousVersion === 'number' && document.version > event.previousVersion) return;
+    applyReset(document, event);
+  }
+
+  function resetResult(document: DocumentState, event: Record<string, any>): DocumentResetResult {
+    if (typeof event.previousVersion === 'number' && document.version > event.previousVersion) return { kind: 'unchanged' };
     const newerText = document.dirty || document.text !== event.previousText;
     if (event.document) {
+      const next: DocumentState = { ...document, ...event.document };
+      const resendText = newerText && document.text !== next.text ? document.text : undefined;
+      if (resendText !== undefined) { next.text = resendText; next.dirty = true; }
+      return { kind: 'updated', document: next, resendText,
+        synchronized: { text: event.document.text, version: event.document.version } };
+    }
+    if (!newerText) return { kind: 'removed', error: event.removed ? undefined : new Error(event.error) };
+    return { kind: 'updated', document: { ...document, dirty: true },
+      error: new Error(event.error ?? t('uiWorkbenchFileChangedKeepInput')) };
+  }
+
+  function applyReset(document: DocumentState, event: Record<string, unknown>): void {
+    const result = resetResult(document, event);
+    if (result.kind === 'unchanged') return;
+    if (result.kind === 'removed') {
+      const index = documents.indexOf(document);
+      documents.splice(index, 1);
+      options.changed({ type: 'removed', document, index, reopened: false });
+    } else {
       const previousKey = key(document);
-      const text = document.text;
-      Object.assign(document, event.document);
-      synchronizedText.set(document, { text: event.document.text, version: event.document.version });
+      Object.assign(document, result.document);
+      if (result.synchronized) synchronizedText.set(document, result.synchronized);
       if (key(document) !== previousKey) {
         const pending = queues.get(previousKey);
         queues.delete(previousKey);
         if (pending) queues.set(key(document), pending);
         options.changed({ type: 'renamed', document, previousKey });
       }
-      if (newerText && text !== document.text) change(document, text);
-    } else if (!newerText) {
-      const index = documents.indexOf(document);
-      documents.splice(index, 1);
-      options.changed({ type: 'removed', document, index, reopened: false });
-      if (!event.removed) report(new Error(event.error));
-    } else {
-      document.dirty = true;
-      report(new Error(event.error ?? t('uiWorkbenchFileChangedKeepInput')));
+      if (result.resendText !== undefined) change(document, result.resendText);
     }
+    if (result.error) report(result.error);
   }
 
   function refreshFile(workspaceId: string, path: string): void {
+    for (const pending of pendingOpens) if (pending.workspaceId === workspaceId) pending.changedPaths.add(path);
     const document = documents.find(item => item.workspaceId === workspaceId && item.path === path);
     if (!document || document.dirty) return;
     void queue(document, async () => {
@@ -249,13 +308,24 @@ export function useWorkbenchDocuments(options: WorkbenchDocumentOptions) {
   watch(() => documents.filter(document => document.dirty).length, count => {
     void call('desktop.dirtyDocuments', { count }).catch(report);
   });
+  function invalidatePendingOpens(): void {
+    for (const pending of pendingOpens) {
+      pending.valid = false;
+      pending.resets.length = 0;
+      pending.changedPaths.clear();
+      pending.closedKeys.clear();
+    }
+    pendingOpens.clear();
+  }
   const unsubscribe = subscribe(event => {
     if (event.type === 'transport.disconnected') {
       connected = false;
+      invalidatePendingOpens();
     } else if (event.type === 'transport.resumed') {
       const disconnected = !connected;
       connected = true;
       if (!disconnected && !event.snapshotRequired && !event.authenticatedAgain) return;
+      invalidatePendingOpens();
       for (const document of documents) recoveringDocuments.add(document);
       void Promise.allSettled(documents.map(recoverDocument)).then(() => {
         const document = focusedDocument;
@@ -282,7 +352,7 @@ export function useWorkbenchDocuments(options: WorkbenchDocumentOptions) {
       });
     }
   });
-  onUnmounted(unsubscribe);
+  onUnmounted(() => { invalidatePendingOpens(); unsubscribe(); });
 
   return {
     documents: documents as readonly DocumentState[],

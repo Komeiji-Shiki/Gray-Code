@@ -23,6 +23,7 @@ const petRequests = [];
 const workflowRequests = [];
 const projectSwitchRequests = [];
 let chatReadyGate;
+let documentOpenGate;
 async function until(check, label, timeout = 20000) {
   const deadline = Date.now() + timeout;
   while (Date.now() < deadline) { const result = await check(); if (result) return result; await sleep(100); }
@@ -198,6 +199,36 @@ async function verifyLatestFileFocus(evaluate) {
     assert(await evaluate('document.querySelector(".workbench-tab [aria-selected=true]").textContent.includes("hello.ts")'));
   } finally { release(); fs.open = originalOpen; }
 }
+async function verifyDocumentOpenRace({ rpc, evaluate }) {
+  let release;
+  const gate = { path: 'moving-open.ts', entered: false, wait: new Promise(resolve => { release = resolve; }) };
+  const target = 'moved-open.ts';
+  const before = await rpc('files.inspect', { workspaceId: 'smoke', path: gate.path });
+  documentOpenGate = gate;
+  try {
+    await evaluate(`window.__smokeDocumentReset = false;
+      window.__smokeDocumentResetDispose = window.graycode.subscribe(event => {
+        if (event.type === 'document.reset' && event.workspaceId === 'smoke'
+          && event.path === 'moving-open.ts' && event.document?.path === 'moved-open.ts') window.__smokeDocumentReset = true;
+      }); undefined`);
+    await evaluate('Array.from(document.querySelectorAll(".tree-row")).find(node => node.textContent.includes("moving-open.ts")).click()');
+    await until(() => gate.entered, 'document open response held after server registration');
+    await rpc('files.move', { workspaceId: 'smoke', path: gate.path, target, expectedVersion: before.version });
+    await until(() => evaluate('window.__smokeDocumentReset'), 'document reset delivered before open response');
+    release();
+    await until(() => evaluate('document.querySelector(".workbench-tab [aria-selected=true]")?.textContent.includes("moved-open.ts")'),
+      'moved document selected after delayed response');
+    await until(() => evaluate('document.querySelector(".monaco-editor .view-lines")?.textContent.includes("delayedResponse")'),
+      'moved document text displayed');
+    assert(!await evaluate('Array.from(document.querySelectorAll(".workbench-tab")).some(node => node.textContent.includes("moving-open.ts"))'));
+    return true;
+  } finally {
+    documentOpenGate = undefined;
+    release();
+    await evaluate('window.__smokeDocumentResetDispose?.(); delete window.__smokeDocumentResetDispose; delete window.__smokeDocumentReset; undefined')
+      .catch(error => { errors.push(`Document fixture cleanup: ${String(error)}`); });
+  }
+}
 async function verifyProjectReplace(evaluate) {
   await evaluate('window.dispatchEvent(new KeyboardEvent("keydown", { key: "f", ctrlKey: true, shiftKey: true, bubbles: true }))');
   await until(() => evaluate('!!document.querySelector(".search-panel")'), 'project search panel');
@@ -221,6 +252,7 @@ async function main() {
   fsSync.mkdirSync(path.join(output, 'documents'), { recursive: true });
   fsSync.writeFileSync(path.join(output, 'project', 'hello.ts'), 'export const message: string = "Hello GrayCode";\n');
   fsSync.writeFileSync(path.join(output, 'project', 'slow-open.ts'), 'export const delayed = true;\n');
+  fsSync.writeFileSync(path.join(output, 'project', 'moving-open.ts'), 'export const delayedResponse = true;\n');
   fsSync.writeFileSync(path.join(output, 'project', 'replace-ui.txt'), 'needle target\n');
   fsSync.writeFileSync(path.join(output, 'project', 'index.html'), '<!doctype html><title>Preview verified</title><h1>GrayCode preview</h1>');
   app.setPath('userData', path.join(output, 'profile'));
@@ -236,7 +268,14 @@ async function main() {
     return registerIpc.call(this, channel, async (...args) => {
       const gate = chatReadyGate;
       if (gate && args[1] === 'ui.request' && args[2]?.type === 'webviewReady') { gate.entered = true; await gate.wait; }
-      return listener(...args);
+      const documentGate = documentOpenGate;
+      const result = await listener(...args);
+      // 服务端登记先完成，仅暂缓本夹具的回执，让真实移动事件先抵达渲染器。
+      if (documentGate && args[1] === 'documents.open' && args[2]?.workspaceId === 'smoke' && args[2]?.path === documentGate.path) {
+        documentGate.entered = true;
+        await documentGate.wait;
+      }
+      return result;
     });
   };
   dialog.showErrorBox = (title, message) => { process.stderr.write(`${title}: ${message}\n`); app.exit(1); };
@@ -400,6 +439,7 @@ async function main() {
   await evaluate('Array.from(document.querySelectorAll(".tree-row")).find(node=>node.textContent.includes("hello.ts")).click()');
   await until(() => evaluate('!!document.querySelector(".monaco-editor")'), 'Monaco editor');
   await verifyLatestFileFocus(evaluate);
+  const documentOpenRaceVerified = await verifyDocumentOpenRace({ rpc, evaluate });
   shellShortcuts.monacoProjectSearchVisible = await workflowSmoke.verifyMonacoSearchShortcut({ window, evaluate, until });
   await require('./smoke-image-preview.cjs')({ window, evaluate, ui, until, root, output });
   const terminal = await rpc('terminal.create', { workspaceId: 'smoke' });
@@ -549,7 +589,7 @@ async function main() {
   assert.equal(Menu.getApplicationMenu(), configuredMenu, 'Settings changes that keep the language must reuse the native menu.');
   assert.deepEqual(errors, [], 'Desktop smoke must not contain renderer errors.');
   const report = { ok: true, electron: process.versions.electron, node: process.versions.node, requests, regexSearchVerified: true, editorFlowVerified: true,
-    startupCommandsVerified,
+    startupCommandsVerified, documentOpenRaceVerified,
     chatLayout, rendererPerformance, pets: petSmoke, workflows: { companion: companionWorkflow, projectSwitch: projectSwitchWorkflow, shellShortcuts, inputToolbar,
       settings: { screenshots: ['settings-context.png', 'settings-context-prompts.png', 'settings-context-count.png', 'settings-companion.png'],
         unifiedContextAndCompanion: true, nativeMenuLanguageSwitch: true, nativeMenuRetainedForOtherSettings: true,
