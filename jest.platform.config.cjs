@@ -6,8 +6,9 @@ module.exports = {
   roots: ['<rootDir>/packages/core/tests'],
   testMatch: ['**/*.test.ts'],
   testTimeout: 20000,
-  // 与 backend 配置一致：限制 worker 数量并回收空闲内存过高的 worker。
-  maxWorkers: '50%',
+  // 平台用例以真实磁盘、HTTP 和子进程为主；超过两个 worker 会争抢 I/O，让 20 秒超时用例偶发失败。
+  // 两个 worker 的完整运行时长与 50% 核心接近，但内存占用和超时抖动更低。
+  maxWorkers: 2,
   workerIdleMemoryLimit: '768MB',
   moduleNameMapper: {
     '^@graycode/contracts$': '<rootDir>/packages/contracts/src/index.ts',

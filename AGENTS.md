@@ -98,6 +98,7 @@ npm run package:installer       # 从便携输出生成安装与更新交付物
 ## 验证
 
 - 开发中只做必要的快速检查，改完后集中跑回归；条件没变时不重复跑已经通过的整套检查。
+- 日常改动可用 `npm run test:changed` 只跑 backend 与 frontend 中受工作区改动影响的用例。平台相关改动先 `npm run build:platform`，再用 `npm run test:platform:changed` 只跑相关平台用例；提交前仍运行完整的 `test:platform` 或 `npm run ci`。
 - 测试位置：`backend/__tests__/`（根 Jest，只测 backend 与 shared 自身）、`packages/core/tests/`（平台 Jest；凡是导入 `apps/server` 或 `packages/core` 的用例都放这里，类型由 `packages/core/tests/tsconfig.json` 按服务端严格度检查）、`frontend/src` 下的测试目录（Vitest）。
 - 按改动范围选择命令：
   - 类型：`npm run typecheck:all`
