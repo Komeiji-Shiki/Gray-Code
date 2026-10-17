@@ -13,7 +13,7 @@ test('编辑器不挂键盘说明悬浮提示，发送按钮沿用现有说明�
   const send = mount(SendButton)
   try {
     expect(input.get('.input-editor').attributes('title')).toBeUndefined()
-    expect(send.get('.send-button').attributes('title')).toContain('Shift+Enter')
+    expect(send.get('.send-button:not(.preserve-send-button)').attributes('title')).toContain('Shift+Enter')
     await send.setProps({ loading: true })
     expect(send.findAll('.send-button')[0].attributes('title')).toContain('Shift+Enter')
   } finally { input.unmount(); send.unmount() }

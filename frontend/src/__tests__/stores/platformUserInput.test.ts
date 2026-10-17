@@ -34,9 +34,12 @@ describe('独立端忙时完整用户输入', () => {
     const secondImage = { ...screenshot, id: 'image-2', name: 'second.png', data: 'BBBB' }
     expect(await sendMessage(state, {} as ChatStoreComputed, text, [screenshot, secondImage],
       { messageId: 'request-1', deepSeekVisionTileSplit: false })).toBe(true)
-    expect(sendToExtension).toHaveBeenCalledExactlyOnceWith('chat.sendInterruptMessage', {
-      conversationId: 'conversation', text, messageId: 'request-1', attachments: [screenshot, secondImage], deepSeekVisionTileSplit: false
-    })
+    expect(vi.mocked(sendToExtension).mock.calls).toEqual([
+      ['chat.sendInterruptMessage', {
+        conversationId: 'conversation', text, messageId: 'request-1', attachments: [screenshot, secondImage], deepSeekVisionTileSplit: false
+      }],
+      ['terminal.detachToBackground', { conversationId: 'conversation' }]
+    ])
     expect(state.activeStreamId.value).toBe('live-stream')
     expect(state.streamingMessageId.value).toBe('tool-message')
     expect(state.isWaitingForResponse.value).toBe(true)
@@ -55,7 +58,8 @@ describe('独立端忙时完整用户输入', () => {
     expect(state.allMessages.value).toHaveLength(1)
     vi.mocked(sendToExtension).mockResolvedValue({ success: true, queued: true })
     expect(await sendMessage(state, {} as ChatStoreComputed, 'latest', [screenshot], { messageId: 'request-1' })).toBe(true)
-    expect(vi.mocked(sendToExtension).mock.calls[1][1]).toEqual(vi.mocked(sendToExtension).mock.calls[0][1])
+    const interruptCalls = vi.mocked(sendToExtension).mock.calls.filter(([type]) => type === 'chat.sendInterruptMessage')
+    expect(interruptCalls[1][1]).toEqual(interruptCalls[0][1])
   })
 
   test('回执丢失后运行已收尾，原稿重试仍查询同一接收 ID，不另开重复回合', async () => {
@@ -69,7 +73,8 @@ describe('独立端忙时完整用户输入', () => {
       state.isWaitingForResponse.value = false
       vi.mocked(sendToExtension).mockResolvedValue({ success: true, queued: true })
       expect(await sendMessage(state, {} as ChatStoreComputed, 'latest', [screenshot], { messageId: 'request-lost' })).toBe(true)
-      expect(vi.mocked(sendToExtension).mock.calls.map(([type]) => type)).toEqual(['chat.sendInterruptMessage', 'chat.sendInterruptMessage'])
+      expect(vi.mocked(sendToExtension).mock.calls.map(([type]) => type))
+        .toEqual(['chat.sendInterruptMessage', 'chat.sendInterruptMessage', 'terminal.detachToBackground'])
       expect(vi.mocked(sendToExtension).mock.calls[1][1]).toEqual(vi.mocked(sendToExtension).mock.calls[0][1])
       expect(state.activeStreamId.value).toBeNull()
       expect(state.isWaitingForResponse.value).toBe(false)
@@ -78,15 +83,20 @@ describe('独立端忙时完整用户输入', () => {
 
   test('跨会话晚到回执仅归属提交会话，不修改新流', async () => {
     const state = setup()
-    let resolve!: (value: unknown) => void
-    vi.mocked(sendToExtension).mockImplementation(() => new Promise(done => { resolve = done }))
+    let resolveInterrupt!: (value: unknown) => void
+    vi.mocked(sendToExtension).mockImplementation((type: string) => type === 'chat.sendInterruptMessage'
+      ? new Promise(done => { resolveInterrupt = done })
+      : Promise.resolve({ success: true }))
     const sending = sendMessage(state, {} as ChatStoreComputed, 'latest', [screenshot], { messageId: 'request-1' })
     state.currentConversationId.value = 'another-conversation'
     state.activeStreamId.value = 'another-stream'
-    resolve({ success: true, queued: true })
+    resolveInterrupt({ success: true, queued: true })
     expect(await sending).toBe(true)
     expect(state.activeStreamId.value).toBe('another-stream')
     expect(recentInterruptDeliveries.value[0].conversationId).toBe('conversation')
+    // 转后台仍以提交时的会话为准，不能跟着界面切走的会话转移。
+    expect(vi.mocked(sendToExtension).mock.calls.find(([type]) => type === 'terminal.detachToBackground')?.[1])
+      .toEqual({ conversationId: 'conversation' })
   })
 
   test.each(['agent_message', 'background_task'] as const)('内部来源 %s 不得误走真实用户输入通道', async source => {

@@ -17,12 +17,18 @@ defineProps<{
 
 const emit = defineEmits<{
   click: []
+  preserveDynamicContextClick: []
   cancel: []
 }>()
 
 // 处理点击
 function handleClick() {
   emit('click')
+}
+
+// 保留旧动态上下文原位，直接发送
+function handlePreserveDynamicContextClick() {
+  emit('preserveDynamicContextClick')
 }
 
 // 处理取消
@@ -32,7 +38,7 @@ function handleCancel() {
 </script>
 
 <template>
-  <!-- loading 状态：保留发送入口（消息会入队；若正在等待命令完成，命令转入后台、AI 优先响应） + 停止按钮 -->
+  <!-- loading 状态：保留发送入口（若正在等待命令完成，命令转入后台，消息在下一模型边界先被处理） + 停止按钮 -->
   <div v-if="loading" class="send-button-group">
     <button
       type="button"
@@ -60,6 +66,17 @@ function handleCancel() {
   </div>
 
   <div v-else class="send-button-group">
+    <button
+      type="button"
+      class="send-button preserve-send-button"
+      :disabled="disabled"
+      :title="t('components.input.sendPreserveDynamicContext')"
+      :aria-label="t('components.input.sendPreserveDynamicContext')"
+      @click="handlePreserveDynamicContextClick"
+    >
+      <i class="codicon codicon-pinned preserve-send-icon" aria-hidden="true"></i>
+    </button>
+
     <button
       type="button"
       class="send-button"
@@ -97,6 +114,14 @@ function handleCancel() {
   gap: 2px;
 }
 
+.preserve-send-button {
+  color: var(--gc-text-muted);
+}
+
+.preserve-send-button:hover:not(:disabled) {
+  color: var(--gc-text-primary);
+}
+
 .send-button:hover:not(:disabled) {
   background: var(--gc-surface-hover);
 }
@@ -112,6 +137,10 @@ function handleCancel() {
 
 .send-icon {
   font-size: 16px;
+}
+
+.preserve-send-icon {
+  font-size: 15px;
 }
 
 .stop-icon {

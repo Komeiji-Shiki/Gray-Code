@@ -53,7 +53,9 @@ describe('真实用户追加输入只保留应用内回执', () => {
       expect(store.hasPendingToolConfirmation).toBe(!streaming); expect(store.error).toBeNull()
       expect(nativeCalls()).toEqual([])
     }
-    expect(vi.mocked(sendToExtension).mock.calls.every(([name]) => name === MESSAGE_NAMES['chat.sendInterruptMessage'])).toBe(true)
+    expect(vi.mocked(sendToExtension).mock.calls
+      .filter(([name]) => name !== MESSAGE_NAMES['terminal.detachToBackground'])
+      .every(([name]) => name === MESSAGE_NAMES['chat.sendInterruptMessage'])).toBe(true)
   })
 
   test.each(['error', 'awaiting_user_action', 'continue_required'] as const)('追加输入不会吞掉稍后真正的 %s 停止通知', async reason => {

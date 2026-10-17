@@ -16,7 +16,6 @@ import SkillsWidget from './SkillsWidget.vue'
 import TpsBar from './TpsBar.vue'
 import BranchTreePanel from '../message/BranchTreePanel.vue'
 import InputSelectorBar from './InputSelectorBar.vue'
-import InputActionsMenu, { type InputActionItem } from './InputActionsMenu.vue'
 import ChannelSetupNotice, { type ChannelSetupStatus } from './ChannelSetupNotice.vue'
 // 首次打开才加载模块；延迟显示占位，避免本地 chunk 快速命中时闪烁。
 const AsyncDialogLoading = defineComponent({
@@ -722,44 +721,6 @@ function openContextDetail() {
   showContextDetail.value = true
 }
 
-const additionalActions = computed<InputActionItem[]>(() => [
-  {
-    id: 'checkpoint',
-    label: t('desktop.inputUi.createCheckpoint'),
-    title: t('components.input.createCheckpoint'),
-    icon: 'codicon-save',
-    disabled: !chatStore.currentConversationId || chatStore.isWaitingForResponse,
-    loading: isCreatingCheckpoint.value
-  },
-  {
-    id: 'summarize',
-    label: t('components.input.summarizeContext'),
-    icon: 'codicon-fold',
-    disabled: chatStore.isWaitingForResponse || chatStore.usedTokens === 0,
-    loading: isSummarizing.value
-  },
-  ...(promptPreviewAvailable ? [{
-    id: 'preview' as const,
-    label: t('desktop.inputUi.previewPrompt'),
-    icon: 'codicon-open-preview',
-    disabled: !currentModel.value || props.uploading
-  }] : []),
-  ...(!chatStore.isWaitingForResponse ? [{
-    id: 'preserve-send' as const,
-    label: t('desktop.inputUi.sendPreserveContext'),
-    title: t('components.input.sendPreserveDynamicContext'),
-    icon: 'codicon-pinned',
-    disabled: !canSend.value
-  }] : [])
-])
-
-function handleAdditionalAction(id: InputActionItem['id']) {
-  if (id === 'checkpoint') void handleCreateCheckpoint()
-  else if (id === 'summarize') void handleSummarize()
-  else if (id === 'preview') showPromptPreview.value = true
-  else if (id === 'preserve-send') handlePreserveDynamicContextSend()
-}
-
 // ========== lifecycle ==========
 
 onMounted(() => {
@@ -875,7 +836,18 @@ watch(() => settingsStore.promptModesVersion, () => {
         </div>
         <div class="toolbar-group" role="group" :aria-label="t('desktop.inputUi.conversationActions')">
           <BranchTreePanel />
-          <InputActionsMenu :items="additionalActions" @select="handleAdditionalAction" />
+          <Tooltip :content="t('components.input.createCheckpoint')" placement="top-left">
+            <IconButton
+              icon="codicon-save"
+              size="small"
+              :tooltip="t('components.input.createCheckpoint')"
+              :aria-label="t('components.input.createCheckpoint')"
+              :loading="isCreatingCheckpoint"
+              :disabled="!chatStore.currentConversationId || isCreatingCheckpoint || chatStore.isWaitingForResponse"
+              class="checkpoint-button"
+              @click="handleCreateCheckpoint"
+            />
+          </Tooltip>
         </div>
       </div>
 
@@ -883,6 +855,30 @@ watch(() => settingsStore.promptModesVersion, () => {
       <TpsBar v-if="settingsStore.tpsBarEnabled" class="tps-slot" />
 
       <div class="toolbar-right" role="group" :aria-label="t('desktop.inputUi.sendActions')">
+        <Tooltip v-if="promptPreviewAvailable" :content="t('desktop.inputUi.previewPrompt')" placement="top">
+          <IconButton
+            icon="codicon-open-preview"
+            size="small"
+            :tooltip="t('desktop.inputUi.previewPrompt')"
+            :aria-label="t('desktop.inputUi.previewPrompt')"
+            class="prompt-preview-button"
+            :disabled="!currentModel || props.uploading"
+            @click="showPromptPreview = true"
+          />
+        </Tooltip>
+        <Tooltip :content="t('components.input.summarizeContext')" placement="top">
+          <IconButton
+            icon="codicon-fold"
+            size="small"
+            :tooltip="t('components.input.summarizeContext')"
+            :aria-label="t('components.input.summarizeContext')"
+            :disabled="chatStore.isWaitingForResponse || chatStore.usedTokens === 0 || isSummarizing"
+            :loading="isSummarizing"
+            class="summarize-button"
+            @click="handleSummarize"
+          />
+        </Tooltip>
+
         <!-- 上下文统计详情入口：用量区域旁，只读展示 describeConversation -->
         <Tooltip :content="t('components.input.contextDetail.open')" placement="top">
           <IconButton
@@ -943,6 +939,7 @@ watch(() => settingsStore.promptModesVersion, () => {
           :loading="chatStore.isWaitingForResponse"
           :cancelling="chatStore.isCancellingStream"
           @click="handleSend"
+          @preserve-dynamic-context-click="handlePreserveDynamicContextSend"
           @cancel="handleCancel"
         />
       </div>
