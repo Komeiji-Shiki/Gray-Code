@@ -280,6 +280,7 @@ export const MESSAGE_NAMES = {
   'subagents.create': 'subagents.create',
   'subagents.delete': 'subagents.delete',
   'subagents.deleteRunMessage': 'subagents.deleteRunMessage',
+  'subagents.detachForeground': 'subagents.detachForeground',
   'subagents.exitRun': 'subagents.exitRun',
   'subagents.getPresets': 'subagents.getPresets',
   'subagents.list': 'subagents.list',

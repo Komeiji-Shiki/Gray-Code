@@ -235,14 +235,14 @@ async function deliverInterruptMessage(
     })
     if (messageId) pending.delete(messageId)
     if (result?.success) {
-      // 输入已持久接收后再把占用中的前台命令转入后台：命令返回后本轮工具立即结束，
+      // 输入已持久接收后再把占用中的前台工作转入后台：前台工具返回后本轮立即结束，
       // 模型才能在最近一个边界先处理这条消息；转后台失败不影响已接收的输入。
       if (platform) {
-        try {
-          await sendToExtension(MESSAGE_NAMES['terminal.detachToBackground'], { conversationId })
-        } catch (error) {
-          console.warn('[messageActions] terminal detach after interrupt failed:', error)
-        }
+        const detach = (type: 'terminal.detachToBackground' | 'subagents.detachForeground') =>
+          sendToExtension(MESSAGE_NAMES[type], { conversationId }).catch(error => {
+            console.warn(`[messageActions] ${type} after interrupt failed:`, error)
+          })
+        await Promise.all([detach('terminal.detachToBackground'), detach('subagents.detachForeground')])
       }
       recordInterruptDelivery({ conversationId, text: noticeText, kind: 'delivered' })
       return true

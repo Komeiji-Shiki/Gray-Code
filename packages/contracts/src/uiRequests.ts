@@ -18,6 +18,7 @@ export interface UiRequests {
   'subagents.pendingRequests': Request<{ conversationId: string }, ConversationSubagentPendingRequests>;
   'subagents.resolveApproval': Request<{ runId: string; id: string; accepted: boolean; choiceId?: string }, Success>;
   'subagents.answerQuestion': Request<{ runId: string; id: string; answers: string[] }, Success>;
+  'subagents.detachForeground': Request<{ conversationId: string }, { success: boolean; detached: string[] }>;
   'subagents.pauseRun': Request<{ runId: string }, SubagentControlResult>;
   'subagents.resumeRun': Request<{ runId: string }, SubagentControlResult>;
   'subagents.exitRun': Request<{ runId: string }, SubagentControlResult>;

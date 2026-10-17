@@ -14,6 +14,7 @@ export function subagentRequestHandlers(app: PlatformApplication, client: Client
       return app.subagents.answer(client.actorId, data.runId, data.id, data.accepted, data.choiceId);
     },
     'subagents.answerQuestion': data => app.subagents.answer(client.actorId, data.runId, data.id, data.answers),
+    'subagents.detachForeground': data => app.subagents.detachForeground(client.actorId, data.conversationId),
     'subagents.pauseRun': data => app.subagents.control(client.actorId, data.runId, 'pause'),
     'subagents.resumeRun': data => app.subagents.control(client.actorId, data.runId, 'resume'),
     'subagents.exitRun': data => app.subagents.control(client.actorId, data.runId, 'exit')

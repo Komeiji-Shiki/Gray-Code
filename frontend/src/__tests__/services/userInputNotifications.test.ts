@@ -54,7 +54,7 @@ describe('真实用户追加输入只保留应用内回执', () => {
       expect(nativeCalls()).toEqual([])
     }
     expect(vi.mocked(sendToExtension).mock.calls
-      .filter(([name]) => name !== MESSAGE_NAMES['terminal.detachToBackground'])
+      .filter(([name]) => name !== MESSAGE_NAMES['terminal.detachToBackground'] && name !== MESSAGE_NAMES['subagents.detachForeground'])
       .every(([name]) => name === MESSAGE_NAMES['chat.sendInterruptMessage'])).toBe(true)
   })
 

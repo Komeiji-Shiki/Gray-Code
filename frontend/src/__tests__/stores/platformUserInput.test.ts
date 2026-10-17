@@ -38,7 +38,8 @@ describe('独立端忙时完整用户输入', () => {
       ['chat.sendInterruptMessage', {
         conversationId: 'conversation', text, messageId: 'request-1', attachments: [screenshot, secondImage], deepSeekVisionTileSplit: false
       }],
-      ['terminal.detachToBackground', { conversationId: 'conversation' }]
+      ['terminal.detachToBackground', { conversationId: 'conversation' }],
+      ['subagents.detachForeground', { conversationId: 'conversation' }]
     ])
     expect(state.activeStreamId.value).toBe('live-stream')
     expect(state.streamingMessageId.value).toBe('tool-message')
@@ -74,7 +75,7 @@ describe('独立端忙时完整用户输入', () => {
       vi.mocked(sendToExtension).mockResolvedValue({ success: true, queued: true })
       expect(await sendMessage(state, {} as ChatStoreComputed, 'latest', [screenshot], { messageId: 'request-lost' })).toBe(true)
       expect(vi.mocked(sendToExtension).mock.calls.map(([type]) => type))
-        .toEqual(['chat.sendInterruptMessage', 'chat.sendInterruptMessage', 'terminal.detachToBackground'])
+        .toEqual(['chat.sendInterruptMessage', 'chat.sendInterruptMessage', 'terminal.detachToBackground', 'subagents.detachForeground'])
       expect(vi.mocked(sendToExtension).mock.calls[1][1]).toEqual(vi.mocked(sendToExtension).mock.calls[0][1])
       expect(state.activeStreamId.value).toBeNull()
       expect(state.isWaitingForResponse.value).toBe(false)
@@ -95,8 +96,10 @@ describe('独立端忙时完整用户输入', () => {
     expect(state.activeStreamId.value).toBe('another-stream')
     expect(recentInterruptDeliveries.value[0].conversationId).toBe('conversation')
     // 转后台仍以提交时的会话为准，不能跟着界面切走的会话转移。
-    expect(vi.mocked(sendToExtension).mock.calls.find(([type]) => type === 'terminal.detachToBackground')?.[1])
-      .toEqual({ conversationId: 'conversation' })
+    for (const type of ['terminal.detachToBackground', 'subagents.detachForeground']) {
+      expect(vi.mocked(sendToExtension).mock.calls.find(([name]) => name === type)?.[1])
+        .toEqual({ conversationId: 'conversation' })
+    }
   })
 
   test.each(['agent_message', 'background_task'] as const)('内部来源 %s 不得误走真实用户输入通道', async source => {

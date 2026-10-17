@@ -230,21 +230,44 @@ export class SubagentExecutionService {
   hasActiveConversation(conversationId: string): boolean {
     return [...this.live.values()].some(({ record }) => this.rootRecord(record).parentConversationId === conversationId);
   }
+  /** 把仍在等待前台工具结果的子代理转入后台；只解除父回合绑定，不终止运行。 */
+  private detachLive(record: PlatformSubagent, message: string): boolean {
+    const live = this.live.get(record.id);
+    if (!live || record.background) return false;
+    record.background = true;
+    live.detach({ success: true, data: { agentName: record.agentName, runId: record.id, taskId: record.taskId,
+      background: true, status: record.status, detached: true, message } });
+    this.taskEvent(record, 'start');
+    return true;
+  }
   async detachToMain(record: PlatformSubagent): Promise<void> {
     let current: PlatformSubagent | undefined = record;
     const changed: PlatformSubagent[] = [];
     while (current) {
-      const live = this.live.get(current.id);
-      if (live && !current.background) {
-        current.background = true; changed.push(current);
-        live.detach({ success: true, data: { agentName: current.agentName, runId: current.id, taskId: current.taskId,
-          background: true, status: current.status, detached: true, message: '子代理已向主模型发送消息，继续在后台执行。' } });
-        this.taskEvent(current, 'start');
-      }
+      if (this.detachLive(current, '子代理已向主模型发送消息，继续在后台执行。')) changed.push(current);
       const parentConversationId: string = current.parentConversationId;
       current = this.byConversation.get(parentConversationId);
     }
     await Promise.all(changed.map(item => this.save(item)));
+  }
+  /**
+   * 用户在本对话运行中发送新消息时，把占用前台工具调用的子代理转入后台继续执行。
+   * 工具调用以 detached 结果返回，主模型可以先处理用户消息；结果稍后由后台回执回流。
+   */
+  async detachForeground(actorId: string, conversationId: string): Promise<{ success: true; detached: string[] }> {
+    await this.app.conversation(actorId, conversationId);
+    const detached: string[] = [];
+    const changed: PlatformSubagent[] = [];
+    for (const live of this.live.values()) {
+      const record = live.record;
+      if (record.parentConversationId !== conversationId) continue;
+      const message = '用户发送了新消息，子代理已转入后台继续执行，未被取消；完成或失败后会以 [Background task completed] 回执送达，不要等待或轮询。';
+      if (!this.detachLive(record, message)) continue;
+      detached.push(record.id);
+      changed.push(record);
+    }
+    await Promise.all(changed.map(item => this.save(item)));
+    return { success: true, detached };
   }
   backgroundTasks() {
     return [...this.live.values()].filter(live => live.record.background).map(({ record }) => ({ id: record.taskId!, type: 'background_subagent',
