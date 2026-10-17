@@ -36,6 +36,7 @@ interface DocumentOpening {
 export class WorkspaceFiles {
   private readonly queues = new Map<string, Promise<unknown>>();
   private readonly documents = new Map<string, DocumentState>();
+  private readonly documentRefreshVersions = new WeakMap<DocumentState, number>();
   private readonly activeEditors = new Map<string, string>();
   private readonly detachedClients = new Set<string>();
   private readonly openingDocuments = new Set<DocumentOpening>();
@@ -131,6 +132,15 @@ export class WorkspaceFiles {
   dirtyPathsInDirectory(directory: string): string[] {
     return [...new Set([...this.documents].filter(([key, document]) => this.activeDraft(document) && this.documentInside(key, document, directory)).map(([, document]) => document.path))];
   }
+  private beginDocumentRefresh(key: string, document: DocumentState): () => boolean {
+    const refreshVersion = (this.documentRefreshVersions.get(document) ?? 0) + 1;
+    const version = document.version;
+    const baseHash = document.baseHash;
+    // 内容未变也使较早读取失效；刷新身份独立于面向编辑器的正文版本。
+    this.documentRefreshVersions.set(document, refreshVersion);
+    return () => this.documents.get(key) === document && !document.dirty && document.version === version && document.baseHash === baseHash
+      && this.documentRefreshVersions.get(document) === refreshVersion;
+  }
   /** 同步 Git 或外部操作改动的干净文件，保持原有草稿版本协议。 */
   async reloadCleanDocuments(directory: string, options: { invalidatePending?: boolean } = {}): Promise<void> {
     if (options.invalidatePending) this.invalidateDocumentOpens(directory);
@@ -151,7 +161,7 @@ export class WorkspaceFiles {
       if (previous.dirty || !this.documentInside(key, previous, directory)) continue;
       const event: DocumentReset = { workspaceId: previous.workspaceId, path: previous.path, clientId: previous.clientId,
         previousVersion: previous.version, previousText: previous.text };
-      const current = () => this.documents.get(key) === previous && !previous.dirty && previous.version === event.previousVersion;
+      const current = this.beginDocumentRefresh(key, previous);
       try {
         const value = await this.readAbsolute(key.slice(previous.clientId.length + 1));
         // Git 刷新也会读取外部修改；读取期间输入发生变化时，保留新草稿。
@@ -476,14 +486,17 @@ export class WorkspaceFiles {
         });
         const existing = this.documents.get(key);
         if (existing) {
-          const version = existing.version;
-          const value = reloadClean && !existing.dirty ? await this.readAbsolute(absolute) : undefined;
+          const currentRefresh = reloadClean && !existing.dirty ? this.beginDocumentRefresh(key, existing) : undefined;
+          const result = currentRefresh ? await this.readAbsolute(absolute).then(value => ({ value }), (error: unknown) => ({ error })) : undefined;
           return commit(() => {
             const current = this.documents.get(key);
             if (!current) throw new Error('DOCUMENT_CONFLICT: 编辑文档已关闭，请重新打开。');
             // 刷新保持草稿身份、焦点和单调版本；读取期间的新输入优先。
-            if (current === existing && value && !existing.dirty && existing.version === version && value.hash !== existing.baseHash) {
-              existing.text = value.text; existing.baseHash = value.hash; existing.version++;
+            if (currentRefresh?.() && result) {
+              if ('error' in result) throw result.error;
+              if (result.value.hash !== existing.baseHash) {
+                existing.text = result.value.text; existing.baseHash = result.value.hash; existing.version++;
+              }
             }
             return current;
           });
@@ -550,6 +563,8 @@ export class WorkspaceFiles {
       document.baseHash,
       clientId,
     );
+    // 保存成功确认了新的磁盘基线，即使内容未变也不能再接受此前的刷新结果。
+    this.documentRefreshVersions.set(document, (this.documentRefreshVersions.get(document) ?? 0) + 1);
     document.baseHash = result.hash;
     document.dirty = document.text !== text;
     return structuredClone(document);

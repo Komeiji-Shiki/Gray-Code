@@ -40,7 +40,9 @@ describe('文件打开与工作区生命周期的真实读盘竞态', () => {
     let held = false;
     jest.spyOn(fs, 'open').mockImplementation(async (...args) => {
       const handle = await nativeOpen(...args);
-      if (args[0] === target && !held) {
+      const source = String(args[0]);
+      const matches = process.platform === 'win32' ? source.toLowerCase() === target.toLowerCase() : source === target;
+      if (matches && !held) {
         held = true;
         const close = handle.close.bind(handle);
         jest.spyOn(handle, 'close').mockImplementationOnce(async () => {
@@ -189,6 +191,35 @@ describe('文件打开与工作区生命周期的真实读盘竞态', () => {
     }
   });
 
+  test.each([
+    ['目录刷新', '目录刷新'],
+    ['目录刷新', '显式重载'],
+    ['显式重载', '目录刷新'],
+    ['目录刷新', '保存'],
+    ['显式重载', '保存'],
+  ].flatMap(([earlier, later]) => ['旧正文', '二进制错误'].map(content => ({ earlier, later, content }))))
+  ('$earlier 的迟到$content 不影响 $later 确认未变的已打开文档', async ({ earlier, later, content }) => {
+    const original = await app.files.openDocument(workspace, file, client);
+    const target = path.join(f.source, file);
+    await fs.writeFile(target, content === '旧正文' ? '较早读取的过时正文' : Buffer.from([0, 1, 2]));
+    const held = await holdRead();
+    const refresh = (kind: string) => {
+      if (kind === '目录刷新') return app.files.reloadCleanDocuments(workspace.directory);
+      if (kind === '保存') return app.files.saveDocument(workspace, file, client, original.version);
+      return app.files.openDocument(workspace, file, client, true);
+    };
+    const pending = refresh(earlier);
+    try {
+      await held.entered;
+      await fs.writeFile(target, original.text);
+      await refresh(later);
+      held.release();
+      const result = await pending;
+      expect(app.files.clientDocument(client, workspace.id, file)).toEqual(original);
+      if (earlier === '显式重载') expect(result).toEqual(original);
+    } finally { held.release(); await pending.catch(() => undefined); }
+  });
+
   test('尚在路径队列的另一客户端以稍后实际读到的正文为准', async () => {
     const held = await holdRead();
     const first = app.files.openDocument(workspace, file, client);
@@ -214,6 +245,40 @@ describe('文件打开与工作区生命周期的真实读盘竞态', () => {
       held.release();
       await Promise.allSettled([first, ...(second ? [second] : [])]);
     }
+  });
+
+  test('首次保存空文件后，旧的缺失读取不能移除已保存文档', async () => {
+    const target = path.join(f.source, file);
+    await fs.unlink(target);
+    const original = await app.files.openDocument(workspace, file, client);
+    expect(original.baseHash).toBeNull();
+    const entered = gate(), waiting = gate();
+    const nativeOpen = fs.open;
+    let held = false;
+    jest.spyOn(fs, 'open').mockImplementation(async (...args) => {
+      try { return await nativeOpen(...args); }
+      catch (error) {
+        const source = String(args[0]);
+        const matches = process.platform === 'win32' ? source.toLowerCase() === target.toLowerCase() : source === target;
+        if (!held && matches && (error as NodeJS.ErrnoException).code === 'ENOENT') {
+          held = true;
+          entered.release();
+          await waiting.promise;
+        }
+        throw error;
+      }
+    });
+    const pending = app.files.reloadCleanDocuments(workspace.directory);
+    try {
+      await entered.promise;
+      const saved = await app.files.saveDocument(workspace, file, client, original.version);
+      expect(saved.baseHash).not.toBeNull();
+      expect(saved.version).toBe(original.version);
+      expect(await fs.readFile(target, 'utf8')).toBe('');
+      waiting.release();
+      await pending;
+      expect(app.files.clientDocument(client, workspace.id, file)).toEqual(saved);
+    } finally { waiting.release(); await pending; }
   });
 
   test('真实路径解析尚未返回时，别名目标移动也会使旧打开失效', async () => {
