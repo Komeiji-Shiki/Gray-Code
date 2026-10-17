@@ -5,7 +5,7 @@
  */
 
 import { MESSAGE_NAMES } from '@shared/protocol'
-import { defineAsyncComponent, ref, computed, onMounted, watch, nextTick, onBeforeUnmount } from 'vue'
+import { defineAsyncComponent, defineComponent, h, ref, computed, onMounted, watch, nextTick, onBeforeUnmount } from 'vue'
 import InputBox from './InputBox.vue'
 import FilePickerPanel from './FilePickerPanel.vue'
 import SendButton from './SendButton.vue'
@@ -18,8 +18,22 @@ import BranchTreePanel from '../message/BranchTreePanel.vue'
 import InputSelectorBar from './InputSelectorBar.vue'
 import InputActionsMenu, { type InputActionItem } from './InputActionsMenu.vue'
 import ChannelSetupNotice, { type ChannelSetupStatus } from './ChannelSetupNotice.vue'
-const ContextDetailDialog = defineAsyncComponent(() => import('./ContextDetailDialog.vue'))
-const PromptPreviewDialog = defineAsyncComponent(() => import('./PromptPreviewDialog.vue'))
+// 首次打开才加载模块；延迟显示占位，避免本地 chunk 快速命中时闪烁。
+const AsyncDialogLoading = defineComponent({
+  name: 'AsyncDialogLoading',
+  render: () => h('div', { class: 'async-dialog-loading', role: 'status' },
+    [h('i', { class: 'codicon codicon-loading codicon-modifier-spin', 'aria-hidden': 'true' })]),
+})
+const asyncDialogOptions = {
+  loadingComponent: AsyncDialogLoading,
+  delay: 120,
+  onError(error: Error, _retry: () => void, fail: () => void) {
+    console.error('[InputArea] 对话框模块加载失败：', error)
+    fail()
+  },
+}
+const ContextDetailDialog = defineAsyncComponent({ ...asyncDialogOptions, loader: () => import('./ContextDetailDialog.vue') })
+const PromptPreviewDialog = defineAsyncComponent({ ...asyncDialogOptions, loader: () => import('./PromptPreviewDialog.vue') })
 import type { ChannelOption, PromptMode } from './types'
 
 import { IconButton, Tooltip } from '../common'
@@ -684,8 +698,8 @@ const promptPreviewAvailable = !!window.__GRAYCODE_HOST
 const showPromptPreview = ref(false)
 const promptPreviewMounted = ref(false)
 // 第一次打开才加载模块，之后继续保留对话框自己的视图选择和读取生命周期。
-watch(showContextDetail, open => { if (open) contextDetailMounted.value = true })
-watch(showPromptPreview, open => { if (open) promptPreviewMounted.value = true })
+watch(showContextDetail, open => { if (open) contextDetailMounted.value = true }, { immediate: true })
+watch(showPromptPreview, open => { if (open) promptPreviewMounted.value = true }, { immediate: true })
 const promptPreviewRequest = computed(() => ({
   conversationId: chatStore.currentConversationId, configId: chatStore.configId,
   message: serializeNodes(editorNodes.value).trim(), attachments: (props.attachments ?? []).map(attachment => ({
@@ -1135,5 +1149,16 @@ watch(() => settingsStore.promptModesVersion, () => {
   color: var(--gc-text-primary);
   font-family: var(--gc-font-code);
   font-size: var(--gc-font-size-caption);
+}
+
+.async-dialog-loading {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--gc-text-muted);
+  pointer-events: none;
 }
 </style>

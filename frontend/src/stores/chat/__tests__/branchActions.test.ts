@@ -158,6 +158,19 @@ describe('loadBranchGraph / refreshBranchGraph（TREE-10 数据源）', () => {
     expect(state.branchGraph.value).toBeNull()
   })
 
+  test('切换期间发起、切换结束后返回的刷新仍应用切换后的图', async () => {
+    const state = createState({ currentConversationId: ref('c1'), isSwitchingBranch: ref(true) })
+    let finish!: (value: unknown) => void
+    mockSend.mockImplementation(() => new Promise(resolve => { finish = resolve }))
+    const loading = loadBranchGraph(state)
+    state.isSwitchingBranch.value = false
+    const graph = makeGraph({ after: makeNode('after', null) }, 'after')
+    finish({ graph })
+    await loading
+    expect(state.branchGraph.value).toEqual(graph)
+    expect(state.branchGraphLoading.value).toBe(false)
+  })
+
   test('损坏（BRANCH_STORAGE_CORRUPT）→ 读取侧降级为 null，不抛错', async () => {
     const state = createState({ currentConversationId: ref('c1') })
     const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})

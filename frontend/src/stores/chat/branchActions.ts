@@ -259,8 +259,9 @@ export async function loadBranchGraph(state: ChatStoreState): Promise<BranchGrap
       errorMessage?: string
     }>(MESSAGE_NAMES['conversation.getBranchGraph'], { conversationId })
 
-    // 切换开始后，旧预览不能按旧活跃路径重新对齐刚加载的用户消息 ID。
-    if (branchGraphRequestVersions.get(state) !== version || state.isSwitchingBranch.value !== switchingAtStart
+    // 只丢弃“切换前发出、切换中返回”的旧预览；切换期间发出的刷新读到的已是切换后状态，应正常应用。
+    const staleBySwitch = !switchingAtStart && state.isSwitchingBranch.value
+    if (branchGraphRequestVersions.get(state) !== version || staleBySwitch
       || !validateSessionIdentity(state, conversationId)) return state.branchGraph.value
 
     if (result?.graph) {
@@ -277,7 +278,8 @@ export async function loadBranchGraph(state: ChatStoreState): Promise<BranchGrap
     }
     return state.branchGraph.value
   } catch (err) {
-    if (branchGraphRequestVersions.get(state) === version && state.isSwitchingBranch.value === switchingAtStart
+    const staleBySwitch = !switchingAtStart && state.isSwitchingBranch.value
+    if (branchGraphRequestVersions.get(state) === version && !staleBySwitch
       && validateSessionIdentity(state, conversationId)) {
       console.warn('[branchActions] Failed to load branch graph:', err)
     }

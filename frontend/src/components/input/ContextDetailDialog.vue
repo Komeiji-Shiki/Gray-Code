@@ -54,8 +54,8 @@ const detailLoading = ref(false)
 const detailError = ref('')
 const detailDesktopOnly = ref(false)
 const detail = ref<ContextSummaryDetail | null>(null)
-let describeRequest = 0
-let detailRequest = 0
+let describeEpoch = 0
+let detailEpoch = 0
 
 const displayMax = computed(() =>
   resolveDisplayMaxTokens(describe.value?.tokens.maxContextTokens, props.fallbackMaxTokens)
@@ -87,8 +87,13 @@ function close() {
   emit('close')
 }
 
+/** 让在途详情请求失效；视图重置与“返回列表”分开命名，避免调用方漏掉代际递增。 */
+function invalidateDetailRequest() {
+  detailEpoch++
+}
+
 function backToList() {
-  detailRequest++
+  invalidateDetailRequest()
   detailLoading.value = false
   detail.value = null
   detailError.value = ''
@@ -96,9 +101,9 @@ function backToList() {
 }
 
 async function loadDescribe() {
-  const request = ++describeRequest
+  const request = ++describeEpoch
   const conversationId = props.conversationId
-  const current = () => request === describeRequest && props.modelValue && props.conversationId === conversationId
+  const current = () => request === describeEpoch && props.modelValue && props.conversationId === conversationId
   backToList()
   if (!conversationId) {
     loading.value = false
@@ -128,9 +133,9 @@ async function loadDescribe() {
 
 async function openDetail(messageId: string | undefined) {
   if (!props.conversationId || !messageId) return
-  const request = ++detailRequest
+  const request = ++detailEpoch
   const conversationId = props.conversationId
-  const current = () => request === detailRequest && props.modelValue && props.conversationId === conversationId
+  const current = () => request === detailEpoch && props.modelValue && props.conversationId === conversationId
   detailLoading.value = true
   detailError.value = ''
   detailDesktopOnly.value = false
@@ -168,14 +173,14 @@ watch(
   ([visible]) => {
     if (visible) void loadDescribe()
     else {
-      describeRequest++
+      describeEpoch++
       loading.value = false
       backToList()
     }
   },
   { immediate: true }
 )
-onBeforeUnmount(() => { describeRequest++; detailRequest++ })
+onBeforeUnmount(() => { describeEpoch++; detailEpoch++ })
 </script>
 
 <template>
