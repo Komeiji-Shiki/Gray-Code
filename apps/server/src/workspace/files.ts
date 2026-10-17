@@ -141,10 +141,8 @@ export class WorkspaceFiles {
     const state = this.getDocumentRefreshState(document);
     const refreshVersion = ++state.refreshVersion;
     const version = document.version;
-    const baseHash = document.baseHash;
-    // 内容未变也使较早读取失效；刷新身份独立于面向编辑器的正文版本。
-    return () => this.documents.get(key) === document && !document.dirty && document.version === version && document.baseHash === baseHash
-      && state.savingCount === 0 && state.refreshVersion === refreshVersion;
+    // 对象身份与两类版本分别覆盖关闭重建、正文编辑、读取和保存。
+    return () => this.documents.get(key) === document && document.version === version && state.refreshVersion === refreshVersion;
   }
   /** 同步 Git 或外部操作改动的干净文件，保持原有草稿版本协议。 */
   async reloadCleanDocuments(directory: string, options: { invalidatePending?: boolean } = {}): Promise<void> {
