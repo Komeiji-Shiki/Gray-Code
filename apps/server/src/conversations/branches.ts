@@ -33,11 +33,33 @@ export function groupMessages(messages: PlatformMessage[]): Record<string, Platf
   return result;
 }
 
+/** 预览只保留 branchView 需要的图与分组，缺少 version/pendingKind，不能交给写回或物化路径。 */
+export type BranchPreviewState = Pick<BranchState, 'graph' | 'groups'>;
+
 /** The committed active history is authoritative; branches retain inactive alternatives. */
 export function readBranches(state: ConversationState): BranchState {
+  return rebuildBranches(state);
+}
+
+/**
+ * 投影 State 的预览读取：调用方必须用 BRANCH_MESSAGE_PROJECTION / BRANCH_RECORD_PROJECTION
+ * 读取历史与分支记录。返回类型刻意不含 version/pendingKind，防止被当作完整状态写回。
+ */
+export function readBranchPreview(state: ConversationState): BranchPreviewState {
+  const { graph, groups } = rebuildBranches(state);
+  // groupMessages 会把工具响应并入所属组，但 branchView 只读每组第一条（工具结果没有可展示的调用）。
+  return { graph, groups: Object.fromEntries(Object.entries(groups).map(([id, group]) => [id, group.slice(0, 1)])) };
+}
+
+function rebuildBranches(state: ConversationState): BranchState {
   const stored = state.records.find(record => record.namespace === branchNamespace)?.record.value as BranchState | null;
   if (stored && stored.version !== 1) throw new Error('不支持的分支存储版本。');
-  const value: BranchState = stored ? structuredClone(stored) : { version: 1, graph: createEmptyBranchGraph(), groups: {} };
+  // graph 与 pendingKind 会被本次读取修改，必须隔离；groups 只读，浅拷贝即可：
+  // 当前路径随后会被主历史覆盖，写回路径由 branchMutation 统一深拷贝，没必要在这里先复制候选正文。
+  const value: BranchState = stored
+    ? { version: stored.version, graph: structuredClone(stored.graph), groups: { ...stored.groups },
+        ...(stored.pendingKind ? { pendingKind: { ...stored.pendingKind } } : {}) }
+    : { version: 1, graph: createEmptyBranchGraph(), groups: {} };
   // 旧版截断只标记删除，留下已删节点之间的活动指针；正文和父子关系保留，仅清理这类残留。
   for (const node of Object.values(value.graph.nodes)) {
     const child = node.activeChildId ? value.graph.nodes[node.activeChildId] : undefined;
@@ -55,7 +77,7 @@ export function readBranches(state: ConversationState): BranchState {
     const nextId = pending.messageId ?? value.graph.nodes[pending.parentId]?.activeChildId;
     const node = nextId ? value.graph.nodes[nextId] : undefined;
     if (node && (pending.messageId || node.parentId === pending.parentId)) {
-      if (value.groups[node.id]?.[0].requestKey === pending.requestKey) node.kind = pending.kind;
+      if (value.groups[node.id]?.[0]?.requestKey === pending.requestKey) node.kind = pending.kind;
       delete value.pendingKind;
     }
   }
@@ -107,11 +129,11 @@ export function materializeBranch(branch: BranchState): PlatformMessage[] {
   return messages;
 }
 
-export function branchView(branch: BranchState, writeTools: ReadonlySet<string> = new Set()): ConversationBranchGraph {
+export function branchView(branch: BranchPreviewState, writeTools: ReadonlySet<string> = new Set()): ConversationBranchGraph {
   // 先取展示字段再复制，避免把不会显示的附件、签名和回合快照带入图回执。
   const nodes = Object.fromEntries(Object.entries(branch.graph.nodes).map(([id, node]) => {
     const { parts: _parts, contentMetadata: _contentMetadata, usageMetadata: _usageMetadata, usageMetadataPartial: _partial, ...metadata } = node;
-    const parts = (branch.groups[id]?.[0].parts ?? []).flatMap(part => typeof part.text === 'string'
+    const parts = (branch.groups[id]?.[0]?.parts ?? []).flatMap(part => typeof part.text === 'string'
       ? [{ text: part.text.slice(0, BRANCH_PREVIEW_TEXT_LENGTH) }]
       : part.functionCall ? [{ text: `[tool: ${(part.functionCall as { name: string }).name}]` }] : []);
     return [id, { ...metadata, parts }];

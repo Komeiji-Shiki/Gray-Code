@@ -8,7 +8,8 @@ import type { Content } from '../../../../backend/modules/conversation/types';
 import { deleteLogicalMessage, truncateFrom, restoreSummarizedRange } from '../../../../backend/modules/conversation/TranscriptMutation';
 import { activePath, switchActivePath, softDeleteNode, restoreNode, renameBranchLabel,
   rebaseActivePathFromHistory, createEmptyBranchGraph, importLinearHistory, removeSubtree } from '../../../../backend/modules/conversation/branch/BranchGraph';
-import { assertBranchCapacity, branchMutation, branchNamespace, branchView, groupMessages, materializeBranch, readBranches, type BranchState } from './branches';
+import { assertBranchCapacity, branchMutation, branchNamespace, branchView, groupMessages, materializeBranch, readBranches,
+  readBranchPreview, type BranchPreviewState, type BranchState } from './branches';
 import { BRANCH_MESSAGE_PROJECTION, BRANCH_RECORD_PROJECTION } from './branchPreview';
 
 export class ConversationService {
@@ -138,10 +139,10 @@ export class ConversationService {
     const state = await this.app.storage.readConversationState(id, [{ namespace: branchNamespace, id, projection: BRANCH_RECORD_PROJECTION }], {
       historyProjection: BRANCH_MESSAGE_PROJECTION,
     });
-    const branches = await this.withCheckpoints(actorId, id, readBranches(state));
+    const branches = await this.withCheckpoints(actorId, id, readBranchPreview(state));
     return { graph: branchView(branches, new Set([...config.beforeTools, ...config.afterTools])) };
   }
-  private async withCheckpoints(actorId: string, id: string, branches: BranchState) {
+  private async withCheckpoints<T extends BranchPreviewState>(actorId: string, id: string, branches: T): Promise<T> {
     // 较早独立版的检查点已保存消息归属，按该归属补齐尚未记录的分支绑定。
     for (const checkpoint of (await this.app.checkpoints.listMetadata(actorId, id)).reverse()) {
       const node = branches.graph.nodes[checkpoint.messageNodeId ?? ''];

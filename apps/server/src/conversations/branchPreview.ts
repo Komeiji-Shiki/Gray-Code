@@ -1,5 +1,9 @@
 import type { ValueProjection } from '@graycode/core';
 
+/**
+ * 分支预览投影清单。字段是手动列举的：给 ConversationBranchNode / PlatformMessage 增加
+ * 展示字段时必须同步这里，否则预览会静默丢字段；附件、签名、回合快照等非展示内容不要加回来。
+ */
 export const BRANCH_PREVIEW_TEXT_LENGTH = 180;
 
 /** 预览仍沿用分支重建算法，只读取身份、工具类别和展示字段。完整正文由变更路径读取。 */

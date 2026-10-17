@@ -7,7 +7,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { ConversationState, RecordMutation, WorkspaceDefinition } from '@graycode/contracts';
-import type { PreparedConversationChange } from '@graycode/core';
+import type { PreparedConversationChange, ValueProjection } from '@graycode/core';
 import type { PlatformApplication } from '../application';
 import { collectWorkspaceSnapshot, type WorkspaceSnapshotBase, type WorkspaceSnapshotManifest } from './snapshot';
 import { fileHash, type DirectoryChange, type FileChange, type FileTransaction } from './fileTransaction';
@@ -22,6 +22,21 @@ export interface WorkspaceCheckpoint {
   manifest: WorkspaceSnapshotManifest; contentIds: Record<string, string>;
 }
 const checkpointMetadataFields = ['id', 'conversationId', 'timestamp', 'name', 'messageIndex', 'messageNodeId', 'toolName', 'phase', 'runId'] as const;
+/** 删除前引用扫描只需要拓扑、删除标记和检查点绑定，不读取分支正文。 */
+const branchReferenceProjection: ValueProjection = {
+  fields: ['graph'],
+  properties: {
+    graph: {
+      fields: ['version', 'rootNodeId', 'activeTailNodeId', 'activeChildId', 'nodes', 'candidateSummaries', 'exportedFrom', 'exportedRefs'],
+      properties: {
+        nodes: { values: { fields: ['id', 'parentId', 'activeChildId', 'deleted', 'workspaceCheckpointId'] } },
+        candidateSummaries: { items: { fields: ['nodeId'] } },
+        exportedFrom: { fields: ['nodeId'] },
+        exportedRefs: { items: { fields: ['nodeId'] } },
+      },
+    },
+  },
+};
 type WorkspaceCheckpointMetadata = Pick<WorkspaceCheckpoint, typeof checkpointMetadataFields[number]> & { fileCount: number; size: number; partial: boolean };
 interface RestorePreview { id: string; actorId: string; checkpointId: string; fingerprint: string; createdAt: number }
 const md5 = (bytes: Uint8Array) => createHash('md5').update(bytes).digest('hex');
@@ -322,8 +337,9 @@ export class WorkspaceCheckpoints {
     }
   }
   private async checkpointReferences(conversationId: string) {
-    const state = await this.app.storage.readConversationState(conversationId, [{ namespace: branchNamespace, id: conversationId, projection: { fields: ['graph'] } }],
-      { historyProjection: { fields: ['id'] } });
+    const state = await this.app.storage.readConversationState(conversationId, [
+      { namespace: branchNamespace, id: conversationId, projection: branchReferenceProjection }],
+    { historyProjection: { fields: ['id'] } });
     const branch = state.records.find(item => item.namespace === branchNamespace)?.record.value as BranchState | undefined;
     if (branch && !validate(branch.graph).valid) throw new Error('分支记录损坏，无法确认检查点引用，未删除。');
     const nodes = Object.values(branch?.graph.nodes ?? {});
