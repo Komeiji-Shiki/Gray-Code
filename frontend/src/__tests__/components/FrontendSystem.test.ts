@@ -4,6 +4,7 @@ import { describe, expect, test } from 'vitest'
 import AppSource from '../../App.vue?raw'
 import SettingsPanelSource from '../../components/settings/SettingsPanel.vue?raw'
 import ToolItemSource from '../../components/message/toolMessage/ToolItem.vue?raw'
+import SplashSource from '../../components/Splash.vue?raw'
 import { resolveAppearancePalette } from '../../../../shared/appearance'
 import { appearanceCssVariables, semanticTokens } from '../../../../shared/appearanceTokens'
 
@@ -70,6 +71,12 @@ describe('frontend visual and async architecture contracts', () => {
     expect(primitivesSource).toContain('.gc-visually-hidden')
     expect(primitivesSource).toContain('@media (prefers-reduced-motion: reduce)')
     expect(ToolItemSource).not.toMatch(/#555555|#777777/)
+  })
+
+  test('开屏加载文案自带视觉隐藏样式，外壳复用时不依赖聊天页全局工具类', () => {
+    expect(SplashSource).toContain('class="splash-status"')
+    expect(SplashSource).not.toContain('gc-visually-hidden')
+    expect(SplashSource).toMatch(/\.splash-status\s*\{[^}]*clip: rect\(0, 0, 0, 0\)/)
   })
 
   test('语义 token 覆盖全部角色，圆角不再全局置零', () => {

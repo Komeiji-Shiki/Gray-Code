@@ -140,7 +140,7 @@ onBeforeUnmount(() => {
 
 <template>
   <div class="splash" :class="{ leaving: fading, merged: merging }" role="status" aria-live="polite">
-    <span class="gc-visually-hidden">{{ loadingLabel }}</span>
+    <span class="splash-status">{{ loadingLabel }}</span>
     <div class="splash-inner" :class="{ settled: drawDone }">
       <!-- Gray logo：色块层（下）先渗入上色，线稿层（上）描完后退位为细描边 -->
       <svg
@@ -219,6 +219,19 @@ onBeforeUnmount(() => {
 </template>
 
 <style scoped>
+/* 只给屏幕阅读器；外壳没有聊天页的全局工具样式，界面上不能显示这段文案。 */
+.splash-status {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
 .splash {
   position: fixed;
   inset: 0;
