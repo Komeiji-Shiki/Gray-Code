@@ -452,57 +452,49 @@ export async function createBranchConversation(
   state: ChatStoreState,
   sourceConversationId: string,
   branchAtIndex: number,
-  options: { title?: string } = {}
+  options: { title?: string; workspaceUri?: string | null } = {}
 ): Promise<Conversation | null> {
-  try {
-    const result = await sendToExtension<BranchConversationResult>(MESSAGE_NAMES['conversation.createBranchConversation'], {
-      sourceConversationId,
-      branchAtIndex,
-      title: options.title,
-      workspaceUri: window.__GRAYCODE_HOST ? undefined : state.currentWorkspaceUri.value || undefined
-    })
+  const workspaceUri = options.workspaceUri === undefined ? state.currentWorkspaceUri.value : options.workspaceUri
+  const result = await sendToExtension<BranchConversationResult>(MESSAGE_NAMES['conversation.createBranchConversation'], {
+    sourceConversationId,
+    branchAtIndex,
+    title: options.title,
+    workspaceUri: window.__GRAYCODE_HOST ? undefined : workspaceUri || undefined
+  })
 
-    if (!result?.success || !result.conversationId) {
-      return null
-    }
-
-    const now = Date.now()
-    const conversation: Conversation = {
-      id: result.conversationId,
-      title: result.title || `Chat ${result.conversationId.slice(0, 8)}`,
-      createdAt: result.createdAt || now,
-      updatedAt: result.updatedAt || result.createdAt || now,
-      messageCount: result.messageCount || branchAtIndex + 1,
-      preview: result.preview,
-      isPersisted: true,
-      workspaceUri: result.workspaceUri || state.currentWorkspaceUri.value || undefined
-    }
-
-    const existingIndex = state.conversations.value.findIndex(c => c.id === conversation.id)
-    if (existingIndex >= 0) {
-      state.conversations.value.splice(existingIndex, 1, conversation)
-    } else {
-      state.conversations.value.unshift(conversation)
-    }
-
-    const persistedIndex = state.persistedConversationIds.value.indexOf(conversation.id)
-    if (persistedIndex >= 0) {
-      state.persistedConversationIds.value.splice(persistedIndex, 1)
-      state.persistedConversationIds.value.unshift(conversation.id)
-    } else {
-      state.persistedConversationIds.value.unshift(conversation.id)
-      state.persistedConversationsLoaded.value += 1
-    }
-
-    return conversation
-  } catch (err: any) {
-    console.error('[conversationActions] Failed to create branch conversation:', err)
-    state.error.value = {
-      code: err?.code || 'CREATE_BRANCH_CONVERSATION_ERROR',
-      message: err?.message || 'Failed to create branch conversation'
-    }
+  if (!result?.success || !result.conversationId) {
     return null
   }
+
+  const now = Date.now()
+  const conversation: Conversation = {
+    id: result.conversationId,
+    title: result.title || `Chat ${result.conversationId.slice(0, 8)}`,
+    createdAt: result.createdAt || now,
+    updatedAt: result.updatedAt || result.createdAt || now,
+    messageCount: result.messageCount || branchAtIndex + 1,
+    preview: result.preview,
+    isPersisted: true,
+    workspaceUri: result.workspaceUri || workspaceUri || undefined
+  }
+
+  const existingIndex = state.conversations.value.findIndex(c => c.id === conversation.id)
+  if (existingIndex >= 0) {
+    state.conversations.value.splice(existingIndex, 1, conversation)
+  } else {
+    state.conversations.value.unshift(conversation)
+  }
+
+  const persistedIndex = state.persistedConversationIds.value.indexOf(conversation.id)
+  if (persistedIndex >= 0) {
+    state.persistedConversationIds.value.splice(persistedIndex, 1)
+    state.persistedConversationIds.value.unshift(conversation.id)
+  } else {
+    state.persistedConversationIds.value.unshift(conversation.id)
+    state.persistedConversationsLoaded.value += 1
+  }
+
+  return conversation
 }
 
 

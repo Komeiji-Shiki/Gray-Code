@@ -390,13 +390,31 @@ export const useChatStore = defineStore('chat', () => {
     const sourceConversationId = state.currentConversationId.value
     if (!sourceConversationId) return
     if (!Number.isFinite(messageBackendIndex) || messageBackendIndex < 0) return
+    const epoch = ++navigationEpoch
+    const sourceWorkspaceUri = state.currentWorkspaceUri.value
 
     if (state.isWaitingForResponse.value || state.isStreaming.value) {
-      await cancelStreamAndRejectTools()
+      try {
+        await cancelStreamAndRejectTools()
+      } catch (error) {
+        if (epoch !== navigationEpoch) return
+        throw error
+      }
     }
 
-    const conv = await createBranchConversationAction(state, sourceConversationId, messageBackendIndex)
-    if (!conv) return
+    const conv = await createBranchConversationAction(state, sourceConversationId, messageBackendIndex, { workspaceUri: sourceWorkspaceUri })
+      .catch((error: unknown) => {
+        console.error('[chatStore] Failed to create branch conversation:', error)
+        if (epoch === navigationEpoch) {
+          state.error.value = {
+            code: error instanceof Error && 'code' in error && typeof error.code === 'string' ? error.code : 'CREATE_BRANCH_CONVERSATION_ERROR',
+            message: error instanceof Error ? error.message : 'Failed to create branch conversation'
+          }
+        }
+        return null
+      })
+    // 创建仍属于点击时的来源，等待期间的新导航只取消这次自动打开。
+    if (!conv || epoch !== navigationEpoch) return
 
     const tabId = createTabAction(state, {
       conversationId: conv.id,
@@ -406,6 +424,7 @@ export const useChatStore = defineStore('chat', () => {
     if (tabId) {
       switchTabWrapped(tabId)
       await switchConvAction(state, conv.id, cancelStreamAndRejectTools)
+      if (state.activeTabId.value !== tabId || state.currentConversationId.value !== conv.id) return
       void loadBranchGraphAction(state)
       updateTabTitle(state, tabId, conv.title)
     } else {
