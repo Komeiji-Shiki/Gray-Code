@@ -16,7 +16,10 @@ export class AutomationModelMeter {
     const id = this.currentId();
     if (!id) return generate();
     const record = await this.host.read(id);
-    if (!record || record.status === 'completed' || record.status === 'paused' && record.pauseReason !== 'user') throw new Error('自动任务已暂停，请在任务面板中继续。');
+    // 来源失效只暂停后续触发，已登记的当前轮次及后台任务仍需完成。
+    const finishingEvent = record?.kind === 'event' && record.pauseReason === 'error' && !!(record.currentRequestKey || record.awaitingBackground);
+    if (!record || record.status === 'completed' || record.status === 'paused' && record.pauseReason !== 'user' && !finishingEvent)
+      throw new Error('自动任务已暂停，请在任务面板中继续。');
     let response: PlatformMessage;
     try { response = await generate(); }
     catch (error) {

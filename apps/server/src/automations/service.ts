@@ -19,6 +19,18 @@ function matchesEventSource(record: AutomationRecord, change: EventSourceChange)
   return !!record.event && record.eventSourceState === change.previous && eventSourceKey(record.event.trigger) === eventSourceKey(change.trigger);
 }
 
+function listensToConversation(record: AutomationRecord, conversationId: string) {
+  return record.kind === 'event' && record.event?.trigger.type === 'run_completed' && record.event.trigger.conversationId === conversationId;
+}
+
+function pauseEventSource(record: AutomationRecord, error: unknown) {
+  record.status = 'paused'; record.pauseReason = 'error'; record.error = `事件监听失败：${String(error)}`;
+  if (record.pendingEvent) {
+    traceEvent(record, { ...record.pendingEvent, status: 'cancelled', reason: record.error });
+    delete record.pendingEvent; delete record.nextRunAt;
+  }
+}
+
 /** 自动任务只负责触发与进度；会话、执行、审批、工具和结果仍由现有运行器持有。 */
 export class ApplicationAutomations {
   private readonly records = new Map<string, AutomationRecord>();
@@ -39,10 +51,9 @@ export class ApplicationAutomations {
       records: () => [...this.records.values()], receive: (id, event, change) => this.receiveEvent(id, event, change),
       baseline: (id, change) => this.mutate(id, record => { record.eventSourceState = change.next; }, record => !this.closing
         && record.kind === 'event' && record.status === 'active' && matchesEventSource(record, change) && record.eventSourceState !== change.next).then(() => {}),
-      fail: (id, error, trigger) => this.mutate(id, record => {
-        record.status = 'paused'; record.pauseReason = 'error'; record.error = `事件监听失败：${String(error)}`;
-        if (record.pendingEvent) { traceEvent(record, { ...record.pendingEvent, status: 'cancelled', reason: record.error }); delete record.pendingEvent; delete record.nextRunAt; }
-      }, record => !this.closing && record.kind === 'event' && record.status === 'active' && !!record.event && eventSourceKey(record.event.trigger) === eventSourceKey(trigger))
+      fail: (id, error, trigger) => this.mutate(id, record => pauseEventSource(record, error),
+        record => !this.closing && record.kind === 'event' && record.status === 'active' && !!record.event
+          && eventSourceKey(record.event.trigger) === eventSourceKey(trigger))
         .then(() => {}).catch(error => { if (!this.closing && this.records.has(id)) this.reportError(error); }),
     });
     this.meter = new AutomationModelMeter({ read: id => this.read(id), add: (id, delta) => this.mutate(id, record => {
@@ -50,9 +61,10 @@ export class ApplicationAutomations {
     }).then(() => {}) });
     this.unsubscribe = app.subscribe(notification => {
       if (!this.ready || this.closing) return;
-      if (notification.type === 'conversation.changed' && typeof notification.conversationId === 'string'
-        && [...this.records.values()].some(record => record.conversationId === notification.conversationId))
-        void this.removeDeletedConversation(notification.conversationId).catch(error => this.reportError(error));
+      const conversationId = notification.type === 'conversation.changed' ? notification.conversationId : undefined;
+      if (typeof conversationId === 'string' && [...this.records.values()].some(record => record.conversationId === conversationId
+        || listensToConversation(record, conversationId)))
+        void this.removeDeletedConversation(conversationId).catch(error => this.reportError(error));
       if (notification.type === 'nodes.changed') void this.eventSources.nodesChanged().catch(error => this.reportError(error));
       const message = notification.type === 'ui.message' ? notification.message as { command?: string; data?: { type?: string; data?: { conversationId?: string } } } : undefined;
       if (message?.command === 'taskEvent' && message.data?.type !== 'progress' && message.data?.data?.conversationId)
@@ -89,8 +101,16 @@ export class ApplicationAutomations {
     return operation;
   }
   private async removeDeletedConversation(conversationId: string) {
-    if (await this.app.storage.getConversation(conversationId)) return;
-    for (const record of this.records.values()) if (record.conversationId === conversationId) this.records.delete(record.id);
+    if (await this.app.storage.getConversation(conversationId) || this.closing) return;
+    const updates: Promise<unknown>[] = [];
+    for (const record of this.records.values()) {
+      if (record.conversationId === conversationId) this.records.delete(record.id);
+      else if (record.status === 'active' && listensToConversation(record, conversationId)) {
+        updates.push(this.mutate(record.id, current => pauseEventSource(current, new Error('来源对话已经删除，请重新选择事件来源。')),
+          current => !this.closing && current.status === 'active' && listensToConversation(current, conversationId)));
+      }
+    }
+    for (const result of await Promise.allSettled(updates)) if (result.status === 'rejected') this.reportError(result.reason);
     this.arm(); await this.eventSources.sync(); this.app.publish({ type: 'automation.changed', conversationId });
   }
   private async serial<T>(id: string, operation: () => Promise<T>): Promise<T> {
@@ -145,6 +165,8 @@ export class ApplicationAutomations {
     for (const record of [...this.records.values()]) {
       if (record.status === 'completed' && !record.currentRequestKey) continue;
       const previous = record.currentRequestKey ? await this.app.storage.getRunByRequestKey(record.currentRequestKey) : null;
+      const sourceMissing = record.status === 'active' && record.kind === 'event' && record.event?.trigger.type === 'run_completed'
+        && !await this.app.storage.getConversation(record.event.trigger.conversationId);
       await this.mutate(record.id, current => {
         // 旧预算不再生效，之前暂停的任务仍按重启规则等待手动继续。
         delete (current as AutomationRecord & { tokenBudget?: number }).tokenBudget;
@@ -165,6 +187,7 @@ export class ApplicationAutomations {
           current.nextRunAt = current.pendingEvent ? Date.now() : undefined;
           // 进程退出期间的设备会话已断开，下一次实际握手成功才产生恢复事件。
           if (current.event?.trigger.type === 'node_online') current.eventSourceState = 'offline';
+          if (current.status === 'active' && sourceMissing) pauseEventSource(current, new Error('来源对话已经删除，请重新选择事件来源。'));
         }
         delete current.finishRunId; delete current.finishStatus;
         if (current.kind === 'goal' && current.status === 'active') { current.status = 'paused'; current.pauseReason = 'restart'; }
@@ -462,7 +485,10 @@ export class ApplicationAutomations {
       if (current.currentEvent) traceEvent(current, { ...current.currentEvent, runId: run.id, status: run.status === 'completed' ? 'completed' : run.status === 'cancelled' ? 'cancelled' : 'failed', reason: run.error });
       current.lastRunId = run.id; delete current.currentRunId; delete current.currentRequestKey; delete current.followupPending;
       if (run.status === 'completed') current.completedRuns++;
-      if (current.status !== 'active') return;
+      if (current.status !== 'active') {
+        if (current.kind === 'event' && current.pauseReason === 'error') current.awaitingBackground = await this.hasBackground(current);
+        return;
+      }
       if (run.status !== 'completed') { current.status = 'paused'; current.pauseReason = run.status === 'cancelled' ? 'user' : 'error'; current.error = run.error; return; }
       if (await this.app.subagents.feedback.continuation.hasPending(current.conversationId)) {
         current.followupPending = true; current.awaitingBackground = false; current.nextRunAt = Date.now(); return;

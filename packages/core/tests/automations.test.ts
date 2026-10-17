@@ -7,6 +7,7 @@ import { nextScheduledTime, validateSchedule } from '../../../apps/server/src/au
 import { ApplicationAutomations } from '../../../apps/server/src/automations/service';
 import { AutomationEventSources } from '../../../apps/server/src/automations/events';
 import { SubagentFeedback } from '../../../apps/server/src/subagents/feedback';
+import { deleteConversation } from '../../../apps/server/src/conversations/delete';
 import { createIdleCloseCheck } from '../../../apps/desktop/src/idleClose';
 import { fixture } from './fixtures';
 
@@ -540,6 +541,117 @@ describe('持久目标和定时触发', () => {
     let cursor = { timestamp: now, runId: '' }; const paged: string[] = [];
     for (;;) { const rows = await app.storage.listRuns({ completedAfter: cursor, limit: 1 }); if (!rows.length) break; paged.push(rows[0].id); cursor = { timestamp: rows[0].updatedAt, runId: rows[0].id }; }
     expect(new Set(paged).size).toBe(3);
+  });
+
+  test.each([
+    { restart: false, pending: false }, { restart: false, pending: true },
+    { restart: true, pending: false }, { restart: true, pending: true },
+  ])('来源对话删除后暂停监听并保留执行对话：$restart 重启，$pending 待处理事件', async ({ restart, pending }) => {
+    await app.createConversation('owner', '将被删除的来源', undefined, { platformMode: 'chat' }, undefined, { id: 'deleted-source' });
+    const task = await create({ kind: 'event', event: {
+      trigger: { type: 'run_completed', conversationId: 'deleted-source' }, busyPolicy: 'latest', restartPolicy: 'resume',
+    } });
+    let sourceRunId: string | undefined;
+    if (pending) {
+      const source = await app.runtime.start({ actorId: 'owner', conversationId: 'deleted-source', agentId: 'default', providerId,
+        requestKey: 'deleted-source-seed', message: { role: 'user', parts: [{ text: '执行来源任务。' }] } });
+      sourceRunId = source.id;
+      await app.runtime.wait(source.id);
+      await until(task.id, record => !!record.pendingEvent);
+    }
+    // 关闭监听后删除来源，覆盖下一次启动才发现来源缺失的情况。
+    if (restart) await app.automations.close();
+    await deleteConversation(app, 'owner', 'deleted-source');
+    if (restart) { await app.close(); app = await open(); }
+    const paused = await until(task.id, record => record.status === 'paused' && record.pauseReason === 'error');
+    expect(paused.error).toContain('来源对话已经删除');
+    expect(paused.pendingEvent).toBeUndefined();
+    expect(paused.nextRunAt).toBeUndefined();
+    if (pending) expect(paused.recentEvents).toEqual(expect.arrayContaining([
+      expect.objectContaining({ sourceRunId, status: 'cancelled', reason: paused.error }),
+    ]));
+    expect(await app.storage.getConversation('auto-chat')).not.toBeNull();
+    expect(await app.storage.getConversation('deleted-source')).toBeNull();
+    await app.automations.tick(now);
+    expect(app.automations.keepsAlive).toBe(false);
+    expect(calls).toHaveLength(pending ? 1 : 0);
+  });
+
+  test.each(['当前运行', '父轮结束前的后台任务', '父轮结束后的后台任务'])('来源删除只暂停后续监听，保留%s的工具和模型循环', async stage => {
+    let toolEntered!: () => void, releaseTool!: () => void, parentEntered!: () => void, releaseParent!: () => void;
+    const toolStarted = new Promise<void>(resolve => { toolEntered = resolve; });
+    const toolWaiting = new Promise<void>(resolve => { releaseTool = resolve; });
+    const parentStarted = new Promise<void>(resolve => { parentEntered = resolve; });
+    const parentWaiting = new Promise<void>(resolve => { releaseParent = resolve; });
+    let gatedRunId = '', parentCalls = 0, childCalls = 0;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    app.tools.register({ declaration: { name: 'source_delete_gate', description: '来源删除期间保留执行的测试工具',
+      parameters: { type: 'object', properties: {} } }, effects: () => [], execute: async (_args, context) => {
+      gatedRunId = context.runId; toolEntered(); await toolWaiting; return { success: true };
+    } });
+    const settings = app.settings.snapshot();
+    settings.settings.agents.push({ ...settings.settings.agents[0], id: 'source-delete-agent', name: '来源删除测试', providerId,
+      toolNames: ['subagents', 'source_delete_gate'] });
+    await app.settings.save({ settings: settings.settings, expectedRevision: settings.revision });
+    await app.createConversation('owner', '删除来源', undefined, { platformMode: 'chat' }, undefined, { id: 'running-source' });
+    await app.createConversation('owner', '保留当前执行', undefined, { platformMode: 'code' }, undefined, { id: 'running-target' });
+    generate = async input => {
+      if (input.conversationId === 'running-source') return answer();
+      if (input.conversationId === 'running-target') {
+        if (++parentCalls === 1) return { ...answer(), parts: [{ functionCall: stage === '当前运行'
+          ? { id: 'retain-parent', name: 'source_delete_gate', args: {} }
+          : { id: 'retain-child', name: 'subagents', args: { agentName: 'General Worker', prompt: '完成已开始的后台工作。', background: true } } }] };
+        if (stage !== '当前运行') { parentEntered(); await parentWaiting; }
+        return answer();
+      }
+      return ++childCalls === 1 ? { ...answer(), parts: [{ functionCall: { id: 'child-gate', name: 'source_delete_gate', args: {} } }] } : answer();
+    };
+    const task = await create({ kind: 'event', conversationId: 'running-target', agentId: 'source-delete-agent', event: {
+      trigger: { type: 'run_completed', conversationId: 'running-source' }, busyPolicy: 'latest', restartPolicy: 'resume',
+    } });
+    try {
+      const source = await app.runtime.start({ actorId: 'owner', conversationId: 'running-source', agentId: 'default', providerId,
+        requestKey: 'running-source-seed', message: { role: 'user', parts: [{ text: '触发事件任务。' }] } });
+      await app.runtime.wait(source.id); await until(task.id, record => !!record.pendingEvent);
+      await app.automations.tick(now);
+      await Promise.race([Promise.all([toolStarted, ...(stage === '当前运行' ? [] : [parentStarted])]), new Promise<never>((_resolve, reject) => {
+        timer = setTimeout(() => reject(new Error('来源删除夹具未进入模型和工具门闩')), 5000);
+      })]);
+      clearTimeout(timer);
+      if (stage === '父轮结束后的后台任务') {
+        releaseParent();
+        await until(task.id, record => record.completedRuns === 1 && !!record.awaitingBackground && !record.currentRequestKey);
+      }
+      await deleteConversation(app, 'owner', 'running-source');
+      await until(task.id, record => record.status === 'paused' && record.pauseReason === 'error');
+      if (stage === '父轮结束前的后台任务') {
+        releaseParent(); await until(task.id, record => record.completedRuns === 1 && !record.currentRequestKey);
+      }
+      releaseTool();
+      expect((await app.runtime.wait(gatedRunId))?.status).toBe('completed');
+      const settled = await until(task.id, record => record.completedRuns === 1 && !record.currentRequestKey);
+      expect(settled.status).toBe('paused'); expect(settled.error).toContain('来源对话已经删除');
+      await app.automations.tick(now + 60_000);
+      expect(parentCalls).toBe(2); expect(childCalls).toBe(stage === '当前运行' ? 0 : 2);
+    } finally { clearTimeout(timer); releaseTool(); releaseParent(); }
+  });
+
+  test('删除来源时一个监听读取失败不妨碍其他同源监听暂停', async () => {
+    await app.createConversation('owner', '共享来源', undefined, { platformMode: 'chat' }, undefined, { id: 'shared-source' });
+    await app.createConversation('owner', '其他监听', undefined, { platformMode: 'chat' }, undefined, { id: 'other-listener' });
+    const event = { trigger: { type: 'run_completed', conversationId: 'shared-source' }, busyPolicy: 'latest', restartPolicy: 'resume' };
+    const first = await create({ kind: 'event', event });
+    const other = await create({ kind: 'event', conversationId: 'other-listener', event });
+    const read = app.storage.getVersionedRecord.bind(app.storage);
+    let failed = false;
+    jest.spyOn(app.storage, 'getVersionedRecord').mockImplementation(async (namespace, id) => {
+      if (!failed && namespace === 'automations' && id === first.id) { failed = true; throw new Error('fixture deleted-source read'); }
+      return read(namespace, id);
+    });
+    await deleteConversation(app, 'owner', 'shared-source');
+    const paused = await until(other.id, record => record.status === 'paused');
+    expect(paused.error).toContain('来源对话已经删除');
+    expect(failed).toBe(true); expect(calls).toHaveLength(0);
   });
 
   test('补发读取期间切换来源，旧来源游标不能覆盖新配置或重放新来源的旧任务', async () => {
