@@ -1,7 +1,7 @@
 import path from 'node:path';
 import { access, readFile, writeFile } from 'node:fs/promises';
 import type { ToolContext } from '@graycode/core';
-import type { WorkspaceDefinition } from '@graycode/contracts';
+import type { ExternalAgentEvent, ExternalAgentSession, WorkspaceDefinition } from '@graycode/contracts';
 import { PlatformApplication } from '../../../apps/server/src/application';
 import { ApplicationRouter } from '../../../apps/server/src/transport/router';
 import { fixture } from './fixtures';
@@ -129,6 +129,40 @@ test('ACP 事件读取等待已分配序号保存完成，只返回读取开始�
     release(); await Promise.allSettled([pending, page]);
     jest.restoreAllMocks(); await app.close(); await f.cleanup();
   }
+});
+
+test('ACP 事件保存失败只保留成功游标，重启后继续写入没有空记录', async () => {
+  const f = await fixture(); await f.store.close();
+  let app = await PlatformApplication.open({ dataDirectory: f.data });
+  try {
+    const { context } = await configure(app, f.source);
+    const created = await app.externalAgents.execute({ action: 'create' }, context());
+    expect(created.success).toBe(true);
+    const sessionId = (created.data as { session: ExternalAgentSession }).session.id;
+    const commit = app.storage.commitRecords.bind(app.storage);
+    let eventWrites = 0;
+    const failing = jest.spyOn(app.storage, 'commitRecords').mockImplementation(async records => {
+      if (records.some(record => record.namespace === 'external-agent-events') && ++eventWrites === 2) {
+        throw new Error('fixture event write failed');
+      }
+      return commit(records);
+    });
+    const result = await app.externalAgents.execute({ action: 'prompt', sessionId, prompt: '保存失败的回复' }, context());
+    expect(result).toMatchObject({ success: false, error: expect.stringContaining('fixture event write failed'),
+      data: { session: { lastEvent: 1 }, text: expect.stringContaining('已处理：') } });
+    const expectedPage = { data: { session: { lastEvent: 1 }, events: [{ sequence: 1, type: 'user_prompt' }], hasMore: false } };
+    expect(await app.externalAgents.execute({ action: 'events', sessionId }, context())).toMatchObject(expectedPage);
+    failing.mockRestore();
+
+    await app.close(); app = await PlatformApplication.open({ dataDirectory: f.data });
+    expect(await app.externalAgents.execute({ action: 'events', sessionId }, context())).toMatchObject(expectedPage);
+    expect(await app.externalAgents.execute({ action: 'load', sessionId }, context())).toMatchObject({ success: true });
+    expect(await app.externalAgents.execute({ action: 'prompt', sessionId, prompt: '恢复后继续' }, context())).toMatchObject({ success: true });
+    const page = await app.externalAgents.execute({ action: 'events', sessionId }, context());
+    const { session, events } = page.data as { session: ExternalAgentSession; events: ExternalAgentEvent[] };
+    expect(session.lastEvent).toBeGreaterThan(1);
+    expect(events.map(event => event.sequence)).toEqual(Array.from({ length: session.lastEvent }, (_, index) => index + 1));
+  } finally { jest.restoreAllMocks(); await app.close(); await f.cleanup(); }
 });
 
 test('ACP cancellation releases owned processes and uncertain operations are not repeated after restart', async () => {
