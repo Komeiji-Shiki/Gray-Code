@@ -1,7 +1,7 @@
 import { normalizePendingApprovalGate } from '../../../../backend/modules/conversation/pendingApprovalGate';
 import { randomUUID } from 'node:crypto';
 import type { SavedRunConfiguration, RecordMutation, RunRecord, VersionedRecord } from '@graycode/contracts';
-import { PlatformStorageError } from '@graycode/core';
+import { PlatformStorageError, type PlatformStorage } from '@graycode/core';
 import type { PlatformApplication } from '../application';
 import type { SubagentParentConfiguration } from './types';
 
@@ -18,6 +18,25 @@ const claimNamespace = 'background-followup-claims';
 const FOLLOWUP_BATCH_SIZE = 127;
 type PendingFollowup = { record: VersionedRecord; value: BackgroundFollowup };
 interface FollowupClaim { completed: number; entries: Array<{ revision: number | null; value: BackgroundFollowup }> }
+
+export async function pauseRestoredContinuations(storage: PlatformStorage): Promise<void> {
+  const claimed = new Set<string>();
+  for (const id of await storage.listRecords(claimNamespace)) {
+    const claim = await storage.getRecord(claimNamespace, id) as FollowupClaim;
+    // 剩余认领按原修订结算；提前改写会让下次初始化的 CAS 失败，也不能按整个会话排除新回执。
+    for (const entry of claim.entries.slice(claim.completed)) claimed.add(entry.value.id);
+  }
+  for (const id of await storage.listRecords(pendingNamespace)) {
+    if (claimed.has(id)) continue;
+    const value = await storage.getRecord(namespace, id) as BackgroundFollowup;
+    if (value.status !== 'pending') continue;
+    await storage.commitRecords([
+      { namespace, id, ownerId: value.conversationId, value: { ...value, status: 'obsolete',
+        error: '备份恢复后已暂停自动接续，结果仍保留，请在原对话中手动继续。' } satisfies BackgroundFollowup },
+      { namespace: pendingNamespace, id, delete: true },
+    ]);
+  }
+}
 
 /** 后台结果与启动标记同属对话事务，重启不重复建立已经开始的模型任务。 */
 export class BackgroundContinuation {

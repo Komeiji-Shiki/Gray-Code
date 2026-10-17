@@ -2,6 +2,8 @@ import { createHash } from 'node:crypto';
 import type { BackupManifest, PetResource, ScreenSenseStoredConfiguration } from '@graycode/contracts';
 import type { PlatformStorage } from '@graycode/core';
 import { petAssetPath } from '../../../../shared/petFormat';
+import { pauseRestoredFeedback } from '../subagents/feedback';
+import { pauseRestoredTerminalFeedback } from '../terminal/service';
 
 const hash = (bytes: Uint8Array | string) => createHash('sha256').update(bytes).digest('hex');
 const resourceVersions = new Set(['conversations', 'settings', 'memories', 'devices', 'pets', 'screen', 'skills', 'other']);
@@ -32,6 +34,8 @@ export async function validateBackupResources(storage: PlatformStorage, manifest
 
 /** 从备份恢复的连接和未完成任务等待重新启用，避免重复发送旧请求。 */
 export async function pauseRestoredActivities(storage: PlatformStorage) {
+  await pauseRestoredFeedback(storage);
+  await pauseRestoredTerminalFeedback(storage);
   for (const id of await storage.listRecords('automations')) {
     const record = await storage.getRecord('automations', id) as Record<string, any>;
     if (record.status === 'completed') continue;

@@ -1,6 +1,6 @@
 import { executableEffects, shellCommandEffects } from '../workspace/commandRisk';
 import { randomUUID } from 'node:crypto';
-import type { RuntimeTool, ToolContext } from '@graycode/core';
+import type { RuntimeTool, ToolContext, PlatformStorage } from '@graycode/core';
 import type { ToolDeclaration, ToolOutcome } from '@graycode/contracts';
 import type { TaskEvent } from '../../../../backend/tools/taskManager';
 import { createTerminalRuntime } from '../../../../backend/tools/terminal/processRunnerRuntime';
@@ -33,6 +33,8 @@ interface TerminalRecord {
   outputBuffer?: ProcessOutputBuffer;
   /** 原生异步只保存原调用关联，进程仍由已有终端任务持有。 */
   nativeCallId?: string;
+  /** 旧备份的这次命令结果仍补入历史，但不自动发起新的模型轮次。 */
+  restoredFeedbackOnly?: true;
 }
 type Runner = ReturnType<typeof createTerminalRuntime>;
 interface ActiveTerminal {
@@ -40,6 +42,16 @@ interface ActiveTerminal {
   runner: Runner;
   events: Promise<void>;
   outputSave?: ReturnType<typeof setTimeout>;
+}
+
+export async function pauseRestoredTerminalFeedback(storage: PlatformStorage): Promise<void> {
+  for (const id of await storage.listRecords('terminal-active')) {
+    const record = await storage.getRecord('terminal-records', id) as TerminalRecord | null;
+    if (!record || record.nativeCallId || record.data.background !== true || record.restoredFeedbackOnly) continue;
+    if (await storage.getRecord('subagent-deliveries', `terminal-result-${record.id}`)) continue;
+    await storage.putRecord({ namespace: 'terminal-records', id, ownerId: record.conversationId,
+      value: { ...record, restoredFeedbackOnly: true } satisfies TerminalRecord });
+  }
 }
 
 /** 独立宿主保存任务归属和终态；Shell 与进程处理复用原运行器。 */
@@ -328,6 +340,7 @@ export class PlatformTerminals {
       conversationId,
       actorId: record.actorId,
       sourceRunId: record.runId,
+      ...(record.restoredFeedbackOnly ? { displayOnly: true } : {}),
       message: {
         id: `terminal-result-${record.id}`,
         role: 'user',

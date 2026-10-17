@@ -19,6 +19,8 @@ export interface PlatformSubagent {
   parentConfiguration?: SubagentParentConfiguration;
   depth: number;
   background: boolean;
+  /** 备份中尚未交付的本次结果只恢复展示，显式再次派发时清除。 */
+  restoredFeedbackOnly?: true;
   taskId?: string;
   createdAt: number;
   updatedAt: number;

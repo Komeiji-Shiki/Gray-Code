@@ -434,6 +434,7 @@ export class SubagentExecutionService {
   }
   private launch(record: PlatformSubagent, message?: PlatformMessage): LiveSubagent {
     if (this.live.has(record.id)) throw new Error('此子代理仍在运行。');
+    delete record.restoredFeedbackOnly;
     record.taskId = `${record.id}:${record.coreRunIds.length + 1}`;
     let detach!: (result: ToolOutcome) => void;
     const detached = new Promise<ToolOutcome>(resolve => { detach = resolve; });
