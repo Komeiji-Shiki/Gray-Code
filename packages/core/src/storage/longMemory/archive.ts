@@ -3,6 +3,7 @@ import type {
 } from '@graycode/contracts';
 import { invalid } from '../../errors';
 import { MemoryMutationStore } from './mutations';
+import { memoryContentEqual } from './text';
 
 /** 交换归档保存正文与依赖，不携带供应方凭据、运行句柄或可重建向量。 */
 export class MemoryArchive {
@@ -84,7 +85,10 @@ export class MemoryArchive {
         const scope=scopeFor(source.scopeId);
         if(this.store.tombstoned(scope.id,'source',source.id)){result.skipped++;continue;}
         const existing=this.store.source(scope.id,source.id,source.version);
-        if(existing){if(JSON.stringify(JSON.parse(existing.payload))!==JSON.stringify(source))invalid('归档来源与现有相同修订内容冲突。');result.skipped++;continue;}
+        if (existing) {
+          if (!memoryContentEqual(existing.payload, source)) invalid('归档来源与现有相同修订内容冲突。');
+          result.skipped++; continue;
+        }
         this.store.write({scope,sources:[{...source,expectedVersion:source.version-1}]},true);result.sources++;
       }
       const unavailable = this.unavailableRecords(archive.records, scopeFor);
@@ -99,7 +103,10 @@ export class MemoryArchive {
         for(const record of pending){
           const scope=scopeFor(record.scopeId);
           const existing=this.store.record(scope.id,record.id,record.version);
-          if(existing){if(JSON.stringify(JSON.parse(existing.payload))!==JSON.stringify(record))invalid('归档记忆与现有相同修订内容冲突。');result.skipped++;progress=true;continue;}
+          if (existing) {
+            if (!memoryContentEqual(existing.payload, record)) invalid('归档记忆与现有相同修订内容冲突。');
+            result.skipped++; progress = true; continue;
+          }
           if(record.dependencies.some(ref=>!this.store.referenceAvailable(scope.id,ref,false))
             ||(this.store.record(scope.id,record.id)?.version??0)!==record.version-1){next.push(record);continue;}
           this.store.write({scope,records:[{...record,expectedVersion:record.version-1}]},true);result.records++;progress=true;

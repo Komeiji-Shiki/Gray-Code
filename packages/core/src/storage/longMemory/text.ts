@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import { isDeepStrictEqual } from 'node:util';
 import { countTextTokens, type TokenizerOptions } from '../../tokenizer';
 
 const segmenter = new Intl.Segmenter('zh-CN', { granularity: 'word' });
@@ -18,6 +19,9 @@ export function memoryTerms(text: string): string[] {
   return result;
 }
 export const memoryDigest = (value: unknown): string => createHash('sha256').update(JSON.stringify(value)).digest('hex');
+/** 按实际保存的 JSON 比较，省略可选 undefined，忽略对象键顺序但保留数组顺序。 */
+export const memoryContentEqual = (payload: string, value: object): boolean =>
+  isDeepStrictEqual(JSON.parse(payload), JSON.parse(JSON.stringify(value)));
 /** 记忆预算统一使用本地 tokenizer；无模型词表时采用明确的通用基准。 */
 export function memoryTokens(text: string, options?: TokenizerOptions): number {
   return countTextTokens(text, options);

@@ -4,7 +4,7 @@ import type {
 } from '@graycode/contracts';
 import { assertIdentifier, invalid, PlatformStorageError } from '../../errors';
 import type { SqliteConnection } from '../schema';
-import { memoryDigest, memoryTerms, memoryTopicKey } from './text';
+import { memoryContentEqual, memoryDigest, memoryTerms, memoryTopicKey } from './text';
 
 interface ScopeRow { id: string; actor_id: string; kind: LongMemoryScope['kind']; scope_key: string | null; realm: string; revision: number; invalidation: number; has_records:number }
 export interface RecordRow { row_id: number; scope_id: string; id: string; version: number; recorded_at: number; digest: string; payload: string }
@@ -106,7 +106,8 @@ export class MemoryMutationStore {
       text: input.text, recordedAt: input.recordedAt, ...(input.eventAt !== undefined ? { eventAt: input.eventAt } : {}),
       ...(input.reference ? { reference: input.reference } : {}),...(input.upstream?{upstream:input.upstream}:{}) };
     const digest = memoryDigest(value), previous = this.source(scope.id, input.id);
-    if (previous?.version === value.version && previous.digest === digest) return { value, changed: false, invalidated: false };
+    if (previous?.version === value.version && memoryContentEqual(previous.payload, value))
+      return { value, changed: false, invalidated: false };
     if ((previous?.version ?? 0) !== input.expectedVersion) throw new PlatformStorageError('REVISION_CONFLICT', '记忆来源已改变，请刷新后重试。');
     if (previous && input.recordedAt < previous.recorded_at) invalid('新修订的记录时间不能早于已有版本。');
     this.db.prepare('INSERT INTO long_memory_sources VALUES(?,?,?,?,?,?)').run(scope.id, value.id, value.version, value.recordedAt, digest, JSON.stringify(value));
@@ -140,7 +141,8 @@ export class MemoryMutationStore {
       validFrom: input.validFrom, ...(input.validTo !== undefined ? { validTo: input.validTo } : {}), ...(input.eventAt !== undefined ? { eventAt: input.eventAt } : {}),
       dependencies: input.dependencies, supersedes: input.supersedes };
     const digest = memoryDigest(value), previous = this.record(scope.id, input.id);
-    if (previous?.version === value.version && previous.digest === digest) return { value, changed: false, invalidated: false };
+    if (previous?.version === value.version && memoryContentEqual(previous.payload, value))
+      return { value, changed: false, invalidated: false };
     if ((previous?.version ?? 0) !== input.expectedVersion) throw new PlatformStorageError('REVISION_CONFLICT', '记忆已改变，请刷新后重试。');
     if (previous && input.recordedAt < previous.recorded_at) invalid('新修订的记录时间不能早于已有版本。');
     this.assertDependencies(scope.id, input.id, input.dependencies, historical);

@@ -290,6 +290,76 @@ describe('统一长期记忆的实际存储 worker',()=>{
     expect((await f.store.longMemoryExport([scope])).records.map(item => item.id)).toEqual(['city']);
   });
 
+  test.each(['来源', '记忆'])('交换归档的%s仅改变对象键顺序时仍可幂等恢复', async kind => {
+    await add();
+    const archive = await f.store.longMemoryExport([scope]);
+    if (kind === '来源') {
+      const { id, ...fields } = archive.sources[0];
+      archive.sources[0] = { ...fields, id };
+    } else {
+      const { id, ...fields } = archive.records[0];
+      archive.records[0] = { ...fields,
+        dependencies: fields.dependencies.map(({ kind: parentKind, ...ref }) => ({ ...ref, kind: parentKind })), id,
+      };
+    }
+    const skipped = { sources: 0, records: 0, skipped: 2, tombstones: 0 };
+    await expect(f.store.longMemoryRestore({ actorId: 'owner', archive })).resolves.toEqual(skipped);
+    const other = await fixture();
+    try {
+      await expect(other.store.longMemoryRestore({ actorId: 'owner', archive }))
+        .resolves.toEqual({ sources: 1, records: 1, skipped: 0, tombstones: 0 });
+      await expect(other.store.longMemoryRestore({ actorId: 'owner', archive })).resolves.toEqual(skipped);
+      expect((await other.store.longMemoryRecall(query())).hits.map(hit => hit.record.text)).toEqual(['当前住址是上海。']);
+    } finally { await other.cleanup(); }
+  });
+
+  test.each(['来源正文', '记忆正文', '数组顺序'])('归档同修订的%s变化仍拒绝合并并保留原内容', async change => {
+    await f.store.longMemoryWrite({ scope, sources: [source('city-source', '当前住址是上海。')],
+      records: [record('city', '当前住址是上海。', 'city-source', { entities: ['本人', '家庭'] })] });
+    const before = await f.store.longMemoryExport([scope]);
+    const archive = structuredClone(before);
+    if (change === '来源正文') archive.sources[0].text = '不同的来源。';
+    else if (change === '记忆正文') archive.records[0].text = '不同的记忆。';
+    else archive.records[0].entities.reverse();
+    await expect(f.store.longMemoryRestore({ actorId: 'owner', archive })).rejects.toMatchObject({ code: 'INVALID_INPUT' });
+    const after = await f.store.longMemoryExport([scope]);
+    expect(after.sources).toEqual(before.sources);
+    expect(after.records).toEqual(before.records);
+  });
+
+  test('来源写入重试忽略定位对象的键顺序，但仍拒绝同版本的不同值', async () => {
+    const input = { ...source('copy-source', '当前住址是上海。'),
+      reference: { conversationId: 'fixture-conversation', messageId: 'fixture-message' } };
+    const written = await f.store.longMemoryWrite({ scope, sources: [input], records: [record('city', '当前住址是上海。', 'copy-source')] });
+    const retry = { ...input, reference: { messageId: 'fixture-message', conversationId: 'fixture-conversation' } };
+    expect((await f.store.longMemoryWrite({ scope, sources: [retry] })).state.revision).toBe(written.state.revision);
+    await expect(f.store.longMemoryWrite({ scope, sources: [{ ...retry, text: '不同的原文。' }] }))
+      .rejects.toMatchObject({ code: 'REVISION_CONFLICT' });
+    expect((await f.store.longMemoryExport([scope])).sources[0].text).toBe(input.text);
+  });
+
+  test('记忆写入重试忽略依赖对象的键顺序，但仍拒绝同版本的不同值', async () => {
+    const written = await add();
+    const retry = record('city', '当前住址是上海。', 'city-source', {
+      dependencies: [{ version: 1, id: 'city-source', kind: 'source' }],
+    });
+    expect((await f.store.longMemoryWrite({ scope, records: [retry] })).state.revision).toBe(written.state.revision);
+    await expect(f.store.longMemoryWrite({ scope, records: [{ ...retry, text: '不同的记忆。' }] }))
+      .rejects.toMatchObject({ code: 'REVISION_CONFLICT' });
+    expect((await f.store.longMemoryExport([scope])).records[0].text).toBe(retry.text);
+  });
+
+  test('可选字段显式为undefined时仍按实际保存的JSON内容重试和恢复', async () => {
+    const input = { ...source('city-source', '当前住址是上海。'), reference: { label: 'fixture', conversationId: undefined } };
+    const written = await f.store.longMemoryWrite({ scope, sources: [input], records: [record('city', input.text)] });
+    expect((await f.store.longMemoryWrite({ scope, sources: [input] })).state.revision).toBe(written.state.revision);
+    const archive = await f.store.longMemoryExport([scope]);
+    archive.sources[0].reference = { label: 'fixture', conversationId: undefined };
+    archive.records[0].dependencies[0].association = undefined;
+    await expect(f.store.longMemoryRestore({ actorId: 'owner', archive }))
+      .resolves.toEqual({ sources: 0, records: 0, skipped: 2, tombstones: 0 });
+  });
+
   test('仅引用第二版来源的交换归档可在空存储中恢复完整版本链', async () => {
     await f.store.longMemoryWrite({ scope, sources: [source('city-source', '尚未提取的住址原文。')] });
     await f.store.longMemoryWrite({ scope, sources: [
