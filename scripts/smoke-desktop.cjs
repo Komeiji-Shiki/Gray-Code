@@ -426,6 +426,8 @@ async function main() {
   await until(() => chat('!!document.querySelector(".input-editor")'), 'original input area');
   startupTiming.initialInputMountedMilliseconds = performance.now() - startupStartedAt;
   if (rendererBenchmark) startupTiming.initialResources = await startupResources();
+  // 外壳开屏必须真正退场，不能因为聊天就绪消息丢失而一直盖住主界面。
+  await until(() => evaluate('!document.querySelector(".splash")'), 'startup splash dismissed');
   await ui('ui.settings.begin');
   const settings = await ui('platform.settings.get');
   settings.workspaces.push({ id: 'smoke', name: '桌面验证项目', directory: path.join(output, 'project'), deviceId: 'local' });
