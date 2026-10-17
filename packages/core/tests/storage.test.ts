@@ -155,6 +155,7 @@ describe('independent SQLite storage worker', () => {
     const value = { parts: [{ text: payload, functionCall: { id: 'call', name: 'read', args: { payload } } },
       { functionResponse: { id: 'call', response: { success: true, code: 'OK', data: payload } } }],
       manifest, binary: new Uint8Array([1, 2, 3]) };
+    // workspace-checkpoints 会启用 shareLargeMaps，让 manifest 以 VALUE_REFERENCE 进入投影路径。
     await f.store.putRecord({ namespace: 'workspace-checkpoints', id: 'nested', value });
     const projected = await f.store.getVersionedRecord('workspace-checkpoints', 'nested', {
       fields: ['parts', 'manifest', 'binary'], omitBinary: true,

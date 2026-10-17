@@ -101,7 +101,10 @@ export class ObjectStore {
         WHERE oc.object_hash=? ORDER BY oc.ordinal`).all(hash)) as ChunkRow[];
     if (chunks.length !== expectedChunks) throw new PlatformStorageError('CORRUPT_DATA', 'Content chunks are missing.');
     const singleChunk = chunks.length === 1 ? chunks[0] : undefined;
-    const bytes = singleChunk ? this.readChunk(singleChunk) : Buffer.concat(chunks.map(chunk => this.readChunk(chunk)));
+    // 前缀读取算不出整体哈希，必须逐块校验；完整多块读取由下面的整体哈希覆盖，不重复算 sha256。
+    const verifyChunkHashes = prefix || !!singleChunk;
+    const bytes = singleChunk ? this.readChunk(singleChunk, verifyChunkHashes)
+      : Buffer.concat(chunks.map(chunk => this.readChunk(chunk, verifyChunkHashes)));
     if (prefix) {
       // 预览只校验实际读取的块，完整读取仍校验整个对象；不为短文本展开后续正文。
       if (bytes.length < maxBytes) throw new PlatformStorageError('CORRUPT_DATA', 'Content prefix is incomplete.');
@@ -353,13 +356,13 @@ export class ObjectStore {
     return id;
   }
 
-  private readChunk(chunk: ChunkRow): Buffer {
+  private readChunk(chunk: ChunkRow, verifyHash = true): Buffer {
     try {
       const stored = chunk.data ?? fs.readFileSync(this.filePath(chunk.file_id!));
       if (chunk.raw_bytes < 0 || chunk.raw_bytes > CHUNK_BYTES) throw new Error('Invalid chunk size');
       if (chunk.codec !== 0 && chunk.codec !== 1) throw new Error('Unsupported chunk codec');
       const raw = chunk.codec === 1 ? zstdDecompressSync(stored, { maxOutputLength: CHUNK_BYTES }) : stored;
-      if (raw.length !== chunk.raw_bytes || !digest(raw).equals(chunk.hash)) throw new Error('Chunk checksum mismatch');
+      if (raw.length !== chunk.raw_bytes || (verifyHash && !digest(raw).equals(chunk.hash))) throw new Error('Chunk checksum mismatch');
       return raw;
     } catch (error) {
       throw new PlatformStorageError('CORRUPT_DATA', `Cannot read content chunk: ${error instanceof Error ? error.message : String(error)}`);
