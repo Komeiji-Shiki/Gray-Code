@@ -31,7 +31,7 @@ if (process.platform === 'win32') {
   if (require('node:fs').existsSync(executable)) {
     try {
       require('node:child_process').execFileSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command',
-        "$running = Get-Process -Name GrayCode -ErrorAction SilentlyContinue | Where-Object { $_.Path -eq $env:GRAYCODE_PACKAGE_TARGET }; if ($running) { exit 3 }"],
+        "$running = @(Get-Process -Name GrayCode -ErrorAction SilentlyContinue | Where-Object { $_.Path -eq $env:GRAYCODE_PACKAGE_TARGET }); if ($running.Count) { exit 3 } else { exit 0 }"],
         { windowsHide: true, encoding: 'utf8', env: { ...process.env, GRAYCODE_PACKAGE_TARGET: executable } });
     } catch (error) {
       // 只有明确命中目标进程的 3 才是「程序正在运行」；其他失败是检查本身不可用，
