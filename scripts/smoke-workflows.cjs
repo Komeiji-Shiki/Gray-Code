@@ -327,7 +327,9 @@ async function runCompanionWorkflow({ window, rpc, evaluate, chat, until, output
 }
 
 async function verifyInputToolbar({ window, chat, until, output }) {
-  await until(() => chat('!!document.querySelector(".input-actions-menu [aria-haspopup=menu]")'), 'input more actions');
+  // 工具栏直接显示存档点、总结、提示词预览和保留发送，不再有“更多操作”菜单。
+  await until(() => chat('!!document.querySelector(".checkpoint-button") && !!document.querySelector(".summarize-button")'
+    + ' && !!document.querySelector(".prompt-preview-button") && !!document.querySelector(".preserve-send-button")'), 'direct input actions');
   assert(await chat('!!document.querySelector(".attach-button") && !!document.querySelector(".send-button")'));
   assert(await chat('!!document.querySelector(".pinned-files-button span") && !!document.querySelector(".skills-button span")'));
   const icons = await chat(`Array.from(document.querySelectorAll('.bottom-toolbar button')).filter(node =>
@@ -335,51 +337,77 @@ async function verifyInputToolbar({ window, chat, until, output }) {
       title: node.title, label: node.getAttribute('aria-label'),
     }))`);
   assert(icons.length > 0 && icons.every(icon => icon.title && icon.label), 'Visible toolbar icons need tooltips and accessible names.');
-  const pictures = [await screenshot(window, output, 'input-toolbar.png')];
-  await chat('document.querySelector(".input-actions-menu [aria-haspopup=menu]").click()');
-  await until(() => chat('document.querySelectorAll(".input-actions-panel [role=menuitem]").length === 4'), 'four input secondary actions');
-  const actions = await chat('Array.from(document.querySelectorAll(".input-actions-panel [role=menuitem]")).map(node => node.textContent.trim())');
-  assert(actions.some(label => label.includes('存档点')));
-  assert(actions.some(label => label.includes('总结')));
-  assert(actions.some(label => label.includes('提示词')));
-  assert(actions.some(label => label.includes('保留')));
-  pictures.push(await screenshot(window, output, 'input-toolbar-more.png'));
-  const focusPosition = () => chat(`(() => {
-    const items = Array.from(document.querySelectorAll('.input-actions-panel [role=menuitem]:not(:disabled)'));
-    return { index: items.indexOf(document.activeElement), count: items.length };
+  const actions = await chat(`['.checkpoint-button', '.summarize-button', '.prompt-preview-button', '.preserve-send-button'].map(selector => {
+    const node = document.querySelector(selector);
+    return node ? (node.getAttribute('aria-label') || '') : null;
+  })`);
+  assert(actions.every(Boolean), 'All four direct input actions must expose accessible names.');
+  assert(actions[0].includes('存档点'), 'Checkpoint action must stay labelled.');
+  assert(actions[1].includes('总结'), 'Summarize action must stay labelled.');
+  assert(actions[2].includes('提示词'), 'Prompt preview action must stay labelled.');
+  assert(actions[3].includes('保留'), 'Preserve-dynamic-context action must stay labelled.');
+  const placement = await chat(`(() => {
+    const checkpoint = document.querySelector('.checkpoint-button');
+    const preview = document.querySelector('.prompt-preview-button');
+    const summarize = document.querySelector('.summarize-button');
+    const preserve = document.querySelector('.preserve-send-button');
+    const send = document.querySelector('.send-button:not(.preserve-send-button)');
+    return {
+      checkpointInConversationGroup: !!checkpoint?.closest('.toolbar-left .toolbar-group + .toolbar-group'),
+      previewInSendActions: !!preview?.closest('.toolbar-right'),
+      summarizeInSendActions: !!summarize?.closest('.toolbar-right'),
+      sendButtonsAdjacent: !!send && !!preserve && send.previousElementSibling === preserve,
+    };
   })()`);
-  await until(async () => (await focusPosition()).index === 0, 'first available menu item focused');
+  assert(placement.checkpointInConversationGroup, 'Checkpoint belongs to the left conversation action group.');
+  assert(placement.previewInSendActions && placement.summarizeInSendActions, 'Preview and summarize belong to the right send action group.');
+  assert(placement.sendButtonsAdjacent, 'Preserve send must sit directly before send.');
+  const actionStates = await chat(`['.checkpoint-button', '.prompt-preview-button', '.summarize-button'].map(selector => {
+    const node = document.querySelector(selector);
+    return { selector, disabled: !!node.disabled };
+  })`);
+  const enabledActions = actionStates.filter(item => !item.disabled);
+  // 与旧菜单的“至少两个可用项”一致：会话状态不同，部分操作会按规则禁用。
+  assert(enabledActions.length >= 2, `At least two direct actions must be enabled: ${JSON.stringify(actionStates)}`);
+  const pictures = [await screenshot(window, output, 'input-toolbar.png')];
   // 使用 Chromium 的真实按键路径，让 Tab 的原生焦点移动也参与验收。
   const keyboard = window.webContents.debugger;
   keyboard.attach('1.3');
-  async function press(key, keyCode) {
-    const event = { key, code: key, windowsVirtualKeyCode: keyCode, nativeVirtualKeyCode: keyCode };
+  async function press(key, keyCode, modifiers) {
+    const event = { key, code: key, windowsVirtualKeyCode: keyCode, nativeVirtualKeyCode: keyCode, ...(modifiers ? { modifiers } : {}) };
     await keyboard.sendCommand('Input.dispatchKeyEvent', { type: 'keyDown', ...event });
     await keyboard.sendCommand('Input.dispatchKeyEvent', { type: 'keyUp', ...event });
   }
+  const describeFocus = () => chat(`(() => {
+    const node = document.activeElement;
+    if (!node) return 'outside';
+    const selectors = ['.checkpoint-button', '.prompt-preview-button', '.summarize-button', '.context-detail-button',
+      '.token-ring-wrapper', '.preserve-send-button', '.send-button:not(.preserve-send-button)'];
+    return selectors.find(selector => node.matches(selector)) || (node.closest('.bottom-toolbar') ? 'toolbar-control' : 'outside');
+  })()`);
   try {
-    const count = (await focusPosition()).count;
-    assert(count >= 2, 'The completed conversation must offer multiple enabled actions.');
-    await press('End', 35);
-    assert.equal((await focusPosition()).index, count - 1);
-    await press('ArrowDown', 40);
-    assert.equal((await focusPosition()).index, 0);
-    await press('ArrowUp', 38);
-    assert.equal((await focusPosition()).index, count - 1);
-    await press('Home', 36);
-    assert.equal((await focusPosition()).index, 0);
-    await press('Escape', 27);
-    await until(() => chat('!document.querySelector(".input-actions-panel")'), 'input actions escape closes menu');
-    assert(await chat('document.activeElement === document.querySelector(".input-actions-menu [aria-haspopup=menu]")'));
-    await press('ArrowDown', 40);
-    await until(async () => (await focusPosition()).index === 0, 'keyboard opens input actions');
-    await press('End', 35);
-    await press('Tab', 9);
-    await until(() => chat('!document.querySelector(".input-actions-panel")'), 'tab leaves and closes input actions');
+    await chat('document.querySelector(".attach-button").focus()');
+    assert.equal(await describeFocus(), 'toolbar-control', 'Attachment action must be focusable.');
+    const visited = [];
+    for (let step = 0; step < 12; step++) {
+      await press('Tab', 9);
+      const target = await describeFocus();
+      if (target === 'outside') break;
+      visited.push(target);
+    }
+    for (const item of enabledActions)
+      assert(visited.includes(item.selector), `Tab must reach enabled action ${item.selector}.`);
+    assert(visited.includes('.context-detail-button'), 'Tab must reach context detail.');
+    assert(visited.includes('.token-ring-wrapper'), 'Tab must reach token usage.');
+    // 反向导航仍可用：从用量环回到相邻的上下文详情。
+    await chat('document.querySelector(".token-ring-wrapper").focus()');
+    await press('Tab', 9, 8);
+    assert.equal(await describeFocus(), '.context-detail-button', 'Shift+Tab must return to context detail.');
   } finally {
     keyboard.detach();
   }
-  return { actions, icons, screenshots: pictures, keyboardNavigation: true, keyboardCloseAndFocusRestore: true, tabClosesMenu: true };
+  pictures.push(await screenshot(window, output, 'input-toolbar-keyboard.png'));
+  return { actions, icons, screenshots: pictures, directActions: true, keyboardNavigation: true, sendActionsGrouped: true };
 }
 
 module.exports = { runProjectSwitchWorkflow, verifyShellShortcuts, verifyMonacoSearchShortcut, runCompanionWorkflow, verifyInputToolbar, screenshot };
