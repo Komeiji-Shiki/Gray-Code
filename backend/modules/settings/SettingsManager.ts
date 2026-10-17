@@ -64,6 +64,7 @@ import type {
     SubAgentConfigUpdate,
     HistorySearchToolConfig,
     MemoryToolConfig,
+    WebSearchToolConfig,
 } from './types';
 import {
     SettingsCore,
@@ -77,6 +78,7 @@ import { ContextSettingsService } from './ContextSettingsService';
 import { PinnedFilesSettingsService } from './PinnedFilesSettingsService';
 import { SkillsSettingsService } from './SkillsSettingsService';
 import { ImageToolsSettingsService } from './ImageToolsSettingsService';
+import { WebSearchSettingsService } from './WebSearchSettingsService';
 import { ProxySettingsService } from './ProxySettingsService';
 import { SummarizeSettingsService } from './SummarizeSettingsService';
 import { TokenCountSettingsService } from './TokenCountSettingsService';
@@ -105,6 +107,7 @@ export class SettingsManager {
     private pinnedFiles: PinnedFilesSettingsService;
     private skills: SkillsSettingsService;
     private imageTools: ImageToolsSettingsService;
+    private webSearch: WebSearchSettingsService;
     private proxy: ProxySettingsService;
     private summarize: SummarizeSettingsService;
     private tokenCount: TokenCountSettingsService;
@@ -122,6 +125,7 @@ export class SettingsManager {
         this.pinnedFiles = new PinnedFilesSettingsService(this.core);
         this.skills = new SkillsSettingsService(this.core);
         this.imageTools = new ImageToolsSettingsService(this.core);
+        this.webSearch = new WebSearchSettingsService(this.core);
         this.proxy = new ProxySettingsService(this.core);
         this.summarize = new SummarizeSettingsService(this.core);
         this.tokenCount = new TokenCountSettingsService(this.core);
@@ -514,6 +518,14 @@ export class SettingsManager {
     }
 
     // ========== 图像生成配置管理 ==========
+
+    getWebSearchConfig(): Readonly<WebSearchToolConfig> {
+        return this.webSearch.getWebSearchConfig();
+    }
+
+    updateWebSearchConfig(config: Partial<WebSearchToolConfig>): Promise<void> {
+        return this.webSearch.updateWebSearchConfig(config);
+    }
 
     getGenerateImageConfig(): Readonly<GenerateImageToolConfig> {
         return this.imageTools.getGenerateImageConfig();

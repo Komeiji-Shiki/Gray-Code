@@ -400,6 +400,28 @@ export interface ExecuteCommandToolConfig {
 /**
  * 图像生成工具配置
  */
+/**
+ * 网页搜索工具配置
+ *
+ * 使用 DeepSeek 官方 Search API 检索公开网页；endpoint 可指向支持同一接口的代理。
+ * 搜索凭据与模型渠道相互独立，避免第三方模型中转无法使用官方搜索。
+ */
+export interface WebSearchToolConfig {
+    /** 搜索接口完整地址 */
+    endpoint: string;
+
+    /** 搜索服务的 API Key */
+    apiKey: string;
+
+    /** 调用参数未指定时返回的结果数 */
+    count: number;
+
+    /** 调用参数未指定时是否返回网页正文 */
+    needContent: boolean;
+
+    [key: string]: unknown;
+}
+
 export interface GenerateImageToolConfig {
     /**
      * API URL
@@ -573,6 +595,7 @@ export interface ToolsConfig {
     subagents?: SubAgentsConfig;
     history_search?: HistorySearchToolConfig;
     memory?: MemoryToolConfig;
+    web_search?: WebSearchToolConfig;
     [toolName: string]: Record<string, unknown> | undefined;
 }
 
@@ -792,6 +815,19 @@ export const DEFAULT_TOOL_AUTO_EXEC_CONFIG: ToolAutoExecConfig = {
     delete_file: false,      // 需要确认
     execute_command: false, // 需要确认
     pet_control: true       // 陪伴表达默认自动执行，用户显式设置继续覆盖。
+};
+
+/**
+ * 默认网页搜索工具配置
+ *
+ * 端点使用 DeepSeek 官方文档给出的完整 Search API 地址；模型渠道里的 DeepSeek
+ * 中转地址不一定支持该接口，因此单独保存，不随渠道投影变化。
+ */
+export const DEFAULT_WEB_SEARCH_CONFIG: WebSearchToolConfig = {
+    endpoint: 'https://api.deepseek.com/v1/tools/search',
+    apiKey: '',
+    count: 10,
+    needContent: false
 };
 
 /**

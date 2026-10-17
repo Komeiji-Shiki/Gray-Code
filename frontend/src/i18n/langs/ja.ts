@@ -1327,6 +1327,7 @@ const ja: LanguageMessages = {
                     terminal: 'ターミナル',
                     lsp: 'コードインテリジェンス',
                     media: 'メディア処理',
+                    web: 'ウェブ検索',
                     plan: 'プラン',
                     mcp: 'MCP ツール',
                     todo: 'TODO',
@@ -2676,6 +2677,21 @@ const ja: LanguageMessages = {
                         description: '有効にすると、AI は回転効果を直接確認し、角度が正しいかどうかを判断できます。無効にするとトークン消費を節約できます。'
                     }
                 },
+                web: {
+                    webSearch: {
+                        title: 'ウェブ検索',
+                        endpoint: '検索エンドポイント',
+                        endpointHint: '既定では DeepSeek 公式 Search API を使用します。同じエンドポイントを実装したプロキシに変更できます。',
+                        apiKey: 'API Key',
+                        apiKeyPlaceholder: 'DeepSeek API Key を入力',
+                        showKey: 'API Key を表示',
+                        hideKey: 'API Key を隠す',
+                        count: '既定の結果数',
+                        needContent: '既定でページ本文を返す',
+                        needContentHint: '本文はサービス側で取得するため結果が大きくなります。1 ページあたり 20,000 文字を超える本文は切り詰められます。',
+                        description: '検索は成功したリクエストごとに課金され（1,000 回あたり $0.75）、アカウント単位で毎秒 5 回に制限されます。結果は外部ページのため、出典を確認してください。'
+                    }
+                },
                 common: {
                     loading: '読み込み中...',
                     loadingConfig: '設定を読み込み中...',
@@ -2704,6 +2720,7 @@ const ja: LanguageMessages = {
                     terminal: 'ターミナル',
                     lsp: 'コードインテリジェンス',
                     media: 'メディア処理',
+                    web: 'ウェブ検索',
                     plan: 'プラン',
                     todo: 'TODO',
                     history: '履歴',
@@ -2760,6 +2777,7 @@ const ja: LanguageMessages = {
                     execute_command: 'コマンドを実行',
                     find_files: 'ファイルを検索',
                     search_in_files: 'ファイル内を検索',
+                    web_search: 'ウェブ検索',
                     history_search: '履歴を検索',
                     get_symbols: 'シンボルを取得',
                     goto_definition: '定義に移動',
@@ -2833,6 +2851,7 @@ const ja: LanguageMessages = {
                     execute_command: 'シェルコマンドを実行し出力を返します。PowerShell、CMD、Bash、WSL 等に対応。',
                     find_files: 'Glob パターンでファイルを検索します。一致したファイル一覧を返します。',
                     search_in_files: 'ワークスペースファイル内で検索または置換を行います。正規表現対応。',
+                    web_search: 'DeepSeek 公式検索サービスで公開ウェブページを検索し、タイトル、リンク、要約、出典情報を返します。',
                     history_search: '会話履歴を検索・読み取りします。キーワード検索と行範囲読み取りに対応。',
                     get_symbols: 'ファイル内のシンボル（クラス、関数、変数等）を取得します。階層リストと行番号を返します。',
                     goto_definition: 'シンボルの定義に移動し、完全な定義コードを行番号付きで返します。',
@@ -3449,6 +3468,11 @@ const ja: LanguageMessages = {
             contextStatus: sharedJa.components.tools.contextStatus,
             automation: sharedJa.components.tools.automation,
             platform: sharedJa.components.tools.platform,
+            webSearch: {
+                resultCount: '{count} 件の結果',
+                authority: '権威レベル {level}',
+                empty: '一致するウェブページはありません。'
+            },
             executing: '実行中...',
             structured: {
                 statuses: { pending: '未処理', queued: '待機中', in_progress: '進行中', running: '実行中', completed: '完了', done: '完了', success: '成功', failed: '失敗', error: 'エラー', blocked: '条件待ち', cancelled: 'キャンセル済み' },

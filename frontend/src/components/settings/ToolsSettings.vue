@@ -33,6 +33,7 @@ import CropImageConfig from './tools/media/crop_image.vue'
 import ResizeImageConfig from './tools/media/resize_image.vue'
 import RotateImageConfig from './tools/media/rotate_image.vue'
 import HistorySearchConfig from './tools/history/history_search.vue'
+import WebSearchConfig from './tools/web/web_search.vue'
 
 // 工具信息接口
 interface ToolInfo {
@@ -98,7 +99,8 @@ function hasConfigPanel(toolName: string): boolean {
     'crop_image',
     'resize_image',
     'rotate_image',
-    'history_search'
+    'history_search',
+    'web_search'
   ]
   return toolsWithConfig.includes(toolName)
 }
@@ -427,6 +429,9 @@ onMounted(() => {
             <HistorySearchConfig
               v-if="tool.name === 'history_search' && isConfigExpanded(tool.name)"
               :tool-name="tool.name"
+            />
+            <WebSearchConfig
+              v-if="tool.name === 'web_search' && isConfigExpanded(tool.name)"
             />
           </div>
         </div>

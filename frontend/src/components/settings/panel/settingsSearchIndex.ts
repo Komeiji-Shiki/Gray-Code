@@ -125,7 +125,7 @@ export function settingsSearchIndex(isDesktopHost: boolean, supportsFileAssociat
   {
     key: 'tools', tab: 'tools',
     labelKey: 'components.settings.settingsPanel.sections.tools.title',
-    keywords: ['工具', 'tools', 'ツール', 'apply_diff', 'insert_code', 'delete_code', '文件编辑', '终端', 'terminal', 'ターミナル', '浏览器', 'browser', '搜索', 'search', '网页抓取', '图片', '图像', 'image', '生成', 'generate', '诊断', 'diagnostics']
+    keywords: ['工具', 'tools', 'ツール', 'apply_diff', 'insert_code', 'delete_code', '文件编辑', '终端', 'terminal', 'ターミナル', '浏览器', 'browser', '搜索', 'search', '网页搜索', '联网', 'web search', 'deepseek', '网页抓取', '图片', '图像', 'image', '生成', 'generate', '诊断', 'diagnostics']
   },
   {
     key: 'tools-max-iterations', tab: 'tools',

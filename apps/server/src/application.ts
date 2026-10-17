@@ -79,6 +79,7 @@ import { mutationTools } from './workspace/mutationTools';
 import { readOnlySearchTool, readTools } from './workspace/readTools';
 import { isSearchInFilesReplaceForbidden } from '../../../backend/modules/settings/modeToolsPolicy';
 import { officeTools } from './office/tools';
+import { webTools } from './web/tools';
 import { DEFAULT_APPLY_DIFF_CONFIG } from '../../../backend/modules/settings/types/toolsTypes';
 import { DiscordBotService } from "./bots/discord";
 import type { DiscordGateway } from "./bots/discordGateway";
@@ -265,6 +266,7 @@ export class PlatformApplication {
     for (const tool of languageTools(this)) this.tools.register(tool);
     for (const tool of readTools(this)) this.tools.register(tool);
     for (const tool of officeTools(this)) this.tools.register(tool);
+    for (const tool of webTools(this)) this.tools.register(tool);
     for (const tool of this.artifacts.tools()) this.tools.register(tool);
     for (const tool of conversationTools(this)) this.tools.register(tool);
     for (const tool of contextTools(this)) this.tools.register(tool);

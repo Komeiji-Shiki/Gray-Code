@@ -1329,6 +1329,7 @@ const zhCN = {
                     terminal: '终端',
                     lsp: '代码智能',
                     media: '媒体处理',
+                    web: '网页搜索',
                     plan: '计划',
                     mcp: 'MCP 工具',
                     todo: 'TODO',
@@ -2678,6 +2679,21 @@ const zhCN = {
                         description: '启用后，AI 可以直接查看旋转效果，判断角度是否正确。禁用可节省 token 消耗。'
                     }
                 },
+                web: {
+                    webSearch: {
+                        title: '网页搜索',
+                        endpoint: '搜索接口地址',
+                        endpointHint: '默认使用 DeepSeek 官方 Search API。支持同一接口的代理可改为自己的地址。',
+                        apiKey: 'API Key',
+                        apiKeyPlaceholder: '输入 DeepSeek API Key',
+                        showKey: '显示 API Key',
+                        hideKey: '隐藏 API Key',
+                        count: '默认结果数',
+                        needContent: '默认返回网页正文',
+                        needContentHint: '正文由服务端抓取，结果体积明显增大；单条超过 20000 字符会截断。',
+                        description: '搜索按成功请求计费（每 1000 次 $0.75），账户级限制为每秒 5 次。搜索结果来自外部网页，请核对来源。'
+                    }
+                },
                 common: {
                     loading: '加载中...',
                     loadingConfig: '加载配置...',
@@ -2706,6 +2722,7 @@ const zhCN = {
                     terminal: '终端',
                     lsp: '代码智能',
                     media: '媒体处理',
+                    web: '网页搜索',
                     plan: '计划',
                     todo: 'TODO',
                     history: '历史',
@@ -2762,6 +2779,7 @@ const zhCN = {
                     execute_command: '执行命令',
                     find_files: '查找文件',
                     search_in_files: '在文件中搜索',
+                    web_search: '网页搜索',
                     history_search: '历史搜索',
                     get_symbols: '获取符号',
                     goto_definition: '跳转定义',
@@ -2835,6 +2853,7 @@ const zhCN = {
                     execute_command: '执行 Shell 命令并返回输出。支持 PowerShell、CMD、Bash、WSL 等多种 Shell。',
                     find_files: '根据一个或多个 glob 模式查找文件，返回匹配的文件列表及行数详情。',
                     search_in_files: '在工作区文件中搜索或搜索替换内容，支持正则表达式。',
+                    web_search: '使用 DeepSeek 官方搜索服务检索公开网页，返回标题、链接、摘要和来源信息。',
                     history_search: '搜索和读取对话历史记录。支持搜索关键词和按行读取两种模式。',
                     get_symbols: '获取文件中的所有符号（类、函数、变量等），返回层级符号列表及行号。',
                     goto_definition: '跳转到符号定义位置并返回完整定义代码（含行号）。',
@@ -3451,6 +3470,11 @@ const zhCN = {
             contextStatus: sharedZhCN.components.tools.contextStatus,
             automation: sharedZhCN.components.tools.automation,
             platform: sharedZhCN.components.tools.platform,
+            webSearch: {
+                resultCount: '{count} 条结果',
+                authority: '权威等级 {level}',
+                empty: '没有匹配的网页。'
+            },
             executing: '执行中...',
             structured: {
                 statuses: { pending: '待处理', queued: '排队中', in_progress: '进行中', running: '运行中', completed: '已完成', done: '已完成', success: '成功', failed: '失败', error: '错误', blocked: '等待条件', cancelled: '已取消' },

@@ -1327,6 +1327,7 @@ const en: LanguageMessages = {
                     terminal: 'Terminal',
                     lsp: 'Code Intelligence',
                     media: 'Media Processing',
+                    web: 'Web Search',
                     plan: 'Plan',
                     mcp: 'MCP Tools',
                     todo: 'TODO',
@@ -2676,6 +2677,21 @@ const en: LanguageMessages = {
                         description: 'When enabled, AI can directly view the rotation effect to judge if the angle is correct. Disable to save token consumption.'
                     }
                 },
+                web: {
+                    webSearch: {
+                        title: 'Web Search',
+                        endpoint: 'Search endpoint',
+                        endpointHint: 'Uses the official DeepSeek Search API by default. Point it at a proxy that implements the same endpoint if needed.',
+                        apiKey: 'API Key',
+                        apiKeyPlaceholder: 'Enter a DeepSeek API key',
+                        showKey: 'Show API key',
+                        hideKey: 'Hide API key',
+                        count: 'Default result count',
+                        needContent: 'Return page content by default',
+                        needContentHint: 'The service fetches the page body, which makes results noticeably larger; content over 20,000 characters per page is truncated.',
+                        description: 'Searches are billed per successful request ($0.75 per 1,000) and limited to 5 requests per second per account. Results come from external pages; verify their sources.'
+                    }
+                },
                 common: {
                     loading: 'Loading...',
                     loadingConfig: 'Loading config...',
@@ -2704,6 +2720,7 @@ const en: LanguageMessages = {
                     terminal: 'Terminal',
                     lsp: 'Code Intelligence',
                     media: 'Media Processing',
+                    web: 'Web Search',
                     plan: 'Plan',
                     todo: 'TODO',
                     history: 'History',
@@ -2760,6 +2777,7 @@ const en: LanguageMessages = {
                     execute_command: 'Execute Command',
                     find_files: 'Find Files',
                     search_in_files: 'Search in Files',
+                    web_search: 'Web Search',
                     history_search: 'History Search',
                     get_symbols: 'Get Symbols',
                     goto_definition: 'Goto Definition',
@@ -2833,6 +2851,7 @@ const en: LanguageMessages = {
                     execute_command: 'Execute a shell command and return output. Supports PowerShell, CMD, Bash, WSL and more.',
                     find_files: 'Find files by glob patterns. Returns matched file list with details.',
                     search_in_files: 'Search or search-and-replace content in workspace files. Supports regex.',
+                    web_search: 'Search public web pages with the official DeepSeek search service and return titles, links, summaries and source information.',
                     history_search: 'Search and read conversation history. Supports keyword search and line-range read modes.',
                     get_symbols: 'Get all symbols (classes, functions, variables, etc.) in files. Returns hierarchical symbol list with line numbers.',
                     goto_definition: 'Go to the definition of a symbol and return the complete definition code with line numbers.',
@@ -3449,6 +3468,11 @@ const en: LanguageMessages = {
             contextStatus: sharedEn.components.tools.contextStatus,
             automation: sharedEn.components.tools.automation,
             platform: sharedEn.components.tools.platform,
+            webSearch: {
+                resultCount: '{count} results',
+                authority: 'Authority {level}',
+                empty: 'No matching pages.'
+            },
             executing: 'Executing...',
             structured: {
                 statuses: { pending: 'Pending', queued: 'Queued', in_progress: 'In progress', running: 'Running', completed: 'Completed', done: 'Done', success: 'Success', failed: 'Failed', error: 'Error', blocked: 'Blocked', cancelled: 'Cancelled' },

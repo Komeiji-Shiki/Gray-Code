@@ -16,6 +16,7 @@ export function productSettingsHandlers(draft: ProductSettingsDraft, app: Platfo
     apply_diff: () => settings.getApplyDiffConfig(), delete_file: () => settings.getDeleteFileConfig(), find_files: () => settings.getFindFilesConfig(),
     search_in_files: () => settings.getSearchInFilesConfig(), execute_command: () => settings.getExecuteCommandConfig(), history_search: () => settings.getHistorySearchConfig(),
     generate_image: () => settings.getGenerateImageConfig(), remove_background: () => settings.getRemoveBackgroundConfig(),
+    web_search: () => settings.getWebSearchConfig(),
     crop_image: () => settings.getCropImageConfig(), resize_image: () => settings.getResizeImageConfig(), rotate_image: () => settings.getRotateImageConfig(),
   };
   // 设置页按运行时实际生效的规则显示；risk 表示没有规则，按每次操作的风险决定是否确认。
@@ -79,7 +80,8 @@ export function productSettingsHandlers(draft: ProductSettingsDraft, app: Platfo
         category: /^(read_file|write_file|apply_diff|insert_code|delete_code|delete_file|create_directory|list_files|find_files|search_in_files)$/.test(tool.name) ? 'file'
           : /^(execute_command|terminal_task)$/.test(tool.name) ? 'terminal'
             : tool.name.startsWith('memory_') || tool.name === 'engineering_log' ? 'memory' : tool.name === 'read_skill' ? 'skills' : tool.name.startsWith('todo_') ? 'todo' : tool.name === 'history_search' ? 'history'
-              : tool.name === 'get_activity_stats' ? 'activity' : tool.name.startsWith('mcp_') ? 'mcp' : ['generate_image', 'remove_background', 'crop_image', 'resize_image', 'rotate_image'].includes(tool.name) ? 'media' : 'other' })) };
+              : tool.name === 'get_activity_stats' ? 'activity' : tool.name.startsWith('mcp_') ? 'mcp' : tool.name === 'web_search' ? 'web'
+                : ['generate_image', 'remove_background', 'crop_image', 'resize_image', 'rotate_image'].includes(tool.name) ? 'media' : 'other' })) };
     },
     'tools.setToolEnabled': async data => { await settings.setToolEnabled(data.toolName, data.enabled); return { success: true }; },
     'tools.setToolsEnabled': async data => { await settings.setToolsEnabled(data.states); return { success: true }; },
