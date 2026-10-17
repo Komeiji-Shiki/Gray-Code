@@ -1,10 +1,12 @@
 import path from 'node:path';
 import { createHash, randomUUID } from 'node:crypto';
 import { promises as fs } from 'node:fs';
+import { PlatformStorage } from '@graycode/core';
 import type { PendingBackupRestore } from '@graycode/contracts';
 import {preserveMemoryDeletions} from './memoryDeletion';
 import { preserveNodeRevocations } from './nodeRevocations';
 import { buildSelectiveRestore } from './selective';
+import { preferRestoredSettings } from './resources';
 import { captureDirectory } from '../migration/directoryCapture';
 
 interface RestoreState {
@@ -120,6 +122,11 @@ export class BackupRestoreState {
       if(!await exists(currentDirectory))throw new Error('恢复前的数据目录不存在，不能保留当前删除状态。');
       await preserveMemoryDeletions(currentDirectory,pending.stagingPath);
       await preserveNodeRevocations(currentDirectory,pending.stagingPath);
+      if (pending.selection?.mode !== 'selective') {
+        const restored = await PlatformStorage.open(pending.stagingPath);
+        try { await preferRestoredSettings(restored); await restored.checkpoint(); }
+        finally { await restored.close(); }
+      }
       if (await exists(this.directory)) {
         if (await exists(pending.previousPath)) throw new Error('恢复前目录已存在，当前数据未覆盖。');
         await fs.rename(this.directory, pending.previousPath);

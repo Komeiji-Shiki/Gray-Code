@@ -8,6 +8,12 @@ import { pauseRestoredTerminalFeedback } from '../terminal/service';
 const hash = (bytes: Uint8Array | string) => createHash('sha256').update(bytes).digest('hex');
 const resourceVersions = new Set(['conversations', 'settings', 'memories', 'devices', 'pets', 'screen', 'skills', 'other']);
 
+/** 标记随恢复副本一起切换；便携配置成功写回前，重启仍以本次恢复的设置为准。 */
+export async function preferRestoredSettings(storage: PlatformStorage) {
+  const previous = await storage.getRecord('portable-profile', 'main') as Record<string, unknown> | null;
+  await storage.putRecord({ namespace: 'portable-profile', id: 'main', value: { ...previous, preferDatabase: true } });
+}
+
 /** 清单版本之外，再核对桌宠文件之间的引用；附件块校验不能代替资源完整性校验。 */
 export async function validateBackupResources(storage: PlatformStorage, manifest?: BackupManifest) {
   if (manifest?.version === 2 && (!Array.isArray(manifest.resources) || manifest.resources.some(resource => !resourceVersions.has(resource.id) || resource.version !== 1 || !Number.isSafeInteger(resource.count) || resource.count < 0)))
