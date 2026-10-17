@@ -39,6 +39,7 @@ export class NodeClients {
     state.retry = setTimeout(() => { state.retry = undefined; void this.connect(id).catch(() => {}); }, delay); state.retry.unref();
   }
   connect(id: string): Promise<void> {
+    if (this.closed) return Promise.reject(new Error('执行节点正在关闭，无法接受新操作。'));
     const peer = this.peer(id), state = this.state(id);
     if (state.wire?.online) return Promise.resolve();
     if (state.connecting) return state.connecting;
@@ -133,6 +134,7 @@ export class NodeClients {
     })().finally(() => this.recovering.delete(peer.id)); this.recovering.set(peer.id, next); return next;
   }
   dispatch(peerId: string, input: NodeTaskInput) {
+    if (this.closed) return Promise.reject(new Error('执行节点正在关闭，无法接受新操作。'));
     const peer = this.peer(peerId), key = nodeHash(`${peerId}:${nodeText(input.requestKey, '任务请求标识')}`);
     const previous = this.dispatching.get(key);
     const next = (previous ? previous.catch(() => {}).then(() => this.dispatchOnce(peer, key, input)) : this.dispatchOnce(peer, key, input));

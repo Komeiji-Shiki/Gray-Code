@@ -1,7 +1,7 @@
 import { createCipheriv, createDecipheriv, randomBytes, randomUUID } from 'node:crypto';
 import { appendFile, readFile } from 'node:fs/promises';
 import path from 'node:path';
-import type { ExecutionNodeStatus, ModelInput, NodeGrant, PlatformMessage, RunEvent, RunRecord } from '@graycode/contracts';
+import type { ExecutionNodeStatus, ModelInput, NodeGrant, NodeTaskDispatch, NodeTaskInput, PlatformMessage, RunEvent, RunRecord } from '@graycode/contracts';
 import { PlatformApplication } from '../../../apps/server/src/application';
 import { ApplicationRouter } from '../../../apps/server/src/transport/router';
 import { nodeHash, parseInvitation } from '../../../apps/server/src/nodes/identity';
@@ -47,6 +47,62 @@ class NodeNativeFixture implements ComputerNativePort {
   async stop(reason: string) { this.state = { active: false, reason, generation: this.state.generation + 1 }; this.emit(); }
   async close() { await this.stop('host_closed'); }
 }
+
+test('节点关闭等待已接受的配置，并拒绝关闭后到达的新配置和激活', async () => {
+  const f = await fixture(); await f.store.close();
+  const app = await PlatformApplication.open({ dataDirectory: f.data, secretCodec: encryption() });
+  const router = new ApplicationRouter(app), owner = { actorId: 'owner', clientId: 'closing-node-fixture' };
+  let entered!: () => void, release!: () => void;
+  const requested = new Promise<void>(resolve => { entered = resolve; });
+  const held = new Promise<void>(resolve => { release = resolve; });
+  const configure = app.nodes.identity.configure.bind(app.nodes.identity);
+  const configuring = jest.spyOn(app.nodes.identity, 'configure').mockImplementationOnce(async settings => {
+    entered(); await held; await configure(settings);
+  });
+  let accepted: Promise<unknown> | undefined, closing: Promise<void> | undefined;
+  let late: Promise<{ rejected: boolean; message: string }> | undefined;
+  try {
+    accepted = router.call(owner, 'nodes.configure', { enabled: false, name: '关闭前的设置', host: '127.0.0.1', port: 0 });
+    await requested;
+    closing = app.nodes.close();
+    late = router.call(owner, 'nodes.configure', { enabled: true, name: '关闭后的设置', host: '127.0.0.1', port: 0 }).then(
+      () => ({ rejected: false, message: '' }),
+      (error: unknown) => ({ rejected: true, message: error instanceof Error ? error.message : String(error) }),
+    );
+    release(); await accepted; await closing;
+    expect(await late).toEqual({ rejected: true, message: expect.stringContaining('执行节点正在关闭') });
+    expect(app.nodes.status('owner')).toMatchObject({ settings: { name: '关闭前的设置', enabled: false }, listener: { state: 'disabled' } });
+    await expect(app.nodes.activate()).rejects.toThrow('执行节点正在关闭');
+  } finally {
+    release(); await Promise.allSettled([accepted, closing, late]); configuring.mockRestore(); await app.close(); await f.cleanup();
+  }
+});
+
+test('节点关闭等待正在准备证书的宿主激活，完成后不残留监听', async () => {
+  const f = await fixture(); await f.store.close();
+  const app = await PlatformApplication.open({ dataDirectory: f.data, secretCodec: encryption() });
+  await app.nodes.identity.configure({ enabled: true, name: '启动关闭交错', host: '127.0.0.1', port: 0 });
+  const credentials = await app.nodes.identity.credentials();
+  let entered!: () => void, release!: () => void;
+  const requested = new Promise<void>(resolve => { entered = resolve; });
+  const held = new Promise<void>(resolve => { release = resolve; });
+  const preparing = jest.spyOn(app.nodes.identity, 'credentials').mockImplementationOnce(async () => {
+    entered(); await held; return credentials;
+  });
+  let activating: Promise<void> | undefined, closing: Promise<void> | undefined, closed = false;
+  try {
+    activating = app.nodes.activate(); await requested;
+    closing = app.nodes.close().then(() => { closed = true; });
+    // 让关闭的已有微任务完成，证书准备仍明确保持挂起，不依赖机器执行速度。
+    await new Promise<void>(resolve => setImmediate(resolve));
+    expect(closed).toBe(false);
+    release(); await Promise.all([activating, closing]);
+    expect(app.nodes.status('owner').listener.state).toBe('disabled');
+    expect(app.nodes.keepsAlive).toBe(false);
+  } finally {
+    release(); await Promise.allSettled([activating, closing]); preparing.mockRestore(); await app.close(); await f.cleanup();
+  }
+});
 
 test('慢设备补取事件时，其他设备仍可更新且原设备保持顺序', async () => {
   const records = new Map<string, { sequence: number }>();
@@ -116,6 +172,56 @@ describe('执行节点配对、运行与恢复', () => {
     await openA(); await openB();
   });
   afterEach(async () => { await Promise.allSettled([a?.close(), b?.close()]); await fa.cleanup(); await fb.cleanup(); });
+
+  test('节点关闭后迟到的连接保存不再读取凭据或开始握手', async () => {
+    const paired = await pair(); await callA('nodes.disconnect', { id: paired.peerId });
+    let entered!: () => void, release!: () => void;
+    const requested = new Promise<void>(resolve => { entered = resolve; });
+    const held = new Promise<void>(resolve => { release = resolve; });
+    const write = a.storage.putRecord.bind(a.storage);
+    const saving = jest.spyOn(a.storage, 'putRecord').mockImplementation(async record => {
+      if (record.namespace === 'node-peers' && record.id === paired.peerId) { entered(); await held; }
+      return write(record);
+    });
+    const credentials = jest.spyOn(a.nodes.identity, 'credential');
+    let connecting: Promise<unknown> | undefined;
+    try {
+      connecting = callA('nodes.connect', { id: paired.peerId }).then(
+        () => ({ error: '' }), (error: unknown) => ({ error: error instanceof Error ? error.message : String(error) }),
+      );
+      await requested; await a.nodes.close(); release();
+      await expect(connecting).resolves.toMatchObject({ error: expect.stringContaining('执行节点正在关闭') });
+      expect(credentials).not.toHaveBeenCalled();
+    } finally { release(); await connecting; saving.mockRestore(); credentials.mockRestore(); }
+  });
+
+  test('节点关闭后迟到的任务重试读取不再登记派发或改写记录', async () => {
+    const paired = await pair(); await callA('nodes.disconnect', { id: paired.peerId });
+    const input: NodeTaskInput = { requestKey: 'late-retry', workspaceId: 'project', agentId: 'default', text: '关闭后不应重新派发' };
+    const id = nodeHash(`${paired.peerId}:${input.requestKey}`);
+    const saved: NodeTaskDispatch & { input: NodeTaskInput; fingerprint: string } = {
+      id, peerId: paired.peerId, nodeId: b.nodes.identity.id, requestKey: input.requestKey, workspaceId: input.workspaceId,
+      agentId: input.agentId, input, fingerprint: nodeHash(JSON.stringify(input)), state: 'pending', createdAt: Date.now(),
+    };
+    await a.storage.putRecord({ namespace: 'node-dispatches', id, ownerId: paired.peerId, value: saved });
+    let entered!: () => void, release!: () => void;
+    const requested = new Promise<void>(resolve => { entered = resolve; });
+    const held = new Promise<void>(resolve => { release = resolve; });
+    const read = a.storage.getRecord.bind(a.storage);
+    const reading = jest.spyOn(a.storage, 'getRecord').mockImplementation(async (namespace, recordId) => {
+      if (namespace === 'node-dispatches' && recordId === id) { entered(); await held; }
+      return read(namespace, recordId);
+    });
+    const writes = jest.spyOn(a.storage, 'putRecord');
+    let retrying: Promise<unknown> | undefined;
+    try {
+      retrying = callA('nodes.tasks.retry', { peerId: paired.peerId, id }).then(() => null, (error: unknown) => error);
+      await requested; await a.nodes.close(); release();
+      await expect(retrying).resolves.toMatchObject({ message: expect.stringContaining('执行节点正在关闭') });
+      expect(writes.mock.calls.filter(([record]) => record.namespace === 'node-dispatches')).toHaveLength(0);
+      expect(await a.storage.getRecord('node-dispatches', id)).toEqual(saved);
+    } finally { release(); await retrying; reading.mockRestore(); writes.mockRestore(); }
+  });
 
   test('设备上线事件只响应实际重连，重复状态通知不重复执行，撤销后暂停规则', async () => {
     const paired = await pair();
