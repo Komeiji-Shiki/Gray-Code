@@ -36,4 +36,6 @@ const mountPet = () => createApp({
     });
   },
 }).mount('#app');
-void preloadShellLanguage().then(mountPet);
+void preloadShellLanguage()
+  .catch(error => console.error('[Pet] 语言包加载失败：', error))
+  .then(mountPet);

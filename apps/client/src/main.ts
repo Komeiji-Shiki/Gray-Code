@@ -9,4 +9,7 @@ import "./style.css";
 // 语言和主题设置读取前也使用共享默认色板，避免维护另一套启动颜色。
 const bootstrapPalette = appearanceCssVariables(resolveAppearancePalette('dark', {}, false));
 for (const [token, value] of Object.entries(bootstrapPalette)) document.documentElement.style.setProperty(token, value);
-void preloadShellLanguage().then(() => createApp(App).mount("#app"));
+// 语言包加载失败不能阻止外壳挂载；shellText 会回退到键名。
+void preloadShellLanguage()
+  .catch(error => console.error('[Shell] 语言包加载失败：', error))
+  .then(() => createApp(App).mount("#app"));

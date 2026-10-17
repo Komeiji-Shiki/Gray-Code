@@ -71,4 +71,6 @@ const mountBrowser = () => createApp(
     },
   }),
 ).mount('#browser-toolbar');
-void preloadShellLanguage().then(mountBrowser);
+void preloadShellLanguage()
+  .catch(error => console.error('[Browser] 语言包加载失败：', error))
+  .then(mountBrowser);

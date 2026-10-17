@@ -14,19 +14,21 @@ export function createWebAssetHandler(directory: string) {
   let resolvedRoot: Promise<string> | undefined;
   return async (pathname: string, request: IncomingMessage, response: ServerResponse, beforeResponse?: () => void): Promise<boolean> => {
     let file: string;
+    let relative: string;
     try {
       // 同一服务实例复用构建根目录；每个文件仍解析真实路径，防止符号链接越出发布范围。
       resolvedRoot ??= realpath(directory).catch(error => { resolvedRoot = undefined; throw error; });
       const root = await resolvedRoot;
       file = await realpath(path.resolve(root, `.${decodeURIComponent(pathname === '/' ? '/index.html' : pathname)}`));
-      const relative = path.relative(root, file);
+      relative = path.relative(root, file);
       if (relative.startsWith(`..${path.sep}`) || relative === '..' || path.isAbsolute(relative)) return false;
       if (!(await stat(file)).isFile()) return false;
     } catch { return false; }
     const extension = path.extname(file);
     response.setHeader('Content-Type', contentTypes[extension] ?? 'application/octet-stream');
-    // Vite 输出的资源名含内容哈希；HTML 与其他固定入口继续即时获取最新版本。
-    if (extension !== '.html' && /-[A-Za-z0-9_-]{8}\.[A-Za-z0-9]+$/.test(path.basename(file)))
+    // 只对 Vite 的 assets 目录内、文件名带内容哈希的资源长期缓存；public 下的固定文件名不能误判。
+    const hashedAsset = /-[A-Za-z0-9_-]{8}\.[A-Za-z0-9]+$/.test(path.basename(file));
+    if (extension !== '.html' && hashedAsset && relative.split(path.sep).includes('assets'))
       response.setHeader('Cache-Control', 'private, max-age=31536000, immutable');
     if (pathname === '/pet-renderer.html') {
       response.setHeader('Content-Security-Policy', "sandbox allow-scripts; default-src 'none'; script-src 'self' blob: 'unsafe-eval'; style-src 'unsafe-inline'; img-src blob: data:; connect-src blob: data:; media-src 'none'; frame-ancestors 'self'; base-uri 'none'; form-action 'none'");

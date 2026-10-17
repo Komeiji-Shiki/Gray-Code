@@ -50,6 +50,7 @@ export function setShellLanguage(value: string): Promise<void> {
 export const shellLocale = computed(() => resolveLocale(language.value));
 
 export function shellText(key: keyof ShellMessages, params?: Record<string, unknown>): string {
-  const value = translations[shellLocale.value]![key];
+  // 按需语言包可能尚未就绪或加载失败；显示键名也比让整个外壳崩溃好。
+  const value = translations[shellLocale.value]?.[key] ?? key;
   return params ? value.replace(/\{(\w+)\}/g, (match, name: string) => name in params ? String(params[name]) : match) : value;
 }
