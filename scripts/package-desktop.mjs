@@ -29,9 +29,16 @@ if (buildIdentity.buildDirty || buildIdentity.buildCommit !== sourcePackage.mani
 if (process.platform === 'win32') {
   const executable = path.join(outputDirectory, 'GrayCode-win32-x64', 'GrayCode.exe');
   if (require('node:fs').existsSync(executable)) {
-    require('node:child_process').execFileSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command',
-      "$running = Get-Process -Name GrayCode -ErrorAction SilentlyContinue | Where-Object { $_.Path -eq $env:GRAYCODE_PACKAGE_TARGET }; if ($running) { Write-Error '目标 GrayCode 正在运行，请退出后重试，或指定新的 GRAYCODE_DESKTOP_OUT。'; exit 1 }"],
-      { windowsHide: true, stdio: 'inherit', env: { ...process.env, GRAYCODE_PACKAGE_TARGET: executable } });
+    try {
+      require('node:child_process').execFileSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command',
+        "$running = Get-Process -Name GrayCode -ErrorAction SilentlyContinue | Where-Object { $_.Path -eq $env:GRAYCODE_PACKAGE_TARGET }; if ($running) { exit 3 }"],
+        { windowsHide: true, encoding: 'utf8', env: { ...process.env, GRAYCODE_PACKAGE_TARGET: executable } });
+    } catch (error) {
+      // 只有明确命中目标进程的 3 才是「程序正在运行」；其他失败是检查本身不可用，
+      // 不能误报成占用（stdio: inherit 在无控制台环境下可能直接以 1 退出）。
+      if (error?.status === 3) throw new Error('目标 GrayCode 正在运行，请退出后重试，或指定新的 GRAYCODE_DESKTOP_OUT。');
+      throw error;
+    }
   }
 }
 
