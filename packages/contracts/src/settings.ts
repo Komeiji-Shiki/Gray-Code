@@ -154,6 +154,8 @@ export interface SettingsSnapshot {
   credentialIds: string[];
   /** Settings committed successfully, but a runtime integration needs attention. */
   activationWarnings?: string[];
+  /** 外壳在设置加载前据此决定是否播放开屏动画；旧宿主缺省为 true。 */
+  splashEnabled?: boolean;
 }
 export interface SettingsDraft {
   settings: AppSettings;

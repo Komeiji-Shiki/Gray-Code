@@ -52,7 +52,12 @@ const handlers: { [M in HostedMethod]: Handler<M> } = {
     return { activeRuns: app.runtime.activeCount, ...app.tools.diagnostics(), managedProcesses: app.processes.activeCount,
       eventStream: app.remoteAccess?.status().eventStream };
   },
-  'settings.get': (app, session) => { app.requireOwner(session.actorId); return app.settings.snapshot(); },
+  'settings.get': (app, session) => {
+    app.requireOwner(session.actorId);
+    // 外壳启动快照不含 UI 设置，单独带出开屏开关供其决定是否播放动画。
+    const splashEnabled = app.product.runtimeSettings().getSettings().ui?.appearance?.splashEnabled !== false;
+    return { ...app.settings.snapshot(), splashEnabled };
+  },
   'settings.save': (app, session, params) => { app.requireOwner(session.actorId); return app.settings.save(params); },
   'files.list': (app, session, params) => {
     app.requireOwner(session.actorId);

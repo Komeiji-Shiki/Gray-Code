@@ -24,6 +24,9 @@ export function loadSettings(signal?: AbortSignal): Promise<void> {
       // 设置事件与工作区操作可以同时刷新，旧响应不能清空较新配置中的工作区选择。
       if (signal?.aborted || sequence !== settingsRequestSequence) return;
       state.snapshot = snapshot;
+      // 外壳下一次启动在设置加载前也要知道是否播放开屏动画。
+      try { localStorage.setItem('graycode.splashEnabled', snapshot.splashEnabled === false ? 'false' : 'true'); }
+      catch { /* 存储不可用时沿用默认开启 */ }
       if (state.workspaceId && !snapshot.settings.workspaces.some(workspace => workspace.id === state.workspaceId)) state.workspaceId = '';
     } catch (error) { if (!signal?.aborted && sequence === settingsRequestSequence) throw error; }
   })();

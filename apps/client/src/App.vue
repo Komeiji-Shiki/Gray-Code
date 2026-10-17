@@ -33,8 +33,15 @@ import { computerState } from './computer';
 connectDebugging();
 const productChatFrame = ref<HTMLIFrameElement>();
 // 外壳等待本地核心期间也显示开屏动画；聊天初始化完成或启动失败后再淡出。
-// 外壳的设置快照不含聊天页的 splashEnabled，启动阶段先按默认开启处理。
-const shellSplashDone = ref(false);
+// 设置加载前沿用上次保存的开关，关闭动画的用户不必每次启动都看一遍。
+function splashEnabledFromCache(): boolean {
+  try { return localStorage.getItem('graycode.splashEnabled') !== 'false'; }
+  catch { return true; }
+}
+const shellSplashDone = ref(!splashEnabledFromCache());
+watch(() => state.snapshot?.splashEnabled, enabled => {
+  if (enabled === false) shellSplashDone.value = true;
+});
 // 初始化失败时直接交出错误页，不让开屏继续盖住重试入口。
 watch(() => state.initializationError, error => {
   if (error) shellSplashDone.value = true;
