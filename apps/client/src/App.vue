@@ -665,7 +665,7 @@ onUnmounted(() => {
     <AutomationsPanel v-if="automationsMounted" :open="automationsOpen" :companion-request="companionGreeting" @close="closeAutomations" />
     <RunInspector v-if="state.ready && !state.settingsOpen" />
     <div
-      v-if="!state.ready"
+      v-if="!state.ready && shellSplashDone"
       class="loading-state"
       :class="{ 'startup-error': state.initializationError }"
       :role="state.initializationError ? 'alert' : 'status'"

@@ -566,6 +566,8 @@ async function main(): Promise<void> {
   });
   resolveDesktopRequests(desktopRequests);
   setApplicationMenu();
+  // 前台运行时也保留托盘入口，随时可以打开窗口或彻底退出。
+  ensureTray();
   await initialWindowLoad;
   if (exitPhase !== 'idle') return;
   startupCompleted = true;
