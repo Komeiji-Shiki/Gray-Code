@@ -98,6 +98,18 @@ function splitHighlightedHtmlByNewline(highlightedHtml: string): string[] {
 }
 
 /**
+ * markdown-it 会把图片地址按 URL 规则规范化（中文、空格转成 %XX）。
+ * 工作区图片按原始文件名读取，所以这里还原一次；非法编码序列保持原样。
+ */
+function decodeWorkspaceImagePath(src: string): string {
+  try {
+    return decodeURIComponent(src)
+  } catch {
+    return src
+  }
+}
+
+/**
  * markdown-it 插件：把文本中的“工作区文件引用”转为可点击链接。
  * 注意：仅做 UI/交互增强，是否能打开由扩展侧校验决定。
  */
@@ -313,7 +325,7 @@ function createMarkdownIt(options: { allowHtml: boolean }) {
       return `<img src="${src}" alt="${escapeHtml(alt)}"${titleAttr} loading="lazy">`
     } else {
       // 相对路径，使用占位符，稍后异步加载
-      const encodedPath = btoa(encodeURIComponent(src))
+      const encodedPath = encodeDataPath(decodeWorkspaceImagePath(src))
       const titleAttr = title ? ` title="${escapeHtml(title)}"` : ''
       return `<img class="workspace-image" data-path="${encodedPath}" alt="${escapeHtml(alt)}"${titleAttr} src="data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7" loading="lazy">`
     }

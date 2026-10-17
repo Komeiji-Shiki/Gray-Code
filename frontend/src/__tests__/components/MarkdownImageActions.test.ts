@@ -25,6 +25,13 @@ test('内嵌图片加载后原文件消失，打开失败会显示原因', async
   expect(wrapper.find('.markdown-content').exists()).toBe(true)
 })
 
+test('中文与空格路径按原始文件名读取工作区图片', async () => {
+  const wrapper = mount(MarkdownRenderer, { props: { content: '![图片](<.tmp/新版 卡片.png>)' } }); wrappers.push(wrapper)
+  await vi.advanceTimersByTimeAsync(0); await flushPromises()
+  expect(request).toHaveBeenCalledWith('readWorkspaceImage', { path: '.tmp/新版 卡片.png' })
+  expect(wrapper.get('img.loaded-image').attributes('src')).toBe('data:image/png;base64,AAAA')
+})
+
 test('链接内的图片沿用链接目标，不额外打开本地图片', async () => {
   const wrapper = await render('[![图片](local.png)](https://example.com/page)')
   // 在组件处理之后阻止 jsdom 真正导航，保留前面处理器看到的事件状态。
