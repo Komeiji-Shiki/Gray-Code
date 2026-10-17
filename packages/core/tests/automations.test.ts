@@ -189,12 +189,21 @@ describe('持久目标和定时触发', () => {
     } finally { failure.mockRestore(); unsubscribe(); }
   });
 
-  test('完成事件部分交付失败后补齐其余收据，已收到的任务只执行一次', async () => {
+  test('完成事件部分交付失败由持久事件重放补齐，不重复结算来源且已收到的任务只执行一次', async () => {
     await app.createConversation('owner', '来源任务', undefined, { platformMode: 'chat' }, undefined, { id: 'retry-source' });
     await app.createConversation('owner', '第二个事件任务', undefined, { platformMode: 'chat' }, undefined, { id: 'retry-recipient' });
     const event = { trigger: { type: 'run_completed', conversationId: 'retry-source' }, busyPolicy: 'latest', restartPolicy: 'resume' };
     const first = await create({ kind: 'event', event });
     const second = await create({ kind: 'event', event, conversationId: 'retry-recipient' });
+    const source = await create({ kind: 'schedule', conversationId: 'retry-source',
+      schedule: { type: 'once', at: now + 1000 }, missedRunPolicy: 'once' });
+    const settleFiles = jest.spyOn(AutomationEventSources.prototype, 'settleFiles');
+    const completed = AutomationEventSources.prototype.completed;
+    let sources!: AutomationEventSources;
+    jest.spyOn(AutomationEventSources.prototype, 'completed').mockImplementation(function (this: AutomationEventSources, id) {
+      sources = this;
+      return completed.call(this, id);
+    });
     const commit = app.storage.commitRecords.bind(app.storage);
     let failed = false, notified!: () => void;
     const failureNotice = new Promise<void>(resolve => { notified = resolve; });
@@ -209,17 +218,21 @@ describe('持久目标和定时触发', () => {
       return commit(changes);
     });
     try {
-      const run = await app.runtime.start({ actorId: 'owner', conversationId: 'retry-source', agentId: 'default', providerId,
-        requestKey: 'delivery-failure', message: { role: 'user', parts: [{ text: '完成本次来源任务。' }] } });
-      await app.runtime.wait(run.id); await failureNotice;
-      expect((await app.automations.list('owner')).find(record => record.id === first.id)!.pendingEvent?.sourceRunId).toBe(run.id);
+      now += 1000; await app.automations.tick(now); await failureNotice;
+      const settled = await until(source.id, record => record.completedRuns === 1 && !record.currentRequestKey);
+      const runId = settled.lastRunId!;
+      expect((await app.automations.list('owner')).find(record => record.id === first.id)!.pendingEvent?.sourceRunId).toBe(runId);
       expect((await app.automations.list('owner')).find(record => record.id === second.id)!.pendingEvent).toBeUndefined();
       await app.automations.tick(now);
+      expect(settleFiles.mock.calls.filter(([run]) => run.id === runId)).toHaveLength(1);
+      expect((await app.automations.list('owner')).find(record => record.id === second.id)!.pendingEvent).toBeUndefined();
+      await sources.reconcile();
       await app.automations.tick(now);
       for (const task of [first, second]) {
         const record = await until(task.id, value => value.completedRuns === 1 && !value.currentRequestKey);
-        expect(record.recentEvents?.filter(value => value.sourceRunId === run.id)).toHaveLength(1);
+        expect(record.recentEvents?.filter(value => value.sourceRunId === runId)).toHaveLength(1);
       }
+      expect(settleFiles.mock.calls.filter(([run]) => run.id === runId)).toHaveLength(1);
       expect(calls).toHaveLength(3);
     } finally { unsubscribe(); }
   });

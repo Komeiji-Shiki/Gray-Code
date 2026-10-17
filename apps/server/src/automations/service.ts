@@ -37,7 +37,7 @@ export class ApplicationAutomations {
   private readonly queues = new Map<string, Promise<unknown>>();
   private readonly starts = new Map<string, { controller: AbortController; done: Promise<void> }>();
   private readonly pendingWakes = new Set<string>();
-  private readonly pendingCompletions = new Set<string>();
+  private readonly pendingSettlements = new Set<string>();
   private readonly completingRuns = new Map<string, Promise<void>>();
   private timer?: ReturnType<typeof setTimeout>;
   private timerAt?: number;
@@ -83,15 +83,18 @@ export class ApplicationAutomations {
     if (this.closing) return Promise.resolve();
     const pending = this.completingRuns.get(runId);
     if (pending) return pending;
-    // 运行已经持久化；只重试结算与事件交付，原请求标识和收据阻止重复计数或启动。
     const operation = Promise.resolve().then(async () => {
-      await this.finished(runId);
-      await this.eventSources.completed(runId);
-      this.pendingCompletions.delete(runId);
-    }).catch(error => {
-      const firstFailure = !this.pendingCompletions.has(runId);
-      this.pendingCompletions.add(runId);
-      if (firstFailure) this.reportError(error);
+      try {
+        await this.finished(runId);
+      } catch (error) {
+        const firstFailure = !this.pendingSettlements.has(runId);
+        this.pendingSettlements.add(runId);
+        if (firstFailure) this.reportError(error);
+        return;
+      }
+      this.pendingSettlements.delete(runId);
+      // 交付失败由事件源按持久游标和收据重放，无需再次结算运行和扫描文件。
+      await this.eventSources.completed(runId).catch(error => this.reportError(error));
     }).finally(() => {
       this.completingRuns.delete(runId);
       this.arm();
@@ -142,12 +145,12 @@ export class ApplicationAutomations {
   }
   get keepsAlive() {
     return [...this.records.values()].some(record => record.status === 'active') || this.queues.size > 0
-      || this.completingRuns.size > 0 || this.pendingCompletions.size > 0;
+      || this.completingRuns.size > 0 || this.pendingSettlements.size > 0;
   }
   private arm() {
     const due = [...this.records.values()].filter(record => record.status === 'active' && !record.currentRequestKey
       && (record.nextRunAt !== undefined || record.schedule?.type === 'idle'));
-    if (!this.ready || this.closing || (!due.length && !this.pendingCompletions.size)) {
+    if (!this.ready || this.closing || (!due.length && !this.pendingSettlements.size)) {
       clearTimeout(this.timer); this.timer = undefined; this.timerAt = undefined; return;
     }
     const delay = Math.max(1000, Math.min(30_000, Math.min(...due.map(record => record.nextRunAt ?? Date.now() + 30_000)) - Date.now()));
@@ -375,11 +378,11 @@ export class ApplicationAutomations {
   }
   async tick(now = Date.now()) {
     if (this.closing || !this.ready) return;
-    const completions = Promise.allSettled([...this.pendingCompletions].map(id => this.completeRunEvent(id)));
+    const settlements = Promise.allSettled([...this.pendingSettlements].map(id => this.completeRunEvent(id)));
     const due = [...this.records.values()].filter(record => record.status === 'active' && !record.currentRequestKey
       && (record.schedule?.type === 'idle' || record.nextRunAt !== undefined && record.nextRunAt <= now));
-    // 终态补交付可能仍在读取慢文件，正常到期任务独立派发；新结算的任务由 arm 再次调度。
-    await Promise.all([completions, ...due.map(record => this.dispatch(record.id, now))]);
+    // 结算重试可能仍在读取慢文件，正常到期任务独立派发；新结算的任务由 arm 再次调度。
+    await Promise.all([settlements, ...due.map(record => this.dispatch(record.id, now))]);
   }
   private dispatch(id: string, now: number): Promise<void> {
     const pending = this.starts.get(id); if (pending) return pending.done;
@@ -546,6 +549,6 @@ export class ApplicationAutomations {
     await this.eventSources.close();
     await Promise.allSettled(this.completingRuns.values());
     await Promise.allSettled(this.queues.values());
-    this.pendingCompletions.clear();
+    this.pendingSettlements.clear();
   }
 }
