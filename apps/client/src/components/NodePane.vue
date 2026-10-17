@@ -3,6 +3,7 @@ import { shellText as t, shellLocale } from '../i18n';
 import { computed, reactive, ref, watch, onUnmounted } from 'vue';
 import type { ExecutionNodeStatus, NodeGrant, NodeListenerSettings } from '@graycode/contracts';
 import { call, subscribe } from '../api';
+import { copyText } from '../clipboard';
 import NodeTasks, { type NodeTaskDraft } from './NodeTasks.vue';
 import NodeScreen from './NodeScreen.vue';
 import './nodePane.css';
@@ -101,7 +102,7 @@ async function pair() {
 }
 async function copyInvitation() {
   if (!invitation.value) return;
-  await navigator.clipboard.writeText(invitation.value.code);
+  if (!(await copyText(invitation.value.code))) throw new Error(t('copyFailed'));
   notice.value = t('uiNodePanePairingCodeCopied');
 }
 watch(

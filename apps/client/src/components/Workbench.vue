@@ -4,6 +4,7 @@ import type { IRange } from 'monaco-editor';
 import type { DocumentState, ProjectReplacement, SourceRange } from '@graycode/contracts';
 import { EditorBatchHistory, type EditBatchHandle } from '../../../../shared/editorBatchHistory';
 import { call, subscribe } from '../api';
+import { copyText } from '../clipboard';
 import { guard, report, state } from '../state';
 import { shellText as t } from '../i18n';
 const BrowserPane = defineAsyncComponent(() => import('./BrowserPane.vue'));
@@ -291,8 +292,9 @@ async function closeTab(id: string) {
 }
 async function copyPath() {
   if (!active.value) return;
-  if (isWeb) await navigator.clipboard.writeText(active.value.path);
-  else await call('desktop.clipboard.writeText', { text: active.value.path });
+  if (isWeb) {
+    if (!(await copyText(active.value.path))) throw new Error(t('copyFailed'));
+  } else await call('desktop.clipboard.writeText', { text: active.value.path });
 }
 async function open(path: string, workspaceId = state.workspaceId, selection?: IRange, focus = true) {
   const sequence = focus ? ++openSequence : undefined;
