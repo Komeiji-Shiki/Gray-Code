@@ -35,6 +35,10 @@ const productChatFrame = ref<HTMLIFrameElement>();
 // 外壳等待本地核心期间也显示开屏动画；聊天初始化完成或启动失败后再淡出。
 // 外壳的设置快照不含聊天页的 splashEnabled，启动阶段先按默认开启处理。
 const shellSplashDone = ref(false);
+// 初始化失败时直接交出错误页，不让开屏继续盖住重试入口。
+watch(() => state.initializationError, error => {
+  if (error) shellSplashDone.value = true;
+});
 const workbenchMounted = ref(false);
 const workbenchVisible = computed(() => !state.chatFocused && !state.settingsOpen);
 const pendingWorkbenchEvents: Record<string, any>[] = [];
