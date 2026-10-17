@@ -73,6 +73,7 @@ vi.mock('../../i18n', async (importOriginal) => {
     useI18n: () => ({
       // 计数断言使用真实词条和参数插值，其余断言继续使用原有的词条名桩。
       t: (key: string, params?: Record<string, unknown>) => key === 'desktop.inputUi.queuedAttachmentCount'
+        || key === 'components.input.savedPastedImages'
         ? actual.translate('zh-CN', key, params)
         : key
     })
@@ -561,6 +562,39 @@ describe('InputArea 发送失败恢复', () => {
 
     // 输入区重新拉取渠道配置，模型下拉框数据源随之更新
     expect(runtime.config.listConfigIds).toHaveBeenCalledTimes(2)
+  })
+
+  test('粘贴图片已写入工作区时，发送正文附带相对路径', async () => {
+    const sendMessage = vi.fn().mockResolvedValue(true)
+    wrapper = mountWithParent(sendMessage)
+    await nextTick()
+    runtime.chatStore.editorNodes = makeTextNodes('把这张图放进页面')
+    ;(wrapper.vm as any).attachments = [makeAttachment({
+      metadata: { pastedToWorkspace: true, sourcePath: '.graycode/attachments/pasted-1.png' }
+    })]
+    await nextTick()
+
+    await wrapper.find('.send-button-stub').trigger('click')
+    await flushPromises()
+
+    const [content, attachments] = sendMessage.mock.calls[0]
+    expect(content).toContain('把这张图放进页面')
+    expect(content).toContain('.graycode/attachments/pasted-1.png')
+    expect(attachments).toHaveLength(1)
+  })
+
+  test('工作区文件附件已有上下文路径，不再追加保存提示', async () => {
+    const sendMessage = vi.fn().mockResolvedValue(true)
+    wrapper = mountWithParent(sendMessage)
+    await nextTick()
+    runtime.chatStore.editorNodes = makeTextNodes('看看这个文件')
+    ;(wrapper.vm as any).attachments = [makeAttachment({ metadata: { sourcePath: 'docs/a.png' } })]
+    await nextTick()
+
+    await wrapper.find('.send-button-stub').trigger('click')
+    await flushPromises()
+
+    expect(sendMessage.mock.calls[0][0]).toBe('看看这个文件')
   })
 })
 

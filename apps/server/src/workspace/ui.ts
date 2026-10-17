@@ -39,7 +39,7 @@ export function workspaceUiHandlers(app: PlatformApplication, client: ClientSess
         const before = await transaction.capture(data.path);
         await transaction.apply([{ path: data.path, before, after: { bytes, hash: fileHash(bytes), mode: before.mode } }]);
       });
-      return { success: true };
+      return { success: true, path: data.path };
     },
   };
 }

@@ -371,6 +371,7 @@ const ja: LanguageMessages = {
             tokenUsage: '使用量',
             context: 'コンテキスト',
             fileNotExists: sharedJa.components.input.fileNotExists,
+            savedPastedImages: '［このメッセージに添付した画像はワークスペースに保存されました：{paths}。画像ファイルを参照するときはこのパスを使用してください。］',
             queue: {
                 title: 'キューメッセージ',
                 sendNow: '今すぐ送信',

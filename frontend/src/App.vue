@@ -306,7 +306,8 @@ function formatErrorDetails(details: unknown): string {
 async function handlePasteFiles(files: File[]) {
   if (files.length > 0) {
     try {
-      await addAttachments(files)
+      // 粘贴的图片同时存进工作区，模型需要引用图片文件时不必猜文件在哪。
+      await addAttachments(files, { savePastedImages: true, conversationId: chatStore.currentConversationId })
     } catch (err) {
       console.error('粘贴附件失败:', err)
     }

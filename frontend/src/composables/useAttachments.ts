@@ -19,7 +19,14 @@ import {
 } from '../utils/file'
 import { generateId } from '../utils/format'
 import { showNotification } from '../utils/vscode'
+import { savePastedImageToWorkspace } from '../services/context'
 import { useI18n } from './useI18n'
+
+export interface AttachmentAddOptions {
+  /** 粘贴进输入框的图片另外写入工作区，相对路径记录到 metadata.sourcePath。 */
+  savePastedImages?: boolean
+  conversationId?: string | null
+}
 
 export function useAttachments(externalAttachments?: Ref<Attachment[]>) {
   // i18n
@@ -63,7 +70,7 @@ export function useAttachments(externalAttachments?: Ref<Attachment[]>) {
   /**
    * 添加附件
    */
-  async function addAttachment(file: File, target = attachments.value): Promise<Attachment | null> {
+  async function addAttachment(file: File, target = attachments.value, options?: AttachmentAddOptions): Promise<Attachment | null> {
     if (invalidatedTargets.has(target)) return null
     // 验证文件
     const validation = validateFile(file)
@@ -117,13 +124,20 @@ export function useAttachments(externalAttachments?: Ref<Attachment[]>) {
     }
 
     // 读取文件内容（转为 base64）
+    let base64: string
     try {
-      const base64 = await fileToBase64(file)
+      base64 = await fileToBase64(file)
       attachment.data = base64
     } catch (error) {
       console.error(t('composables.useAttachments.errors.readFileFailed'), error)
       await showNotification(t('composables.useAttachments.errors.readFileFailed'), 'error')
       return null
+    }
+
+    // 粘贴图片在工作区留一份，模型需要引用图片文件时有稳定路径。
+    if (options?.savePastedImages && type === 'image') {
+      const savedPath = await savePastedImageToWorkspace({ name: attachment.name, mimeType, data: base64 }, options.conversationId)
+      if (savedPath) attachment.metadata = { ...attachment.metadata, sourcePath: savedPath, pastedToWorkspace: true }
     }
 
     // The originating draft remains the owner while another tab is active.
@@ -135,7 +149,7 @@ export function useAttachments(externalAttachments?: Ref<Attachment[]>) {
   /**
    * 批量添加附件
    */
-  async function addAttachments(files: File[]): Promise<Attachment[]> {
+  async function addAttachments(files: File[], options?: AttachmentAddOptions): Promise<Attachment[]> {
     const target = attachments.value
     const batchId = Symbol('attachment batch')
     uploadBatches.value.set(batchId, { total: files.length, completed: 0 })
@@ -146,7 +160,7 @@ export function useAttachments(externalAttachments?: Ref<Attachment[]>) {
 
       for (let i = 0; i < files.length; i++) {
         if (invalidatedTargets.has(target)) break
-        const attachment = await addAttachment(files[i], target)
+        const attachment = await addAttachment(files[i], target, options)
         if (attachment) {
           results.push(attachment)
         }

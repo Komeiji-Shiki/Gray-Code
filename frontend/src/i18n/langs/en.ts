@@ -371,6 +371,7 @@ const en: LanguageMessages = {
             tokenUsage: 'Usage',
             context: 'Context',
             fileNotExists: sharedEn.components.input.fileNotExists,
+            savedPastedImages: '[Images attached to this message were saved in the workspace: {paths}. Use these paths when you need the image files.]',
             queue: {
                 title: 'Queued Messages',
                 sendNow: 'Send now',

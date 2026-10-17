@@ -81,6 +81,59 @@ export async function readWorkspaceFileForInput(path: string, conversationId?: s
   })
 }
 
+/** 粘贴进输入框的图片在工作区中的存放目录；写入接口会按需创建。 */
+const PASTED_IMAGE_DIRECTORY = '.graycode/attachments'
+
+const IMAGE_EXTENSION_BY_MIME: Record<string, string> = {
+  'image/png': 'png',
+  'image/jpeg': 'jpg',
+  'image/jpg': 'jpg',
+  'image/gif': 'gif',
+  'image/webp': 'webp',
+  'image/bmp': 'bmp',
+  'image/svg+xml': 'svg',
+  'image/tiff': 'tiff',
+  'image/avif': 'avif',
+  'image/heic': 'heic',
+  'image/heif': 'heif',
+  'image/x-icon': 'ico'
+}
+
+function pastedImageFileName(name: string, mimeType: string, now = new Date()): string {
+  const extension = /\.[a-z0-9]{1,8}$/i.exec(name)?.[0].slice(1).toLowerCase()
+    || IMAGE_EXTENSION_BY_MIME[mimeType.toLowerCase()]
+    || 'png'
+  const pad = (value: number) => String(value).padStart(2, '0')
+  const stamp = `${now.getFullYear()}${pad(now.getMonth() + 1)}${pad(now.getDate())}`
+    + `-${pad(now.getHours())}${pad(now.getMinutes())}${pad(now.getSeconds())}`
+  return `pasted-${stamp}-${Math.random().toString(36).slice(2, 8)}.${extension}`
+}
+
+export interface PastedImagePayload {
+  name: string
+  mimeType: string
+  data: string
+}
+
+/**
+ * 把粘贴进输入框的图片写入工作区，返回相对路径。
+ * 没有工作区（聊天模式）或宿主未提供该入口时返回 null，图片仍按附件发送。
+ */
+export async function savePastedImageToWorkspace(image: PastedImagePayload, conversationId?: string | null): Promise<string | null> {
+  const path = `${PASTED_IMAGE_DIRECTORY}/${pastedImageFileName(image.name, image.mimeType)}`
+  try {
+    const result = await sendToExtension<{ success?: boolean; path?: string }>(MESSAGE_NAMES.saveImageToPath, {
+      path,
+      data: image.data,
+      mimeType: image.mimeType,
+      ...(conversationId ? { conversationId } : {})
+    })
+    return result?.success ? result.path || path : null
+  } catch {
+    return null
+  }
+}
+
 export async function readWorkspaceTextFile(path: string) {
   return await sendToExtension<{ success: boolean; path: string; content: string; error?: string }>(
     MESSAGE_NAMES.readWorkspaceTextFile,

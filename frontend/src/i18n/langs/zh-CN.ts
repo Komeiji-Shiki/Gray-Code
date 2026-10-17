@@ -373,6 +373,7 @@ const zhCN = {
             tokenUsage: '使用量',
             context: '上下文',
             fileNotExists: sharedZhCN.components.input.fileNotExists,
+            savedPastedImages: '［随消息附带的图片已保存到工作区：{paths}；需要引用图片文件时使用该路径。］',
             queue: {
                 title: '排队消息',
                 sendNow: '立即发送',

@@ -235,6 +235,19 @@ const canSend = computed(() => {
   return hasContent && !props.uploading
 })
 
+/**
+ * 粘贴图片已随附件发送，同时保存进工作区；把路径附在消息末尾，
+ * 模型需要引用图片文件时可直接使用这个路径。
+ */
+function withSavedImagePaths(content: string, attachments: Attachment[]): string {
+  const paths = attachments
+    .filter(attachment => attachment.type === 'image' && attachment.metadata?.pastedToWorkspace === true && typeof attachment.metadata.sourcePath === 'string')
+    .map(attachment => attachment.metadata!.sourcePath as string)
+  if (paths.length === 0) return content
+  const note = t('components.input.savedPastedImages', { paths: paths.join(', ') })
+  return content ? `${content}\n\n${note}` : note
+}
+
 // 原稿在失败后会原样恢复（含跨标签页快照）。以原稿引用保留提交 ID，
 // 回执丢失后的重试由宿主去重；编辑内容/附件后是新提交，废弃原稿可自动回收。
 const draftSubmissions = new WeakMap<EditorNode[], { id: string; content: string; attachments: Attachment[] }>()
@@ -243,8 +256,8 @@ const attachmentPayloadKeys = ['id', 'name', 'type', 'size', 'mimeType', 'data',
 function handleSend(options?: { dynamicContextStrategyOverride?: 'single' | 'preserve' }) {
   if (!canSend.value) return
 
-  const content = serializeNodes(editorNodes.value).trim()
   const currentAttachments = props.attachments || []
+  const content = withSavedImagePaths(serializeNodes(editorNodes.value).trim(), currentAttachments)
   const pendingNodes = editorNodes.value
   const platform = !!window.__GRAYCODE_HOST
   const previous = draftSubmissions.get(pendingNodes)
@@ -711,7 +724,7 @@ const PromptPreviewDialog = defineAsyncComponent({ ...asyncDialogOptions(() => {
 }), loader: () => import('./PromptPreviewDialog.vue') })
 const promptPreviewRequest = computed(() => ({
   conversationId: chatStore.currentConversationId, configId: chatStore.configId,
-  message: serializeNodes(editorNodes.value).trim(), attachments: (props.attachments ?? []).map(attachment => ({
+  message: withSavedImagePaths(serializeNodes(editorNodes.value).trim(), props.attachments ?? []), attachments: (props.attachments ?? []).map(attachment => ({
     id: attachment.id, name: attachment.name, type: attachment.type, size: attachment.size,
     mimeType: attachment.mimeType, data: attachment.data || '', thumbnail: attachment.thumbnail
   })), modelOverride: chatStore.selectedModelId || undefined,
