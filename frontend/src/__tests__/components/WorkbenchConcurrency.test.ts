@@ -9,12 +9,12 @@ import { effectScope } from 'vue';
 import { useWorkbenchDocuments } from '../../../../apps/client/src/useWorkbenchDocuments';
 import { useNavigationIntent } from '../../../../apps/client/src/navigationIntent';
 
-const mocks = vi.hoisted(() => ({ call: vi.fn(), report: vi.fn(), listeners: new Set<(event: any) => void>() }));
+const mocks = vi.hoisted(() => ({ call: vi.fn(), report: vi.fn(), prepare: vi.fn(), listeners: new Set<(event: any) => void>() }));
 vi.mock('../../../../apps/client/src/api', () => ({ call: mocks.call, rpc: mocks.call,
   subscribe: (listener: (event: any) => void) => { mocks.listeners.add(listener); return () => mocks.listeners.delete(listener); } }));
 vi.mock('../../../../apps/client/src/state', async () => {
   const { reactive } = await import('vue');
-  return { state: reactive({ workspaceId: 'project', snapshot: { settings: { workspaces: [] } }, chatFocused: false, sideExpanded: true,
+  return { state: reactive({ workspaceId: 'project', snapshot: { settings: { workspaces: [] } }, chatFocused: false, workbenchExpanded: false, sideExpanded: true,
     workbenchPanelRequest: null }),
     report: mocks.report, guard: async (operation: () => Promise<unknown>) => { try { return await operation(); } catch (error) { mocks.report(error); } } };
 });
@@ -26,7 +26,8 @@ vi.mock('../../../../apps/client/src/components/CodeEditor.vue', () => ({ defaul
   name: 'CodeEditor', props: ['document', 'models', 'selection'], emits: ['save', 'problems', 'outline'], template: '<div />',
 } }));
 vi.mock('../../../../apps/client/src/workbenchModels', () => ({ WorkbenchDocumentModels: class {
-  prepare() { return { model: { isDisposed: () => false } }; }
+  constructor(readonly operations: { open(path: string, workspaceId: string, range?: unknown, focus?: boolean): Promise<void> }) {}
+  prepare(document: unknown) { mocks.prepare(document); return { model: { isDisposed: () => false } }; }
   reconcile() {}
   dispose() {}
 } }));
@@ -45,8 +46,8 @@ beforeEach(() => {
     if (method === 'documents.open') return document(params.path);
     if (method === 'documents.update') return { ...document(params.path), text: params.text, version: params.version + 1, dirty: true };
   });
-  mocks.report.mockReset(); mocks.listeners.clear();
-  Object.assign(state, { workspaceId: 'project', snapshot: { settings: { workspaces: [] } }, chatFocused: false, workbenchPanelRequest: null });
+  mocks.report.mockReset(); mocks.prepare.mockClear(); mocks.listeners.clear();
+  Object.assign(state, { workspaceId: 'project', snapshot: { settings: { workspaces: [] } }, chatFocused: false, workbenchExpanded: false, workbenchPanelRequest: null });
 });
 afterEach(() => { wrappers.splice(0).forEach(wrapper => wrapper.unmount()); mocks.listeners.clear(); });
 async function workbench(compact = false) {
@@ -79,6 +80,32 @@ test('窄屏首次打开后扩大窗口会准备共享编辑器，反复切换�
   await flushPromises();
   expect(editor().props('models')).toBe(registry);
   expect(editor().props('document').path).toBe('compact.ts');
+});
+
+test('语言编辑后台打开目标文件后，回调返回时模型已准备好且不改变当前焦点', async () => {
+  const view = await workbench(); view.open('source.ts'); await flushPromises();
+  const registry = view.wrapper.findComponent({ name: 'CodeEditor' }).props('models');
+  mocks.prepare.mockClear();
+  await registry.operations.open('unopened-target.ts', 'project', undefined, false);
+  expect(mocks.prepare).toHaveBeenCalledWith(expect.objectContaining({ path: 'unopened-target.ts', text: 'content:unopened-target.ts' }));
+  expect(view.tabs().props('active')).toBe('file:project:source.ts');
+  expect(view.tabs().props('tabs')).toEqual(expect.arrayContaining([expect.objectContaining({ id: 'file:project:unopened-target.ts' })]));
+});
+
+test.each(['断线', '卸载'])('语言编辑后台打开期间%s，迟到回执不能成功返回尚未准备的模型', async action => {
+  const view = await workbench(); view.open('source.ts'); await flushPromises();
+  const registry = view.wrapper.findComponent({ name: 'CodeEditor' }).props('models');
+  const slow = deferred<ReturnType<typeof document>>();
+  mocks.call.mockImplementation(async method => method === 'documents.open' ? slow.promise : undefined);
+  mocks.prepare.mockClear();
+  const opening = registry.operations.open('late-target.ts', 'project', undefined, false);
+  void opening.catch(() => {});
+  await flushPromises();
+  if (action === '断线') for (const listener of mocks.listeners) listener({ type: 'transport.disconnected' });
+  else { wrappers.splice(wrappers.indexOf(view.wrapper), 1); view.wrapper.unmount(); }
+  slow.resolve(document('late-target.ts'));
+  await expect(opening).rejects.toThrow();
+  expect(mocks.prepare).not.toHaveBeenCalledWith(expect.objectContaining({ path: 'late-target.ts' }));
 });
 
 test('迟到的打开响应可以保留标签，但不能抢回较新文件的焦点', async () => {

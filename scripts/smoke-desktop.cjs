@@ -229,6 +229,56 @@ async function verifyDocumentOpenRace({ rpc, evaluate }) {
       .catch(error => { errors.push(`Document fixture cleanup: ${String(error)}`); });
   }
 }
+async function verifyLanguageWorkspaceEdit({ window, rpc, evaluate }) {
+  assert(!await evaluate(`Array.from(document.querySelectorAll(".workbench-tab"))
+    .some(node => node.textContent.includes("rename-consumer.ts"))`));
+  await evaluate(`Array.from(document.querySelectorAll(".tree-row"))
+    .find(node => node.textContent.includes("rename-source.ts")).click()`);
+  await until(() => evaluate('document.querySelector(".monaco-editor .view-lines")?.textContent.includes("auditRenameTarget")'),
+    'rename source displayed');
+  await until(() => evaluate('document.querySelector(".editor-language")?.textContent.trim() === "TypeScript / JavaScript"'),
+    'TypeScript rename provider ready');
+  await evaluate('document.querySelector(".monaco-editor .inputarea, .monaco-editor .native-edit-context").focus()');
+  const keyboard = window.webContents.debugger;
+  keyboard.attach('1.3');
+  const press = async (key, code, windowsVirtualKeyCode, modifiers = 0) => {
+    const input = { key, code, windowsVirtualKeyCode, nativeVirtualKeyCode: windowsVirtualKeyCode, modifiers };
+    await keyboard.sendCommand('Input.dispatchKeyEvent', { type: 'keyDown', ...input });
+    await keyboard.sendCommand('Input.dispatchKeyEvent', { type: 'keyUp', ...input });
+  };
+  try {
+    // 使用真实光标、重命名提供者和内置 TypeScript 服务；引用文件此前没有打开。
+    await press('Home', 'Home', 36, 2);
+    for (let index = 0; index < 'export const '.length; index++) await press('ArrowRight', 'ArrowRight', 39);
+    await press('F2', 'F2', 113);
+    await until(() => evaluate('document.querySelector("input.rename-input")?.getBoundingClientRect().width > 0'), 'rename input');
+    assert.equal(await evaluate('document.querySelector("input.rename-input").value'), 'auditRenameTarget');
+    await evaluate('document.querySelector("input.rename-input").select()');
+    await keyboard.sendCommand('Input.insertText', { text: 'renamedAuditTarget' });
+    await press('Enter', 'Enter', 13);
+    await until(() => evaluate('document.querySelector(".monaco-editor .view-lines")?.textContent.includes("renamedAuditTarget")'), 'rename applied');
+    assert(await evaluate('document.querySelector(".workbench-tab [aria-selected=true]")?.textContent.includes("rename-source.ts")'));
+    assert(await evaluate(`Array.from(document.querySelectorAll(".workbench-tab"))
+      .some(node => node.textContent.includes("rename-consumer.ts"))`));
+    for (const file of ['rename-source.ts', 'rename-consumer.ts']) {
+      const document = await until(async () => {
+        const value = await rpc('documents.open', { workspaceId: 'smoke', path: file });
+        return value.text.includes('renamedAuditTarget') && !value.text.includes('auditRenameTarget') ? value : undefined;
+      }, `renamed draft ${file}`);
+      assert.equal(document.dirty, true);
+    }
+    await evaluate(`Array.from(document.querySelectorAll(".file-toolbar-actions button"))
+      .find(button => button.textContent === "保存全部").click()`);
+    await until(async () => (await Promise.all(['rename-source.ts', 'rename-consumer.ts'].map(file =>
+      fs.readFile(path.join(output, 'project', file), 'utf8')))).every(text => text.includes('renamedAuditTarget') && !text.includes('auditRenameTarget')),
+    'both renamed files saved');
+    return true;
+  } finally {
+    keyboard.detach();
+    await evaluate(`Array.from(document.querySelectorAll(".workbench-tab [role=tab]"))
+      .find(tab => tab.textContent.includes("hello.ts")).click()`);
+  }
+}
 async function verifyProjectReplace(evaluate) {
   await evaluate('window.dispatchEvent(new KeyboardEvent("keydown", { key: "f", ctrlKey: true, shiftKey: true, bubbles: true }))');
   await until(() => evaluate('!!document.querySelector(".search-panel")'), 'project search panel');
@@ -253,6 +303,12 @@ async function main() {
   fsSync.writeFileSync(path.join(output, 'project', 'hello.ts'), 'export const message: string = "Hello GrayCode";\n');
   fsSync.writeFileSync(path.join(output, 'project', 'slow-open.ts'), 'export const delayed = true;\n');
   fsSync.writeFileSync(path.join(output, 'project', 'moving-open.ts'), 'export const delayedResponse = true;\n');
+  fsSync.writeFileSync(path.join(output, 'project', 'rename-source.ts'), 'export const auditRenameTarget = 1;\n');
+  fsSync.writeFileSync(path.join(output, 'project', 'rename-consumer.ts'),
+    'import { auditRenameTarget } from "./rename-source";\nexport const copy = auditRenameTarget;\n');
+  fsSync.writeFileSync(path.join(output, 'project', 'tsconfig.json'), JSON.stringify({
+    compilerOptions: { target: 'ES2022', module: 'ESNext', moduleResolution: 'Bundler', types: [] }, include: ['*.ts'],
+  }));
   fsSync.writeFileSync(path.join(output, 'project', 'replace-ui.txt'), 'needle target\n');
   fsSync.writeFileSync(path.join(output, 'project', 'index.html'), '<!doctype html><title>Preview verified</title><h1>GrayCode preview</h1>');
   app.setPath('userData', path.join(output, 'profile'));
@@ -440,6 +496,7 @@ async function main() {
   await until(() => evaluate('!!document.querySelector(".monaco-editor")'), 'Monaco editor');
   await verifyLatestFileFocus(evaluate);
   const documentOpenRaceVerified = await verifyDocumentOpenRace({ rpc, evaluate });
+  const languageWorkspaceEditVerified = await verifyLanguageWorkspaceEdit({ window, rpc, evaluate });
   shellShortcuts.monacoProjectSearchVisible = await workflowSmoke.verifyMonacoSearchShortcut({ window, evaluate, until });
   await require('./smoke-image-preview.cjs')({ window, evaluate, ui, until, root, output });
   const terminal = await rpc('terminal.create', { workspaceId: 'smoke' });
@@ -589,7 +646,7 @@ async function main() {
   assert.equal(Menu.getApplicationMenu(), configuredMenu, 'Settings changes that keep the language must reuse the native menu.');
   assert.deepEqual(errors, [], 'Desktop smoke must not contain renderer errors.');
   const report = { ok: true, electron: process.versions.electron, node: process.versions.node, requests, regexSearchVerified: true, editorFlowVerified: true,
-    startupCommandsVerified, documentOpenRaceVerified,
+    startupCommandsVerified, documentOpenRaceVerified, languageWorkspaceEditVerified,
     chatLayout, rendererPerformance, pets: petSmoke, workflows: { companion: companionWorkflow, projectSwitch: projectSwitchWorkflow, shellShortcuts, inputToolbar,
       settings: { screenshots: ['settings-context.png', 'settings-context-prompts.png', 'settings-context-count.png', 'settings-companion.png'],
         unifiedContextAndCompanion: true, nativeMenuLanguageSwitch: true, nativeMenuRetainedForOtherSettings: true,
