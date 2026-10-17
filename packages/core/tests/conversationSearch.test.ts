@@ -44,7 +44,7 @@ test('旧版长对话正文分批建索引，最后一条消息最终可搜到',
     try {
       // 模拟实际第 9 版结构，验证升级时保留原历史并分批补建正文索引。
       db.exec(`DROP TRIGGER history_search_ai; DROP TRIGGER history_search_ad;
-        DROP TABLE history_search_fts; DROP TABLE history_search;
+        DROP TABLE history_search_fts; DROP TABLE history_search; DROP INDEX entries_by_body;
         ALTER TABLE histories DROP COLUMN search_revision;
         ALTER TABLE histories DROP COLUMN search_position;
         PRAGMA user_version=9;`);

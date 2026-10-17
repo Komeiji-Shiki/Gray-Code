@@ -125,8 +125,11 @@ test('旧格式请求保持可读，新格式遇到循环引用时整批回滚',
     await f.store.close();
     const db = new Database(path.join(f.data, 'platform.sqlite'));
     db.prepare("UPDATE records SET namespace='model-requests' WHERE namespace='legacy-format'").run();
-    // 旧版没有实体关联标记；样本结构必须与版本号一致，才能真实验证升级。
-    db.exec('ALTER TABLE long_memory_dependencies DROP COLUMN association');
+    // 旧版没有正文索引和实体关联标记，样本结构须与版本号一致。
+    db.exec(`DROP TRIGGER history_search_ai; DROP TRIGGER history_search_ad;
+      DROP TABLE history_search_fts; DROP TABLE history_search; DROP INDEX entries_by_body;
+      ALTER TABLE histories DROP COLUMN search_revision; ALTER TABLE histories DROP COLUMN search_position;
+      ALTER TABLE long_memory_dependencies DROP COLUMN association;`);
     db.pragma('user_version = 6'); db.close();
     f.store = await PlatformStorage.open(f.data);
     expect((await f.store.statistics()).schemaVersion).toBe(SCHEMA_VERSION);

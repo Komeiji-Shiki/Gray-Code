@@ -120,10 +120,15 @@ class BackupUnitCopier {
       }
       this.insert('history_spans', { ...span, history_id: next, segment_id: segment });
     }
-    // 索引绑定历史 ID；内容和进度一起迁移，索引记录 ID 由目标库分配，不能只保留“已完成”标记。
-    const insertSearch = this.target.prepare('INSERT INTO history_search(history_id,position,message_id,text,normalized) VALUES(?,?,?,?,?)');
-    for (const entry of this.source.prepare('SELECT position,message_id,text,normalized FROM history_search WHERE history_id=? ORDER BY position').iterate(id) as Iterable<Row>) {
-      insertSearch.run(next, entry.position, entry.message_id, entry.text, entry.normalized);
+    // 共享索引与构建进度一起恢复；只复制该历史已完成前缀使用的正文，目标库自行分配行号。
+    const insertSearch = this.target.prepare('INSERT OR IGNORE INTO history_search(body_hash,text,normalized) VALUES(?,?,?)');
+    const indexed = this.source.prepare(`SELECT DISTINCT s.body_hash,s.text,s.normalized FROM history_spans span
+      JOIN segment_entries e ON e.segment_id=span.segment_id
+        AND e.ordinal>=span.segment_offset AND e.ordinal<span.segment_offset+span.count
+      JOIN history_search s ON s.body_hash=e.body_hash
+      WHERE span.history_id=? AND span.start_index+e.ordinal-span.segment_offset<?`).iterate(id, row.search_position) as Iterable<Row>;
+    for (const entry of indexed) {
+      insertSearch.run(entry.body_hash, entry.text, entry.normalized);
     }
     return next;
   }
