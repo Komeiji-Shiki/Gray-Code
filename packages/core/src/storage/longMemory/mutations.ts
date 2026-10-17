@@ -105,11 +105,12 @@ export class MemoryMutationStore {
     const value: LongMemorySource = { id: input.id, scopeId: scope.id, version: input.expectedVersion + 1, origin: input.origin,
       text: input.text, recordedAt: input.recordedAt, ...(input.eventAt !== undefined ? { eventAt: input.eventAt } : {}),
       ...(input.reference ? { reference: input.reference } : {}),...(input.upstream?{upstream:input.upstream}:{}) };
-    const digest = memoryDigest(value), previous = this.source(scope.id, input.id);
+    const previous = this.source(scope.id, input.id);
     if (previous?.version === value.version && memoryContentEqual(previous.payload, value))
       return { value, changed: false, invalidated: false };
     if ((previous?.version ?? 0) !== input.expectedVersion) throw new PlatformStorageError('REVISION_CONFLICT', '记忆来源已改变，请刷新后重试。');
     if (previous && input.recordedAt < previous.recorded_at) invalid('新修订的记录时间不能早于已有版本。');
+    const digest = memoryDigest(value);
     this.db.prepare('INSERT INTO long_memory_sources VALUES(?,?,?,?,?,?)').run(scope.id, value.id, value.version, value.recordedAt, digest, JSON.stringify(value));
     return { value, changed: true, invalidated: !!previous };
   }
@@ -140,12 +141,13 @@ export class MemoryMutationStore {
       text: input.text, topic: input.topic, entities: input.entities, recordedAt: input.recordedAt,
       validFrom: input.validFrom, ...(input.validTo !== undefined ? { validTo: input.validTo } : {}), ...(input.eventAt !== undefined ? { eventAt: input.eventAt } : {}),
       dependencies: input.dependencies, supersedes: input.supersedes };
-    const digest = memoryDigest(value), previous = this.record(scope.id, input.id);
+    const previous = this.record(scope.id, input.id);
     if (previous?.version === value.version && memoryContentEqual(previous.payload, value))
       return { value, changed: false, invalidated: false };
     if ((previous?.version ?? 0) !== input.expectedVersion) throw new PlatformStorageError('REVISION_CONFLICT', '记忆已改变，请刷新后重试。');
     if (previous && input.recordedAt < previous.recorded_at) invalid('新修订的记录时间不能早于已有版本。');
     this.assertDependencies(scope.id, input.id, input.dependencies, historical);
+    const digest = memoryDigest(value);
     const insert = this.db.prepare(`INSERT INTO long_memory_records(scope_id,id,version,recorded_at,valid_from,valid_to,kind,confidence,subject,attribute,value,topic,digest,payload)
       VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)`).run(scope.id, value.id, value.version, value.recordedAt, value.validFrom, value.validTo ?? null,
       value.kind, value.confidence, value.subject, value.attribute ?? null, value.value ?? null, memoryTopicKey(value.topic), digest, JSON.stringify(value));
