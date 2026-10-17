@@ -115,7 +115,9 @@ describe('备份恢复后的后台结果与自动接续', () => {
       await idle();
       expect(inputs.length).toBe(2);
       expect(await app.storage.getRecord('platform-subagents', 'restored-child')).not.toHaveProperty('restoredFeedbackOnly');
-      expect(await app.storage.getRecord('background-followups', 'subagent-restored-child:2')).toMatchObject({ status: 'started' });
+      const taskId = (dispatched.data as { taskId: string }).taskId;
+      expect(taskId).not.toBe('restored-child:1');
+      expect(await app.storage.getRecord('background-followups', `subagent-${taskId}`)).toMatchObject({ status: 'started' });
     }
   });
 
