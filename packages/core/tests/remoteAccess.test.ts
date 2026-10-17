@@ -1,17 +1,74 @@
 import path from 'node:path';
 import { mkdir, writeFile } from 'node:fs/promises';
 import { randomBytes } from 'node:crypto';
-import { createServer } from 'node:http';
+import { createServer, request as httpRequest } from 'node:http';
 import { PlatformApplication } from '../../../apps/server/src/application';
 import { ApplicationRouter } from '../../../apps/server/src/transport/router';
 import { RemoteAccessService } from '../../../apps/server/src/transport/remoteAccess';
 import { environmentSecretCodec } from '../../../apps/server/src/settings/environmentSecrets';
+import { lanAddresses, webAccessOrigins } from '../../../apps/server/src/transport/webOrigin';
 import { fixture } from './fixtures';
 
 const until = async <T>(read: () => T | Promise<T>): Promise<T> => {
   for (let i = 0; i < 120; i++) { const result = await read(); if (result) return result; await new Promise(resolve => setTimeout(resolve, 20)); }
   throw new Error('远程状态未在预期时间内更新。');
 };
+
+test('浏览器来源按代理或局域网直连生成', () => {
+  const interfaces = {
+    eth0: [{ address: '192.168.1.20', family: 'IPv4', internal: false }, { address: '169.254.10.1', family: 'IPv4', internal: false }],
+    loopback: [{ address: '127.0.0.1', family: 'IPv4', internal: true }],
+  } as any;
+  expect(webAccessOrigins({ port: 8787, interfaces })).toEqual(['http://127.0.0.1:8787', 'http://localhost:8787']);
+  expect(webAccessOrigins({ port: 8787, allowLan: true, interfaces })).toEqual(
+    ['http://127.0.0.1:8787', 'http://localhost:8787', 'http://192.168.1.20:8787']);
+  expect(webAccessOrigins({ publicOrigin: 'https://gc.example.com', port: 8787, allowLan: true, interfaces }))
+    .toEqual(['https://gc.example.com']);
+});
+
+test('未启用局域网直连时拒绝局域网来源', async () => {
+  const lan = lanAddresses()[0]; if (!lan) return;
+  const f = await fixture(); await f.store.close();
+  const token = randomBytes(32).toString('hex');
+  const app = await PlatformApplication.open({ dataDirectory: f.data,
+    remoteAccess: application => new RemoteAccessService(application, {}) });
+  const remote = app.remoteAccess!;
+  const probe = (host: string) => new Promise<number>((resolve, reject) => {
+    const request = httpRequest({ hostname: '127.0.0.1', port: remote.status().port, path: '/rpc', method: 'POST',
+      headers: { Host: host, Origin: `http://${host}`, Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' } },
+      response => { response.resume(); resolve(response.statusCode ?? 0); });
+    request.on('error', reject); request.end(JSON.stringify({ method: 'session.info' }));
+  });
+  try {
+    await remote.initialize({ token, port: 0 });
+    expect(await probe(`${lan}:${remote.status().port}`)).toBe(403);
+    expect(await probe(`127.0.0.1:${remote.status().port}`)).toBe(200);
+  } finally { await app.close(); await f.cleanup(); }
+});
+
+test('启用局域网直连后按本机局域网地址放行来源', async () => {
+  // Windows 本机运行会对非回环监听弹出防火墙提示，交给 Linux CI 覆盖。
+  if (process.platform === 'win32') return;
+  const lan = lanAddresses()[0]; if (!lan) return;
+  const f = await fixture(); await f.store.close();
+  const token = randomBytes(32).toString('hex');
+  const app = await PlatformApplication.open({ dataDirectory: f.data,
+    remoteAccess: application => new RemoteAccessService(application, {}) });
+  const remote = app.remoteAccess!;
+  const port = () => remote.status().port!;
+  const probe = (host: string) => new Promise<number>((resolve, reject) => {
+    const request = httpRequest({ hostname: '127.0.0.1', port: port(), path: '/rpc', method: 'POST',
+      headers: { Host: host, Origin: `http://${host}`, Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' } },
+      response => { response.resume(); resolve(response.statusCode ?? 0); });
+    request.on('error', reject); request.end(JSON.stringify({ method: 'session.info' }));
+  });
+  try {
+    await remote.initialize({ token, port: 0, allowLan: true });
+    expect(remote.status().lanAddress).toBe(`http://${lan}:${port()}`);
+    expect(await probe(`${lan}:${port()}`)).toBe(200);
+    expect(await probe(`localhost:${port()}`)).toBe(200);
+  } finally { await app.close(); await f.cleanup(); }
+});
 
 test('停止入口失败后保留资源供重新启动和应用关闭重试', async () => {
   const f = await fixture(); await f.store.close();

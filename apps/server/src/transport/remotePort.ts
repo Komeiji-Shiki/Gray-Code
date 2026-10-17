@@ -1,6 +1,6 @@
 import type { RemoteAccessStatus } from '@graycode/contracts';
 
-export interface RemoteStartupOptions { port?: number; token: string; publicOrigin?: string }
+export interface RemoteStartupOptions { port?: number; token: string; publicOrigin?: string; allowLan?: boolean }
 export interface RemoteAccessHost {
   readonly keepsAlive: boolean;
   initialize(override?: RemoteStartupOptions): Promise<void>;

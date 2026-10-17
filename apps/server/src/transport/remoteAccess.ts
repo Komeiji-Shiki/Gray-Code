@@ -4,7 +4,7 @@ import type { RemoteAccessSettings, RemoteAccessStatus } from '@graycode/contrac
 import type { PlatformApplication } from '../application';
 import type { RemoteAccessHost, RemoteStartupOptions } from './remotePort';
 import { startHttpServer } from './http';
-import { normalizeWebOrigin, validateRemoteAccess } from './webOrigin';
+import { lanAddresses, normalizeWebOrigin, validateRemoteAccess } from './webOrigin';
 
 /** 只管理已授权的 Web 入口；任务、终端和数据目录仍属于原核心实例。 */
 export class RemoteAccessService implements RemoteAccessHost {
@@ -28,14 +28,17 @@ export class RemoteAccessService implements RemoteAccessHost {
   }
   get keepsAlive() { return this.initialized && !this.closed && !this.paused && this.configured().enabled; }
   private configured(): RemoteAccessSettings {
-    if (this.override) return { enabled: true, port: this.override.port ?? 0, publicOrigin: this.override.publicOrigin };
+    if (this.override) return { enabled: true, port: this.override.port ?? 0, publicOrigin: this.override.publicOrigin,
+      allowLan: this.override.allowLan };
     return this.app.settings.read('remoteAccess').remoteAccess ?? { enabled: false, port: 0 };
   }
   status(): RemoteAccessStatus {
     const config = this.configured(); const port = this.server?.port;
+    const lan = config.allowLan && port !== undefined ? lanAddresses()[0] : undefined;
     return { available: true, source: this.override ? 'command_line' : 'settings', state: this.state, enabled: config.enabled,
       deviceName: os.hostname(), configuredPort: config.port, credentialRef: config.credentialRef, port, error: this.error,
-      ...(port !== undefined ? { localAddress: `http://127.0.0.1:${port}`, address: config.publicOrigin || `http://127.0.0.1:${port}` } : {}),
+      ...(port !== undefined ? { localAddress: `http://127.0.0.1:${port}`, address: config.publicOrigin || `http://127.0.0.1:${port}`,
+        ...(lan ? { lanAddress: `http://${lan}:${port}` } : {}) } : {}),
       connections: this.server?.connections() ?? [], eventStream: this.server?.diagnostics() };
   }
   async initialize(override?: RemoteStartupOptions): Promise<void> {
@@ -74,7 +77,7 @@ export class RemoteAccessService implements RemoteAccessHost {
       }
       const token = this.override?.token ?? await this.app.settings.credential(config.credentialRef!);
       if (!token || token.length < 32) throw new Error('远程访问令牌不可用，请在设置中生成或填写至少 32 个字符的令牌。');
-      const target = JSON.stringify([config.port, config.publicOrigin ?? '']);
+      const target = JSON.stringify([config.port, config.publicOrigin ?? '', config.allowLan === true]);
       const tokenHash = createHash('sha256').update(token).digest('hex');
       const key = target + tokenHash;
       if (this.desiredKey !== key) this.paused = false;
@@ -87,7 +90,7 @@ export class RemoteAccessService implements RemoteAccessHost {
       cleanupAttempted = true; await this.disconnect();
       this.state = 'starting'; this.error = undefined; this.emit();
       const server = await startHttpServer(this.app, { port: config.port, token, publicOrigin: config.publicOrigin,
-        clientDirectory: this.options.clientDirectory, onConnectionsChanged: () => this.emit() });
+        allowLan: config.allowLan === true, clientDirectory: this.options.clientDirectory, onConnectionsChanged: () => this.emit() });
       if (this.closed) { await server.close(); return; }
       this.server = server; this.target = target; this.tokenHash = tokenHash; this.state = 'listening'; this.emit();
     } catch (error) {

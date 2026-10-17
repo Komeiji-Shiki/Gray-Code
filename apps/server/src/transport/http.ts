@@ -6,10 +6,10 @@ import { WebSessions, type WebSessionSnapshot } from './webSessions';
 import { createWebAssetHandler } from './webAssets';
 import { WebHost } from './webHost';
 import { randomUUID } from 'node:crypto';
-import { normalizeWebOrigin } from './webOrigin';
+import { normalizeWebOrigin, webAccessOrigins } from './webOrigin';
 import { serveWorkspaceFile } from './fileTransfers';
 
-export interface HttpServerOptions { port?: number; token: string; actorId?: string; clientDirectory?: string; publicOrigin?: string; onConnectionsChanged?: () => void; clientRecoveryGraceMs?: number }
+export interface HttpServerOptions { port?: number; token: string; actorId?: string; clientDirectory?: string; publicOrigin?: string; allowLan?: boolean; onConnectionsChanged?: () => void; clientRecoveryGraceMs?: number }
 async function readBody(request: IncomingMessage, limit = 16 * 1024 * 1024): Promise<Record<string, any>> {
   const chunks: Buffer[] = []; let size = 0;
   for await (const chunk of request) { size += chunk.length; if (size > limit) throw new Error('请求内容超过大小限制。'); chunks.push(chunk); }
@@ -77,21 +77,25 @@ export async function startHttpServer(application: PlatformApplication, options:
   const host = new WebHost(application, router);
   const failures = new Map<string, { count: number; until: number }>();
   const serveWebAsset = options.clientDirectory ? createWebAssetHandler(options.clientDirectory) : undefined;
+  // 监听成功后计算一次；请求热路径不再扫描网卡。
+  let accessOrigins: string[] = [];
   const server = createServer(async (request, response) => {
     let validSession: (() => boolean) | undefined;
     response.on('error', () => response.destroy());
     response.setHeader('Cache-Control', 'no-store'); response.setHeader('X-Content-Type-Options', 'nosniff');
     response.setHeader('Referrer-Policy', 'no-referrer'); response.setHeader('Content-Type', 'application/json; charset=utf-8');
-    const ownOrigin = publicOrigin ?? `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
-    const allowed = new URL(ownOrigin);
+    const origins = accessOrigins;
+    const ownOrigin = origins[0];
+    const allowedHosts = new Set(origins.map(origin => new URL(origin).host));
     // 不信任客户端提交的 X-Forwarded-*；代理须保留已配置的 Host。
-    if (request.headers.host !== allowed.host || (request.headers.origin && request.headers.origin !== ownOrigin)) {
+    if (!allowedHosts.has(request.headers.host ?? '')
+      || (request.headers.origin && !origins.includes(request.headers.origin))) {
       response.writeHead(403); response.end(JSON.stringify({ error: 'Origin is not allowed.' })); return;
     }
     try {
       const url = new URL(request.url ?? '/', ownOrigin);
       if (request.method === 'POST' && url.pathname === '/auth/login' && options.clientDirectory) {
-        if (request.headers.origin !== ownOrigin) { response.writeHead(403); response.end('{}'); return; }
+        if (!request.headers.origin || !origins.includes(request.headers.origin)) { response.writeHead(403); response.end('{}'); return; }
         const address = request.socket.remoteAddress ?? 'local'; const failure = failures.get(address);
         if (failure && failure.until > Date.now() && failure.count >= 10) {
           response.writeHead(429); response.end(JSON.stringify({ error: '尝试次数过多，请稍后重试。' })); return;
@@ -123,7 +127,8 @@ export async function startHttpServer(application: PlatformApplication, options:
         if (serveWebAsset && await serveWebAsset(url.pathname, request, response, validSession)) return;
       }
       if (!auth) { response.writeHead(401); response.end(JSON.stringify({ error: 'Authentication required.' })); return; }
-      if (auth.browser && request.method === 'POST' && request.headers.origin !== ownOrigin) {
+      if (auth.browser && request.method === 'POST'
+        && (!request.headers.origin || !origins.includes(request.headers.origin))) {
         response.writeHead(403); response.end(JSON.stringify({ error: 'Origin is required.' })); return;
       }
       const stillAuthenticated = () => {
@@ -279,7 +284,15 @@ export async function startHttpServer(application: PlatformApplication, options:
       }).finally(() => { identity.queuedBytes -= bytes; });
     }
   });
-  try { await new Promise<void>((resolve, reject) => { server.once('error', reject); server.listen(options.port ?? 0, '127.0.0.1', resolve); }); }
+  try {
+    await new Promise<void>((resolve, reject) => {
+      server.once('error', reject);
+      server.listen(options.port ?? 0, options.allowLan ? '0.0.0.0' : '127.0.0.1', () => {
+        accessOrigins = webAccessOrigins({ publicOrigin, port: (server.address() as AddressInfo).port, allowLan: options.allowLan });
+        resolve();
+      });
+    });
+  }
   catch (error) { unsubscribe(); server.close(); throw error; }
   let closing: Promise<void> | undefined;
   return { port: (server.address() as AddressInfo).port, router,

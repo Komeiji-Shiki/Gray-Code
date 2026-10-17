@@ -4,6 +4,8 @@ export interface RemoteAccessSettings {
   port: number;
   publicOrigin?: string;
   credentialRef?: string;
+  /** 允许同一局域网内的浏览器通过 HTTP 直接访问；默认只监听回环地址。 */
+  allowLan?: boolean;
 }
 export interface WebConnectionInfo {
   id: string;
@@ -25,6 +27,8 @@ export interface RemoteAccessStatus {
   port?: number;
   localAddress?: string;
   address?: string;
+  /** 启用局域网直连时的浏览器访问地址。 */
+  lanAddress?: string;
   error?: string;
   connections: WebConnectionInfo[];
   eventStream?: EventStreamStatistics;
