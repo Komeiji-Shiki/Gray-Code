@@ -1,5 +1,5 @@
 // Run with: electron scripts/smoke-desktop.cjs. All data and screenshots stay in .tmp.
-const { app, BrowserWindow, dialog, webContents, nativeImage, Menu } = require('electron');
+const { app, BrowserWindow, dialog, webContents, nativeImage, Menu, ipcMain } = require('electron');
 const fs = require('node:fs/promises');
 const fsSync = require('node:fs');
 const path = require('node:path');
@@ -22,10 +22,40 @@ let petReply = '';
 const petRequests = [];
 const workflowRequests = [];
 const projectSwitchRequests = [];
+let chatReadyGate;
 async function until(check, label, timeout = 20000) {
   const deadline = Date.now() + timeout;
   while (Date.now() < deadline) { const result = await check(); if (result) return result; await sleep(100); }
   throw new Error(`Timed out: ${label}`);
+}
+async function verifyStartupCommands({ window, rpc, chat }) {
+  let release;
+  const gate = { entered: false, wait: new Promise(resolve => { release = resolve; }) };
+  chatReadyGate = gate;
+  try {
+    window.webContents.reload();
+    await until(() => gate.entered, 'main chat readiness held');
+    await chat(`window.__graycodeSmokeCommands = [];
+      window.__graycodeSmokeCommandDispose = window.__GRAYCODE_HOST.subscribe(message => {
+        if (message.type === 'command' && ['newChat', 'showSettings'].includes(message.command)) window.__graycodeSmokeCommands.push(message.command);
+      }); true`);
+    const menu = Menu.getApplicationMenu();
+    menu.getMenuItemById('file').submenu.items.find(item => item.accelerator === 'CmdOrCtrl+N').click();
+    menu.getMenuItemById('edit').submenu.items.find(item => item.accelerator === 'CmdOrCtrl+,').click();
+    // 同一客户端的查询排在两次菜单命令之后，确认它们已受理而仍在等待握手。
+    await rpc('ui.state.get');
+    assert.deepEqual(await chat('window.__graycodeSmokeCommands'), []);
+  } finally {
+    chatReadyGate = undefined;
+    release();
+  }
+  await until(() => chat('document.querySelector(".platform-settings-footer")?.getBoundingClientRect().height > 0'), 'queued native settings command');
+  assert.deepEqual(await chat('window.__graycodeSmokeCommands'), ['newChat', 'showSettings']);
+  await chat('window.__graycodeSmokeCommandDispose(); delete window.__graycodeSmokeCommandDispose; delete window.__graycodeSmokeCommands; true');
+  await rpc('ui.command', { command: 'newChat' });
+  await until(() => chat(`document.querySelector(".input-editor")?.getBoundingClientRect().height > 0
+    && !document.querySelector(".platform-settings-footer")?.getBoundingClientRect().height`), 'chat after queued commands');
+  return true;
 }
 async function verifyQuitDialogLanguage(ui, language, expected) {
   await ui('ui.settings.begin');
@@ -199,6 +229,16 @@ async function main() {
   app.setPath('documents', path.join(output, 'documents'));
   process.env.GRAYCODE_DESKTOP_SMOKE = '1';
   process.argv.push('--data', path.join(output, 'data'));
+  const registerIpc = ipcMain.handle;
+  ipcMain.handle = function (channel, listener) {
+    if (channel !== 'graycode:rpc') return registerIpc.call(this, channel, listener);
+    ipcMain.handle = registerIpc;
+    return registerIpc.call(this, channel, async (...args) => {
+      const gate = chatReadyGate;
+      if (gate && args[1] === 'ui.request' && args[2]?.type === 'webviewReady') { gate.entered = true; await gate.wait; }
+      return listener(...args);
+    });
+  };
   dialog.showErrorBox = (title, message) => { process.stderr.write(`${title}: ${message}\n`); app.exit(1); };
   app.on('browser-window-created', (_event, window) => {
     window.webContents.on('console-message', event => { if (event.level === 'error') errors.push(event.message); });
@@ -338,6 +378,7 @@ async function main() {
     const report = await rendererBenchmark.measureRendererWorkload({ rpc, ui, chat, until, output, configId, contents: window.webContents, startupTiming });
     process.stdout.write(JSON.stringify({ report, errors, output }) + '\n'); server.closeAllConnections(); server.close(); app.quit(); return;
   }
+  const startupCommandsVerified = await verifyStartupCommands({ window, rpc, chat });
   const petSmoke = await require('./smoke-pets.cjs')({ window, rpc, ui, evaluate, until, root, output, configId });
   const workflowSmoke = require('./smoke-workflows.cjs');
   const companionWorkflow = await workflowSmoke.runCompanionWorkflow({ window, rpc, evaluate, chat, until, output, configId,
@@ -508,6 +549,7 @@ async function main() {
   assert.equal(Menu.getApplicationMenu(), configuredMenu, 'Settings changes that keep the language must reuse the native menu.');
   assert.deepEqual(errors, [], 'Desktop smoke must not contain renderer errors.');
   const report = { ok: true, electron: process.versions.electron, node: process.versions.node, requests, regexSearchVerified: true, editorFlowVerified: true,
+    startupCommandsVerified,
     chatLayout, rendererPerformance, pets: petSmoke, workflows: { companion: companionWorkflow, projectSwitch: projectSwitchWorkflow, shellShortcuts, inputToolbar,
       settings: { screenshots: ['settings-context.png', 'settings-context-prompts.png', 'settings-context-count.png', 'settings-companion.png'],
         unifiedContextAndCompanion: true, nativeMenuLanguageSwitch: true, nativeMenuRetainedForOtherSettings: true,

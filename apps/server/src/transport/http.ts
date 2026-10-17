@@ -219,11 +219,13 @@ export async function startHttpServer(application: PlatformApplication, options:
         // 补发完成后再通知客户端同步快照，避免快照与旧事件相互覆盖。
         identity.queue = identity.queue.then(() => { if (writable(response, identity)) response.write(`event: synchronized\ndata: ${JSON.stringify({ reset })}\n\n`); });
         streams.set(response, identity);
+        application.productUi.commands.connected(auth.client.clientId);
         options.onConnectionsChanged?.();
         const heartbeat = setInterval(() => { if (!writable(response, auth)) { response.end(); return; } response.write(': heartbeat\n\n'); }, 20_000);
         heartbeat.unref(); response.once('close', () => {
           clearInterval(heartbeat); streams.delete(response); options.onConnectionsChanged?.();
           if (![...streams.values()].some(value => value.client.clientId === auth.client.clientId && value.valid())) {
+            application.productUi.commands.disconnected(auth.client.clientId);
             void application.computer.clientClosed(auth.client.clientId).catch(() => {});
             void application.nodes.clientClosed(auth.client.clientId).catch(() => {});
             scheduleRelease(auth.client.clientId);

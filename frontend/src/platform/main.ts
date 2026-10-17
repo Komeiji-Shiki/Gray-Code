@@ -27,6 +27,7 @@ if (!window.graycode) window.graycode = bridge;
 const desktop: DesktopBridge = { ...bridge, call: (method, params) => callDesktopBridge(bridge, method, params) };
 const viewQuery = new URLSearchParams(window.location.search);
 const isMonitorView = viewQuery.get('view') === 'subagents';
+const mainViewId = viewQuery.get('viewId');
 if (isMonitorView) {
   window.__GRAYCODE_VIEW_MODE = 'subagentMonitor';
   (window as unknown as { __GRAYCODE_INITIAL_RUN_ID?: string }).__GRAYCODE_INITIAL_RUN_ID = viewQuery.get('runId') ?? undefined;
@@ -37,6 +38,16 @@ const startupResponses = new Map<string, unknown>();
 let startupSnapshotPending = true;
 let startupSnapshotVersion = 0;
 const lifetime = new AbortController();
+let sentViewReady = false;
+async function notifyViewReady(): Promise<{ success: boolean; reason?: 'missing' | 'replaced' }> {
+  const request = () => desktop.call('ui.request', { type: 'webviewReady', data: { viewId: mainViewId } });
+  const result = await request();
+  if (lifetime.signal.aborted || result.reason !== 'missing' || desktop.kind !== 'web') return result;
+  // 服务重启只重建当前文档的身份；已有新视图时不得接管，也无需重载而丢失当前输入。
+  const prepared = await desktop.call('ui.view.prepare', { resumeViewId: mainViewId });
+  if (lifetime.signal.aborted || !prepared.accepted) return result;
+  return request();
+}
 let shellShortcutBindings: ShellShortcutBinding[] = [];
 function receiveShellMessage(event: MessageEvent) {
   if (event.source !== window.parent || event.origin !== window.location.origin) return;
@@ -83,7 +94,7 @@ const host: HostTransport = {
   getDefaultPromptModeId: () => defaultPromptModeId,
   reportInitialization: error => {
     if (!isMonitorView && !lifetime.signal.aborted) window.parent.postMessage({ type: CHAT_INITIALIZATION_MESSAGE,
-      status: error === undefined ? 'ready' : 'failed', error }, window.location.origin === 'null' ? '*' : window.location.origin);
+      status: error === undefined ? 'ready' : 'failed', error, viewId: mainViewId }, window.location.origin === 'null' ? '*' : window.location.origin);
   },
   getState: () => persistedState,
   setState: value => { if (!lifetime.signal.aborted) { persistedState = value; void desktop.call('ui.state.set', { value }); } },
@@ -95,7 +106,13 @@ const host: HostTransport = {
       ? { conversationId: viewQuery.get('conversationId') ?? undefined, runId: viewQuery.get('runId') ?? undefined, ...message.data as Record<string, unknown> }
       : message.data;
     if (message.type === 'ui.settings.begin') startupResponses.clear();
-    const request = () => desktop.call('ui.request', { type: message.type, data });
+    const request = () => {
+      if (message.type === 'webviewReady' && !isMonitorView) {
+        sentViewReady = true;
+        return notifyViewReady();
+      }
+      return desktop.call('ui.request', { type: message.type, data });
+    };
     const responseKey = message.type === 'config.getConfig' ? `${message.type}:${(data as { configId?: string }).configId}` : message.type;
     const initialResponse = startupResponses.has(responseKey) ? Promise.resolve(startupResponses.get(responseKey)) : request();
     startupResponses.delete(responseKey);
@@ -117,6 +134,9 @@ const changedAssetPaths = new Set<string>();
 function resetWorkspaceAssets() { if (assetTimer) clearTimeout(assetTimer); assetTimer = undefined; changedAssetPaths.clear(); invalidateWorkspaceAssets(); }
 function receiveDesktopEvent(event: Record<string, any>) {
   if (lifetime.signal.aborted) return;
+  if (event.type === 'ui.message' && event.viewId && event.viewId !== mainViewId) return;
+  if (event.type === 'transport.resumed' && sentViewReady && !isMonitorView)
+    void notifyViewReady().catch(error => console.error('[platform] Failed to resume chat command delivery:', error));
   if (startupSnapshotPending && (['workspace.selected', 'ui.conversation.focused', 'settings.changed', 'transport.resumed'].includes(event.type)
     || event.type === 'ui.message' && (event.message?.type === 'workspaceUri'
       || ['platform.modeSelected', 'platform.appearance', 'channels.configChanged', 'mcp.configChanged', 'settings.imported'].includes(event.message?.command))))

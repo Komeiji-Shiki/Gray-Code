@@ -2,7 +2,7 @@
 import { computed, defineAsyncComponent, nextTick, onMounted, onUnmounted, ref, watch, watchEffect } from 'vue';
 import { appearance, guard, initialize, loadSettings, report, state } from './state';
 import { appearanceSystemLight, useSystemAppearance } from './appearance';
-import { call, subscribe } from './api';
+import { call, rpc, subscribe } from './api';
 import { CHAT_INITIALIZATION_MESSAGE } from '../../../shared/chatInitialization';
 import { SHELL_SHORTCUTS_MESSAGE, SHELL_SHORTCUT_MESSAGE, matchShellShortcut, shellShortcuts } from '../../../shared/shellShortcutBridge';
 import { connectDebugging, debugControl, debugState } from './debugging';
@@ -74,7 +74,8 @@ function openWorkspacePanel(event: MessageEvent) {
     if (event.data?.type === 'graycode.language' && typeof event.data.language === 'string') {
       void setShellLanguage(event.data.language).catch(report);
     }
-    if (event.data?.type === CHAT_INITIALIZATION_MESSAGE && ['ready', 'failed'].includes(event.data.status)) {
+    if (event.data?.type === CHAT_INITIALIZATION_MESSAGE && event.data.viewId === chatViewId.value
+      && ['ready', 'failed'].includes(event.data.status)) {
       chatInitialized.value = event.data.status === 'ready';
       chatLoadFailed.value = !chatInitialized.value;
       chatInitializationError.value = typeof event.data.error === 'string' ? event.data.error : '';
@@ -132,7 +133,20 @@ watch([() => state.mode, chatInitialized], ([mode, initialized]) => {
 });
 const chatLoadFailed = ref(false);
 const chatInitializationError = ref('');
-const chatFrameVersion = ref(0);
+const chatViewId = ref('');
+const preparingChat = ref(false);
+async function prepareChatView(signal = lifetime.signal) {
+  preparingChat.value = true;
+  try {
+    const prepared = await rpc('ui.view.prepare');
+    if (signal.aborted) return;
+    chatReady.value = false;
+    chatInitialized.value = false;
+    chatViewId.value = prepared.viewId;
+  } finally {
+    preparingChat.value = false;
+  }
+}
 let chatReadyTimer: ReturnType<typeof setTimeout> | undefined;
 function watchChatReady() {
   clearTimeout(chatReadyTimer);
@@ -141,13 +155,23 @@ function watchChatReady() {
     if (!chatInitialized.value) chatLoadFailed.value = true;
   }, 20_000);
 }
-function reloadChat() {
+async function reloadChat() {
+  if (preparingChat.value) return;
   chatReady.value = false;
   chatInitialized.value = false;
   chatLoadFailed.value = false;
   chatInitializationError.value = '';
-  chatFrameVersion.value++;
-  void nextTick().then(watchChatReady);
+  watchChatReady();
+  try {
+    await prepareChatView();
+    if (lifetime.signal.aborted) return;
+    await nextTick();
+    watchChatReady();
+  } catch (error) {
+    if (lifetime.signal.aborted) return;
+    chatInitializationError.value = error instanceof Error ? error.message : String(error);
+    chatLoadFailed.value = true;
+  }
 }
 function autoStartScreenSense(conversationId: string | null) {
   // 正常恢复的陪伴对话要等聊天初始化完成；启动失败页和重新加载期间不采集。
@@ -250,6 +274,8 @@ async function bootstrap() {
     unsubscribeState = await initialize(signal);
     if (signal.aborted) return;
     await call('ui.context.set', { workspaceId: state.workspaceId, mode: state.mode });
+    if (signal.aborted) return;
+    await prepareChatView(signal);
     if (signal.aborted) return;
     if (!isWeb) {
       await nextTick();
@@ -437,7 +463,7 @@ onMounted(() => {
         pendingWorkbenchEvents.push(event.type === 'workspace.diff.open' && !event.workspaceId ? { ...event, workspaceId: state.workspaceId } : event);
       }
     }
-    if (event.type === 'ui.ready') chatReady.value = true;
+    if (event.type === 'ui.ready' && event.viewId === chatViewId.value) chatReady.value = true;
     if (event.type === 'desktop.shortcut' && enabledShortcuts.value.some(binding => binding.command === event.command))
       executeShellShortcut(event.command);
     if (event.type === 'workspace.selected' && event.source === 'desktop')
@@ -586,7 +612,7 @@ onUnmounted(() => {
         {{ t('chatInitializationFailed') }}
         <template v-if="chatInitializationError">{{ chatInitializationError }}</template>
       </span>
-      <button @click="reloadChat">{{ t('retryChat') }}</button>
+      <button :disabled="preparingChat" @click="reloadChat">{{ t('retryChat') }}</button>
     </div>
     <ComputerStatus v-if="state.ready" />
     <ScreenSenseStatus v-if="state.ready" @manage="openCompanionSettings('screen')" />
@@ -706,10 +732,11 @@ onUnmounted(() => {
         :style="{ '--gc-chat-width': split + '%' }"
       >
         <iframe
-          :key="chatFrameVersion"
+          v-if="chatViewId"
+          :key="chatViewId"
           ref="productChatFrame"
           class="product-chat"
-          src="./chat/platform.html"
+          :src="'./chat/platform.html?viewId=' + encodeURIComponent(chatViewId)"
           :title="t('uiAppConversationsAndSettings')"
           @load="watchChatReady"
           @error="chatLoadFailed = true"

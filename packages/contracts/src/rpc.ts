@@ -28,6 +28,7 @@ export type BrowserControlAction = 'navigate' | 'back' | 'forward' | 'reload' | 
 export interface RpcMethods extends ScreenSenseRpcMethods, PetRpcMethods, CompanionRpcMethods, PetInteractionRpcMethods {
   'ui.request': Method<UiRequestEnvelope, UiRequestResult<UiRequestName>>;
   'ui.startup': Method<Empty, UiStartupSnapshot>;
+  'ui.view.prepare': Method<{ resumeViewId?: string }, { accepted: boolean; viewId: string }>;
   'diagnostics.get': Method<Empty, RuntimeDiagnostics>;
   'settings.get': Method<Empty, SettingsSnapshot>;
   'settings.save': Method<SettingsDraft, SettingsSnapshot>;
@@ -124,6 +125,7 @@ const checks: { [M in RpcMethod]: { [K in keyof RpcParams<M>]-?: Check } } = {
   // 旧 UI 操作的数据形态继续兼容，稳定接口的参数与结果由 UiRequests 关联。
   'ui.request': { type: text, data: optional(unknownValue) },
   'ui.startup': {},
+  'ui.view.prepare': { resumeViewId: optional(text) },
   'diagnostics.get': {},
   'settings.get': {}, 'settings.save': { settings: object, expectedRevision: number, credentials: optional(object) },
   'files.list': { workspaceId: text, path: optional(text) }, 'files.inspect': file, 'files.downloadInfo': file, 'files.download': file, 'files.reveal': file, 'files.openOffice': file,

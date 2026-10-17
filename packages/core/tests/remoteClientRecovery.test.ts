@@ -220,3 +220,73 @@ test('离线的脏文档经过其它客户端目录移动后仍可恢复原正�
     expect(await readFile(path.join(f.source, 'moved.txt'), 'utf8')).toBe('saved');
   } finally { await app.close(); await f.cleanup(); }
 });
+
+test('显式界面命令等待真实 SSE 接通，断线期间的普通 RPC 不恢复投递', async () => {
+  const f = await fixture(); await f.store.close();
+  const app = await PlatformApplication.open({ dataDirectory: f.data });
+  const token = 'isolated-ui-command-stream-token';
+  const http = await startHttpServer(app, { token });
+  const origin = `http://127.0.0.1:${http.port}`;
+  const headers = { Authorization: 'Bearer ' + token, 'Content-Type': 'application/json' };
+  const controllers: AbortController[] = [];
+  const deadlines: ReturnType<typeof setTimeout>[] = [];
+  const published: Record<string, unknown>[] = [];
+  const unsubscribe = app.subscribe(event => { if (event.type === 'ui.message') published.push(event); });
+  const rpc = async (method: string, params: object = {}) => {
+    const response = await fetch(origin + '/rpc', { method: 'POST', headers, body: JSON.stringify({ method, params }) });
+    const value = await response.json() as { result: unknown; error?: string };
+    if (!response.ok) throw new Error(value.error);
+    return value.result;
+  };
+  const ui = (type: string, data: object = {}) => rpc('ui.request', { type, data });
+  const connect = async () => {
+    const controller = new AbortController(); controllers.push(controller);
+    // 失败也要结束拥有的流，不能让漏发命令把夹具永远留在 reader.read。
+    const deadline = setTimeout(() => controller.abort(), 10_000); deadline.unref(); deadlines.push(deadline);
+    const response = await fetch(origin + '/events', { headers, signal: controller.signal });
+    const reader = response.body!.getReader();
+    return { controller, reader, ...await synchronized(reader) };
+  };
+  const received = async (connection: Awaited<ReturnType<typeof connect>>, command: string) => {
+    while (!connection.text.includes(`"command":"${command}"`)) {
+      const chunk = await connection.reader.read();
+      if (chunk.done) throw new Error('命令交付前事件连接结束');
+      connection.text += Buffer.from(chunk.value).toString('utf8');
+    }
+  };
+  try {
+    const prepared = await rpc('ui.view.prepare');
+    if (!prepared || typeof prepared !== 'object' || !('viewId' in prepared) || typeof prepared.viewId !== 'string') {
+      throw new Error('主聊天身份未准备');
+    }
+    const viewId = prepared.viewId;
+    await ui('ui.command', { command: 'newChat' });
+    await ui('webviewReady', { viewId });
+    expect(published).toEqual([]);
+    const first = await connect();
+    await received(first, 'newChat');
+    expect(published).toHaveLength(1);
+
+    first.controller.abort();
+    await waitUntil(() => http.diagnostics().connections === 0);
+    await ui('ui.command', { command: 'showSettings' });
+    await ui('ui.state.get');
+    expect(published).toHaveLength(1);
+    const second = await connect();
+    expect(published).toHaveLength(1);
+    await ui('webviewReady', { viewId });
+    await received(second, 'showSettings');
+    expect(published).toHaveLength(2);
+
+    const parallel = await connect();
+    second.controller.abort();
+    await waitUntil(() => http.diagnostics().connections === 1);
+    await ui('ui.command', { command: 'showHistory' });
+    await received(parallel, 'showHistory');
+    expect(published).toHaveLength(3);
+  } finally {
+    for (const deadline of deadlines) clearTimeout(deadline);
+    for (const controller of controllers) controller.abort();
+    unsubscribe(); await http.close(); await app.close(); await f.cleanup();
+  }
+});
