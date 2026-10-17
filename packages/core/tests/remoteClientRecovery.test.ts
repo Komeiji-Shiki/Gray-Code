@@ -153,6 +153,35 @@ test('旧提示词准备挂起时仍能经真实 HTTP 重连并进入取消，�
   }
 });
 
+test('关闭入口释放失败后仍可重试，并发关闭和成功后的关闭共用结果', async () => {
+  const f = await fixture(); await f.store.close();
+  const app = await PlatformApplication.open({ dataDirectory: f.data });
+  const token = 'isolated-close-retry-client-token';
+  const http = await startHttpServer(app, { token });
+  const close = jest.spyOn(http.router, 'clientClosed').mockRejectedValueOnce(new Error('temporary close failure'));
+  const warn = jest.spyOn(console, 'warn').mockImplementation(() => {});
+  try {
+    const response = await fetch(`http://127.0.0.1:${http.port}/rpc`, {
+      method: 'POST', headers: { Authorization: 'Bearer ' + token, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ method: 'session.info' }),
+    });
+    expect(response.status).toBe(200); await response.json();
+    const first = http.close();
+    expect(http.close()).toBe(first);
+    await expect(first).rejects.toThrow('Web 客户端资源未能全部释放');
+    expect(http.diagnostics().failedClientReleases).toBe(1);
+    await expect(http.close()).resolves.toBeUndefined();
+    expect(http.diagnostics().failedClientReleases).toBe(0);
+    expect(close).toHaveBeenCalledTimes(2);
+    await http.close();
+    expect(close).toHaveBeenCalledTimes(2);
+  } finally {
+    close.mockRestore(); warn.mockRestore();
+    // 旧实现复现时监听已关，但失败 Promise 仍被缓存；应用负责释放本夹具的剩余资源。
+    await http.close().catch(() => {}); await app.close(); await f.cleanup();
+  }
+});
+
 test('释放失败保留诊断并在离线期间重试，成功后才清除失败状态', async () => {
   const f = await fixture(); await f.store.close();
   const app = await PlatformApplication.open({ dataDirectory: f.data });

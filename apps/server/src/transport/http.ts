@@ -298,5 +298,9 @@ export async function startHttpServer(application: PlatformApplication, options:
         await Promise.all([...webClients].map(releaseClient));
         if (failedClientReleases.size) throw new AggregateError([...failedClientReleases.values()], 'Web 客户端资源未能全部释放。');
       } finally { clearTimeout(deadline); }
-    })() };
+    })().catch(error => {
+      // 监听关闭后仍可能有资源或会话尚未保存，保留下一次明确关闭的重试入口。
+      closing = undefined;
+      throw error;
+    }) };
 }
