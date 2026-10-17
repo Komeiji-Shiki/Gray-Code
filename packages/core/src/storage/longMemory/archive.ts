@@ -1,10 +1,50 @@
-import type { LongMemoryArchive, LongMemoryScope, LongMemoryRecord, LongMemorySource, LongMemoryTombstone } from '@graycode/contracts';
+import type {
+  LongMemoryArchive, LongMemoryScope, LongMemoryRecord, LongMemorySource, LongMemoryTombstone, LongMemoryReference,
+} from '@graycode/contracts';
 import { invalid } from '../../errors';
 import { MemoryMutationStore } from './mutations';
 
 /** 交换归档保存正文与依赖，不携带供应方凭据、运行句柄或可重建向量。 */
 export class MemoryArchive {
   constructor(private readonly store: MemoryMutationStore) {}
+  private unavailableRecords(records: LongMemoryRecord[], scopeFor: (id: string) => LongMemoryScope): Set<LongMemoryRecord> {
+    const checked = new Set<string>();
+    const unavailable = new Set<string>();
+    const pending: string[] = [];
+    const dependents = new Map<string, Set<string>>();
+    const identities = new Map<LongMemoryRecord, string>();
+    const identity = (scopeId: string, kind: LongMemoryReference['kind'], id: string): string => {
+      const key = JSON.stringify([scopeId, kind, id]);
+      if (!checked.has(key)) {
+        checked.add(key);
+        if (this.store.tombstoned(scopeId, kind, id)) { unavailable.add(key); pending.push(key); }
+      }
+      return key;
+    };
+    for (const record of records) {
+      const scope = scopeFor(record.scopeId);
+      const key = identity(scope.id, 'record', record.id);
+      identities.set(record, key);
+      for (const ref of record.dependencies) {
+        const parent = identity(scope.id, ref.kind, ref.id);
+        let children = dependents.get(parent);
+        if (!children) { children = new Set(); dependents.set(parent, children); }
+        children.add(key);
+      }
+    }
+    // 删除按身份影响全部修订；先传播再写入，不能先恢复旧版再跳过无效的新版本。
+    // 替代关系不属于来源依赖，删除旧事实不能反向删除来源独立的新事实。
+    for (let index = 0; index < pending.length; index++) {
+      for (const child of dependents.get(pending[index]) ?? []) {
+        if (unavailable.has(child)) continue;
+        unavailable.add(child);
+        pending.push(child);
+      }
+    }
+    const result = new Set<LongMemoryRecord>();
+    for (const [record, key] of identities) if (unavailable.has(key)) result.add(record);
+    return result;
+  }
   export(scopes: LongMemoryScope[]): LongMemoryArchive {
     if(!scopes.length||scopes.some(scope=>scope.actorId!==scopes[0].actorId))invalid('只能导出同一账号的记忆。');
     const states=scopes.map(scope=>this.store.state(scope));
@@ -47,15 +87,20 @@ export class MemoryArchive {
         if(existing){if(JSON.stringify(JSON.parse(existing.payload))!==JSON.stringify(source))invalid('归档来源与现有相同修订内容冲突。');result.skipped++;continue;}
         this.store.write({scope,sources:[{...source,expectedVersion:source.version-1}]},true);result.sources++;
       }
-      let pending=[...archive.records].sort((a,b)=>a.version-b.version),progress=true;
+      const unavailable = this.unavailableRecords(archive.records, scopeFor);
+      let pending = archive.records.filter(record => {
+        if (!unavailable.has(record)) return true;
+        result.skipped++;
+        return false;
+      }).sort((a, b) => a.version - b.version);
+      let progress = true;
       while(pending.length&&progress){
         progress=false;const next:LongMemoryRecord[]=[];
         for(const record of pending){
           const scope=scopeFor(record.scopeId);
-          if(this.store.tombstoned(scope.id,'record',record.id)||record.dependencies.some(ref=>this.store.tombstoned(scope.id,ref.kind,ref.id))){result.skipped++;progress=true;continue;}
           const existing=this.store.record(scope.id,record.id,record.version);
           if(existing){if(JSON.stringify(JSON.parse(existing.payload))!==JSON.stringify(record))invalid('归档记忆与现有相同修订内容冲突。');result.skipped++;progress=true;continue;}
-          if(record.dependencies.some(ref=>!this.store.referenceAvailable(scope.id,ref,false))||record.supersedes.some(id=>!this.store.record(scope.id,id))
+          if(record.dependencies.some(ref=>!this.store.referenceAvailable(scope.id,ref,false))
             ||(this.store.record(scope.id,record.id)?.version??0)!==record.version-1){next.push(record);continue;}
           this.store.write({scope,records:[{...record,expectedVersion:record.version-1}]},true);result.records++;progress=true;
         }

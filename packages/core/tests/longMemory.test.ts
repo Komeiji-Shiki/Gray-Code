@@ -203,6 +203,93 @@ describe('统一长期记忆的实际存储 worker',()=>{
     } finally { await other.cleanup(); }
   });
 
+  test.each([false, true])('目标删除状态沿归档多层依赖传播，独立替代记录仍可再次交换，逆序=%s', async reverse => {
+    await f.store.longMemoryWrite({ scope,
+      sources: [source('removed-source', '旧住址来源。'), source('kept-source', '当前住址是苏州。')],
+      records: [
+        record('root', '旧住址。', 'removed-source'),
+        record('middle', '旧住址摘要。', '', { kind: 'summary', dependencies: [{ kind: 'record', id: 'root', version: 1 }] }),
+        record('tail', '旧住址的多层摘要。', '', { kind: 'summary', dependencies: [{ kind: 'record', id: 'middle', version: 1 }] }),
+        record('kept', '当前住址是苏州。', 'kept-source', { supersedes: ['middle'] }),
+      ],
+    });
+    const archive = await f.store.longMemoryExport([scope]);
+    if (reverse) archive.records.reverse();
+    const other = await fixture();
+    const third = await fixture();
+    try {
+      await other.store.longMemoryWrite({ scope, remove: [{ kind: 'source', id: 'removed-source', action: 'delete' }] });
+      await expect(other.store.longMemoryRestore({ actorId: 'owner', archive }))
+        .resolves.toEqual({ sources: 1, records: 1, skipped: 4, tombstones: 0 });
+      const exchanged = await other.store.longMemoryExport([scope]);
+      expect(exchanged.records.map(item => [item.id, item.supersedes])).toEqual([['kept', ['middle']]]);
+      expect(exchanged.tombstones.map(item => [item.kind, item.id])).toEqual([['source', 'removed-source']]);
+      await third.store.longMemoryRestore({ actorId: 'owner', archive: exchanged });
+      expect((await third.store.longMemoryExport([scope])).records).toEqual(exchanged.records);
+      expect((await third.store.longMemoryRecall(query())).hits.map(hit => hit.record.id)).toEqual(['kept']);
+    } finally { await other.cleanup(); await third.cleanup(); }
+  });
+
+  test.each(['delete', 'retract'] as const)('旧事实被%s后，合法的新事实及其替代关系可从自身归档恢复', async action => {
+    await f.store.longMemoryWrite({ scope,
+      sources: [source('old-source', '旧住址是上海。'), source('new-source', '当前住址是杭州。')],
+      records: [record('old', '旧住址是上海。', 'old-source'), record('new', '当前住址是杭州。', 'new-source', { supersedes: ['old'] })],
+    });
+    await f.store.longMemoryWrite({ scope, remove: [{ kind: 'record', id: 'old', action }] });
+    const archive = await f.store.longMemoryExport([scope]);
+    expect(archive.records.map(item => item.id)).toEqual(['new']);
+    const other = await fixture();
+    try {
+      await other.store.longMemoryRestore({ actorId: 'owner', archive });
+      expect((await other.store.longMemoryExport([scope])).records).toEqual(archive.records);
+      expect((await other.store.longMemoryRecall(query())).hits.map(hit => hit.record.id)).toEqual(['new']);
+    } finally { await other.cleanup(); }
+  });
+
+  test.each([false, true])('后续修订引用已删除来源时跳过同身份全部归档修订，保留目标原记录=%s', async existing => {
+    const original = record('city', '当前住址是上海。', 'live-source');
+    await f.store.longMemoryWrite({ scope,
+      sources: [source('live-source', '当前住址是上海。'), source('removed-source', '杭州住址来源。')], records: [original],
+    });
+    await f.store.longMemoryWrite({ scope, records: [record('city', '当前住址是杭州。', 'removed-source', {
+      expectedVersion: 1, recordedAt: time('2026-08-01'), validFrom: time('2026-08-01'),
+    })] });
+    const archive = await f.store.longMemoryExport([scope]);
+    const other = await fixture();
+    try {
+      if (existing) await other.store.longMemoryWrite({ scope, sources: [source('live-source', '当前住址是上海。')], records: [original] });
+      await other.store.longMemoryWrite({ scope, remove: [{ kind: 'source', id: 'removed-source', action: 'delete' }] });
+      await expect(other.store.longMemoryRestore({ actorId: 'owner', archive }))
+        .resolves.toEqual({ sources: existing ? 0 : 1, records: 0, skipped: existing ? 4 : 3, tombstones: 0 });
+      expect((await other.store.longMemoryExport([scope])).records.map(item => [item.id, item.version]))
+        .toEqual(existing ? [['city', 1]] : []);
+    } finally { await other.cleanup(); }
+  });
+
+  test.each(['替代自身', '缺失来源', '修订断档'])('历史替代关系不放宽真实依赖和修订约束：%s，失败仍整体回滚', async mutation => {
+    await add();
+    const archive = await f.store.longMemoryExport([scope]);
+    if (mutation === '替代自身') archive.records[0].supersedes = [archive.records[0].id];
+    else if (mutation === '缺失来源') archive.records[0].dependencies = [{ kind: 'source', id: 'missing', version: 1 }];
+    else archive.records[0].version = 2;
+    const other = await fixture();
+    try {
+      await other.store.longMemoryWrite({ scope, sources: [source('existing-source', '已有独立事实。')],
+        records: [record('existing', '已有独立事实。', 'existing-source')] });
+      await expect(other.store.longMemoryRestore({ actorId: 'owner', archive })).rejects.toMatchObject({ code: 'INVALID_INPUT' });
+      const after = await other.store.longMemoryExport([scope]);
+      expect(after.sources.map(item => item.id)).toEqual(['existing-source']);
+      expect(after.records.map(item => item.id)).toEqual(['existing']);
+    } finally { await other.cleanup(); }
+  });
+
+  test('正常新写入仍拒绝不存在的替代对象', async () => {
+    await add();
+    await expect(f.store.longMemoryWrite({ scope, records: [record('replacement', '新的住址。', 'city-source', { supersedes: ['missing'] })] }))
+      .rejects.toMatchObject({ code: 'INVALID_INPUT' });
+    expect((await f.store.longMemoryExport([scope])).records.map(item => item.id)).toEqual(['city']);
+  });
+
   test('仅引用第二版来源的交换归档可在空存储中恢复完整版本链', async () => {
     await f.store.longMemoryWrite({ scope, sources: [source('city-source', '尚未提取的住址原文。')] });
     await f.store.longMemoryWrite({ scope, sources: [

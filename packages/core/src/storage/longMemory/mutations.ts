@@ -130,7 +130,8 @@ export class MemoryMutationStore {
     if (!Array.isArray(input.supersedes) || input.supersedes.length > 128) invalid('替代关系数量无效。');
     for (const id of input.supersedes) {
       assertIdentifier(id);
-      if (id === input.id || !this.record(scope.id, id)) invalid('被替代记忆必须存在于同一范围。');
+      // 删除后仍保留替代关系；历史交换不能要求旧对象还在，真正的来源依赖仍由下方严格验证。
+      if (id === input.id || !historical && !this.record(scope.id, id)) invalid('被替代记忆必须存在于同一范围。');
     }
     const value: LongMemoryRecord = { id: input.id, version: input.expectedVersion + 1, scopeId: scope.id,
       kind: input.kind, origin: input.origin, confidence: input.confidence, subject: input.subject,
