@@ -3,9 +3,12 @@ import { afterEach, beforeEach, expect, test, vi } from 'vitest';
 import App from '../../../../apps/client/src/App.vue';
 import { state } from '../../../../apps/client/src/state';
 import { CHAT_INITIALIZATION_MESSAGE } from '../../../../shared/chatInitialization';
+import { SHELL_SHORTCUT_MESSAGE } from '../../../../shared/shellShortcutBridge';
+import WorkspaceSelector from '../../../../apps/client/src/components/WorkspaceSelector.vue';
 
 const mocks = vi.hoisted(() => ({ call: vi.fn(), initialize: vi.fn(), report: vi.fn(), listeners: new Set<(event: any) => void>() }));
 vi.mock('../../../../apps/client/src/api', () => ({ call: mocks.call, rpc: mocks.call,
+  uiRequest: (type: string, data?: unknown) => mocks.call('ui.request', { type, data: data ?? {} }),
   subscribe: (listener: (event: any) => void) => { mocks.listeners.add(listener); return () => mocks.listeners.delete(listener); } }));
 vi.mock('../../../../apps/client/src/state', async () => {
   const { reactive, computed } = await import('vue');
@@ -33,6 +36,86 @@ beforeEach(() => {
 });
 afterEach(() => { wrappers.splice(0).forEach(wrapper => wrapper.unmount()); mocks.listeners.clear(); vi.useRealTimers(); document.body.innerHTML = ''; });
 function shell() { const wrapper = shallowMount(App, { attachTo: document.body }); wrappers.push(wrapper); return wrapper; }
+
+test.each(['外壳快捷键', '聊天内快捷键', '宿主快捷键', '项目选择', '添加项目', '模式选择'])(
+  '%s 在聊天订阅就绪后启用，重载期间重新等待', async action => {
+    mocks.call.mockImplementation(async (method: string, params?: { type?: string }) => {
+      if (method === 'ui.request' && params?.type === 'conversation.navigation') {
+        return { items: [{ id: 'project-conversation', workspaceId: 'project', updatedAt: 1 }], pinned: [] };
+      }
+      if (method === 'desktop.chooseWorkspace') return null;
+      return {};
+    });
+    const wrapper = shell(); await flushPromises();
+    const attempt = async () => {
+      if (action === '外壳快捷键') window.dispatchEvent(new KeyboardEvent('keydown', { key: 'n', ctrlKey: true }));
+      else if (action === '聊天内快捷键') window.dispatchEvent(new MessageEvent('message', {
+        source: wrapper.get<HTMLIFrameElement>('iframe.product-chat').element.contentWindow!, origin: window.location.origin,
+        data: { type: SHELL_SHORTCUT_MESSAGE, command: 'newConversation' },
+      }));
+      else if (action === '宿主快捷键') {
+        for (const listener of mocks.listeners) listener({ type: 'desktop.shortcut', command: 'newConversation' });
+      } else if (action === '项目选择') wrapper.getComponent(WorkspaceSelector).vm.$emit('update:modelValue', 'project');
+      else if (action === '添加项目') await wrapper.get('.workspace-add').trigger('click');
+      else {
+        await wrapper.get('.mode-trigger').trigger('click');
+        const choice = wrapper.find('.mode-menu [role="menuitemradio"]');
+        if (choice.exists()) await choice.trigger('click');
+      }
+      await flushPromises();
+    };
+    for (let round = 0; round < 2; round++) {
+      mocks.call.mockClear();
+      await attempt();
+      expect(mocks.call).not.toHaveBeenCalled();
+      for (const listener of mocks.listeners) listener({ type: 'ui.ready' });
+      await flushPromises();
+      await attempt();
+      if (action === '项目选择') {
+        expect(mocks.call).toHaveBeenCalledWith('ui.command', {
+          command: 'platform.openModeConversation', data: { conversationId: 'project-conversation' },
+        });
+      } else if (action === '添加项目') expect(mocks.call).toHaveBeenCalledWith('desktop.chooseWorkspace');
+      else if (action === '模式选择') expect(mocks.call).toHaveBeenCalledWith('ui.request', expect.objectContaining({ type: 'ui.mode.select' }));
+      else expect(mocks.call).toHaveBeenCalledWith('ui.command', { command: 'newChat', data: undefined });
+      if (round === 0) {
+        await wrapper.get('iframe.product-chat').trigger('error');
+        await wrapper.get('.notice-banner[role="alert"] button').trigger('click');
+        await flushPromises();
+      }
+    }
+  },
+);
+
+test.each(['宿主目录事件', '已受理的目录选择'])('%s 继续完成项目导航，不再经过新操作门禁', async action => {
+  let chooseWorkspace!: (value: { directory: string; name: string }) => void;
+  const selection = new Promise<{ directory: string; name: string }>(resolve => { chooseWorkspace = resolve; });
+  mocks.call.mockImplementation(async (method: string, params?: { type?: string }) => {
+    if (method === 'desktop.chooseWorkspace') return selection;
+    if (method === 'workspaces.add') return { id: 'project' };
+    if (method === 'ui.request' && params?.type === 'conversation.navigation') {
+      return { items: [{ id: 'project-conversation', workspaceId: 'project', updatedAt: 1 }], pinned: [] };
+    }
+    return {};
+  });
+  const wrapper = shell(); await flushPromises();
+  mocks.call.mockClear();
+  if (action === '宿主目录事件') {
+    for (const listener of mocks.listeners) listener({ type: 'workspace.selected', source: 'desktop', workspaceId: 'project' });
+  } else {
+    for (const listener of mocks.listeners) listener({ type: 'ui.ready' });
+    await flushPromises();
+    await wrapper.get('.workspace-add').trigger('click');
+    expect(mocks.call).toHaveBeenCalledWith('desktop.chooseWorkspace');
+    await wrapper.get('iframe.product-chat').trigger('error');
+    await wrapper.get('.notice-banner[role="alert"] button').trigger('click');
+    chooseWorkspace({ directory: 'selected-project-directory', name: '项目' });
+  }
+  await flushPromises();
+  expect(mocks.call).toHaveBeenCalledWith('ui.command', {
+    command: 'platform.openModeConversation', data: { conversationId: 'project-conversation' },
+  });
+});
 
 test('启动读取失败显示原因与重试入口，重试成功进入工作台且不叠加宿主订阅', async () => {
   mocks.initialize.mockRejectedValueOnce(new Error('host unavailable'));
@@ -86,6 +169,8 @@ test('iframe加载失败可立即恢复，卸载后不处理迟到的聊天或�
 
 test('模式菜单打开聚焦当前模式，方向键与Tab循环，Escape返回触发按钮', async () => {
   const wrapper = shell(); await flushPromises();
+  for (const listener of mocks.listeners) listener({ type: 'ui.ready' });
+  await flushPromises();
   const trigger = wrapper.get('.mode-trigger'); await trigger.trigger('click'); await flushPromises();
   const menu = wrapper.get('.mode-menu'), items = menu.findAll('button');
   expect(document.activeElement).toBe(items[1].element);

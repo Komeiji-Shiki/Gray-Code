@@ -9,7 +9,7 @@ import { connectDebugging, debugControl, debugState } from './debugging';
 import { useConversationNavigation } from './conversationNavigation';
 import { shellText as t, setShellLanguage } from './i18n';
 import { applyAppearanceVariables } from '../../../shared/appearanceTokens';
-const { navigate, newConversation, selectWorkspace } = useConversationNavigation(finishNavigation);
+const { navigate, newConversation, selectWorkspace: navigateToWorkspace } = useConversationNavigation(finishNavigation);
 import { readWorkspacePanelMessage } from '../../../shared/workspacePanelNavigation';
 import { useFrameValue } from './useFrameValue';
 const Workbench = defineAsyncComponent(() => import('./components/Workbench.vue'));
@@ -119,6 +119,11 @@ function closeAutomations() {
   companionGreeting.value = undefined;
 }
 const chatReady = ref(false);
+const chatNavigationReady = computed(() => state.ready && chatReady.value);
+async function selectWorkspace(workspaceId: string) {
+  if (!chatNavigationReady.value) return;
+  await navigateToWorkspace(workspaceId);
+}
 const chatInitialized = ref(false);
 watch([() => state.mode, chatInitialized], ([mode, initialized]) => {
   if (!initialized) return;
@@ -186,6 +191,7 @@ const navigationCollapsed = computed({
   },
 });
 const enabledShortcuts = computed(() => !state.ready ? [] : Object.entries(shellShortcuts)
+  .filter(([command]) => command !== 'newConversation' || chatNavigationReady.value)
   .filter(([command]) => !command.startsWith('debug.') || !!debugState.activeId)
   .map(([command, binding]) => ({ command, ...binding })));
 function sendShellShortcuts() {
@@ -193,7 +199,7 @@ function sendShellShortcuts() {
     window.location.origin === 'null' ? '*' : window.location.origin);
 }
 function executeShellShortcut(command: string) {
-  if (!state.ready) return;
+  if (!state.ready || command === 'newConversation' && !chatNavigationReady.value) return;
   if (command === 'newConversation') void guard(() => newConversation());
   else if (command === 'toggleSidebar') navigationCollapsed.value = !navigationCollapsed.value;
   else if (command === 'projectSearch') state.workbenchPanelRequest = { id: 'search' };
@@ -265,15 +271,15 @@ const resizing = ref(false);
 const container = ref<HTMLElement>();
 const choosingWorkspace = ref(false);
 async function addWorkspace() {
+  if (!chatNavigationReady.value || choosingWorkspace.value) return;
   const intent = navigate();
-  if (choosingWorkspace.value) return;
   choosingWorkspace.value = true;
   try {
     const selected = await call<{ directory: string; name: string } | null>('desktop.chooseWorkspace');
     if (!selected) return;
     const workspace = await call<{ id: string }>('workspaces.add', selected);
     await loadSettings();
-    if (intent.current()) await selectWorkspace(workspace.id);
+    if (intent.current()) await navigateToWorkspace(workspace.id);
   } finally {
     choosingWorkspace.value = false;
   }
@@ -298,7 +304,7 @@ const modes = computed(
     ] as const,
 );
 async function selectMode(mode: 'chat' | 'code' | 'character') {
-  if (choosingMode.value) return;
+  if (!chatNavigationReady.value || choosingMode.value) return;
   choosingMode.value = true;
   const intent = navigate({ workspaceId: state.workspaceId, tabId: state.conversationId ?? undefined });
   try {
@@ -435,7 +441,7 @@ onMounted(() => {
     if (event.type === 'desktop.shortcut' && enabledShortcuts.value.some(binding => binding.command === event.command))
       executeShellShortcut(event.command);
     if (event.type === 'workspace.selected' && event.source === 'desktop')
-      void guard(() => selectWorkspace(event.workspaceId));
+      void guard(() => navigateToWorkspace(event.workspaceId));
     if (event.type === 'transport.resumed' && !state.ready && !booting.value) void bootstrap();
     if (event.type === 'pets.open') openCompanionSettings('pet');
     if (event.type === 'screenSense.open') openCompanionSettings('screen');
@@ -488,6 +494,7 @@ onUnmounted(() => {
         <button
           ref="modeTrigger"
           class="mode-trigger"
+          :disabled="!chatNavigationReady"
           :aria-expanded="modeMenuOpen"
           aria-haspopup="menu"
           @click="
@@ -504,7 +511,7 @@ onUnmounted(() => {
             v-for="mode in modes"
             :key="mode.id"
             role="menuitemradio"
-            :disabled="choosingMode"
+            :disabled="!chatNavigationReady || choosingMode"
             :aria-checked="state.mode === mode.id"
             @click="guard(() => selectMode(mode.id))"
           >
@@ -519,7 +526,7 @@ onUnmounted(() => {
       <nav v-if="!isWeb && !compactViewport" class="app-menu" :aria-label="t('uiAppApplicationMenu')">
         <button v-for="menu in appMenus" :key="menu.id" @click="guard(() => call('desktop.menu', { id: menu.id }))">{{ t(menu.title) }}</button>
       </nav>
-      <div v-if="state.mode === 'code' || !state.chatFocused" class="titlebar-center">
+      <div v-if="state.mode === 'code' || !state.chatFocused" class="titlebar-center" :inert="!chatNavigationReady || undefined">
         <span class="subtle">{{ t('workspace') }}</span>
         <WorkspaceSelector
           :model-value="state.workspaceId"
@@ -529,7 +536,7 @@ onUnmounted(() => {
         />
         <button
           class="quiet-button workspace-add"
-          :disabled="choosingWorkspace"
+          :disabled="!chatNavigationReady || choosingWorkspace"
           :title="isWeb ? t('chooseFolder') : t('addWorkspace')"
           :aria-label="isWeb ? t('chooseFolder') : t('addWorkspace')"
           @click="guard(addWorkspace)"
@@ -560,7 +567,7 @@ onUnmounted(() => {
           <template v-if="!isWeb">
             <button v-for="menu in appMenus" :key="menu.id" @click="guard(() => call('desktop.menu', { id: menu.id }))">{{ t(menu.title) }}</button>
           </template>
-          <button :disabled="choosingWorkspace" @click="guard(addWorkspace)">{{ isWeb ? t('chooseFolder') : t('addWorkspace') }}</button>
+          <button :disabled="!chatNavigationReady || choosingWorkspace" @click="guard(addWorkspace)">{{ isWeb ? t('chooseFolder') : t('addWorkspace') }}</button>
           <button @click="automationsOpen = true">{{ t('uiConversationSidebarAutomations') }}</button>
           <button @click="openLibrary()">{{ t('library') }}</button>
           <button v-if="state.mode === 'chat'" @click="openCompanionSettings()">{{ t('uiAppCompanionSettings') }}</button>
@@ -646,8 +653,8 @@ onUnmounted(() => {
         v-show="!state.settingsOpen && (!compactViewport || mobileNavigationOpen)"
         class="conversation-navigation"
         :style="{ '--gc-sidebar-width': visibleSidebarWidth + 'px' }"
-        :inert="!chatReady || undefined"
-        :aria-busy="!chatReady"
+        :inert="!chatNavigationReady || undefined"
+        :aria-busy="!chatNavigationReady"
       >
         <ConversationSidebar
           v-model:collapsed="navigationCollapsed"
