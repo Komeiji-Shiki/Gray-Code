@@ -233,11 +233,30 @@ test('重连完成后旧打开响应不登记文档，再次明确打开可读�
   for (const listener of mocks.listeners) listener({ type: 'transport.resumed', snapshotRequired: true });
   slow.resolve(document('reconnected.ts'));
   await flushPromises();
+  // 作废回执仍需释放核心登记，否则再次打开会命中这份旧正文。
+  expect(mocks.call).toHaveBeenCalledWith('documents.close', { workspaceId: 'project', path: 'reconnected.ts', discard: true });
   expect(view.tabs().props('tabs')).not.toEqual(expect.arrayContaining([expect.objectContaining({ id: 'file:project:reconnected.ts' })]));
   view.open('reconnected.ts');
   await flushPromises();
   expect(view.wrapper.findComponent(MobileCodeEditor).props('value')).toBe('重连后的正文');
   expect(mocks.report).not.toHaveBeenCalled();
+});
+
+test('作废的打开不会关闭已经登记的同一文档', async () => {
+  const slow = deferred<ReturnType<typeof document>>();
+  let opens = 0;
+  mocks.call.mockImplementation(async (method, params) => method === 'documents.open'
+    ? opens++ === 0 ? slow.promise : document(params.path) : undefined);
+  const view = await workbench(true);
+  view.open('ghost.ts');
+  for (const listener of mocks.listeners) listener({ type: 'transport.disconnected' });
+  for (const listener of mocks.listeners) listener({ type: 'transport.resumed', snapshotRequired: true });
+  view.open('ghost.ts');
+  await flushPromises();
+  slow.resolve(document('ghost.ts'));
+  await flushPromises();
+  expect(mocks.call).not.toHaveBeenCalledWith('documents.close', expect.objectContaining({ path: 'ghost.ts' }));
+  expect(view.tabs().props('tabs')).toEqual(expect.arrayContaining([expect.objectContaining({ id: 'file:project:ghost.ts' })]));
 });
 
 test('打开响应已包含更新版本时，期间缓存的重置不会倒退正文', async () => {

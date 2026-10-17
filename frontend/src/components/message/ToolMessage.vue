@@ -407,9 +407,9 @@ async function sendToolConfirmation(
   let startedConfirmationRound = false
   try {
     const currentConversationId = chatStore.currentConversationId
-    const currentConfig = chatStore.currentConfig
-    // 本回合一次性渠道覆盖（Plan 等场景）优先，其次才是全局渠道
-    const confirmationConfigId = chatStore.pendingConfigIdOverride || currentConfig?.id || ''
+    // 本回合一次性渠道覆盖（Plan 等场景）优先。切换标签后配置详情读取期间 currentConfig 会暂时清空，
+    // configId 已在快照恢复时同步更新，审批必须使用它，不能把“详情尚未返回”当成未选择渠道。
+    const confirmationConfigId = chatStore.pendingConfigIdOverride || chatStore.configId || ''
 
     if (!currentConversationId || !confirmationConfigId) {
       throw new Error(t(!currentConversationId

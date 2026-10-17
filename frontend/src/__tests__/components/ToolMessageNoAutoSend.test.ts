@@ -64,6 +64,7 @@ function createChatStore() {
     clearInputValue: vi.fn(() => { inputValue.value = '' }),
     getToolResponseById: vi.fn(() => undefined),
     currentConversationId: 'conv-1',
+    configId: 'cfg-1',
     currentConfig: { id: 'cfg-1' },
     pendingConfigIdOverride: null,
     pendingModelOverride: null,
@@ -123,6 +124,17 @@ describe('ToolMessage 工具确认/拒绝不消费输入栏文字', () => {
     await wrapper.find('button.reject-btn').trigger('click')
     await flushPromises()
   }
+
+  test('切换标签后配置详情尚未返回时，审批仍使用快照恢复的渠道', async () => {
+    // switchTabWrapped 会同步恢复 configId，但 currentConfig 要等 config.getConfig 返回才恢复。
+    runtime.chatStore.configId = 'cfg-2'
+    runtime.chatStore.currentConfig = null
+    await wrapper.setProps({ tools: [{ ...makeTool(), approvalId: 'approval-2' }] as any })
+    await clickConfirm()
+    const confirmation = runtime.sendToExtension.mock.calls.find(([channel]) => channel === 'toolConfirmation')
+    expect(confirmation?.[1]).toMatchObject({ configId: 'cfg-2' })
+    expect(runtime.chatStore.beginToolConfirmationRound).toHaveBeenCalledWith(expect.objectContaining({ configId: 'cfg-2' }))
+  })
 
   test('具体选项保留请求身份，连续请求不被前一次的等待和失败覆盖', async () => {
     const choices = [{ id: 'once', label: '仅本次', kind: 'allow_once' }, { id: 'always', label: '始终', kind: 'allow_always' }]

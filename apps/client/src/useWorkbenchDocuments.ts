@@ -18,7 +18,7 @@ interface WorkbenchDocumentOptions {
   saveFailed(document: DocumentState): void;
 }
 interface PendingDocumentOpen {
-  workspaceId: string; valid: boolean; resets: Record<string, unknown>[]; changedPaths: Set<string>;
+  workspaceId: string; path: string; valid: boolean; resets: Record<string, unknown>[]; changedPaths: Set<string>;
   closedKeys: Set<string>;
 }
 type DocumentResetResult =
@@ -38,6 +38,8 @@ export function useWorkbenchDocuments(options: WorkbenchDocumentOptions) {
   const documentConflicts = new WeakSet<DocumentState>();
   const closingDocuments = new Set<DocumentState>();
   const pendingOpens = new Set<PendingDocumentOpen>();
+  // 作废的打开仍会在核心登记文档；记录清理 Promise，下一次打开同一文档前先等它结束。
+  const discardedOpens = new Map<string, Promise<void>>();
   let connected = true;
   let focusedDocument: DocumentState | undefined;
   const recoveryConflict = (doc: DocumentState) => new Error(`${doc.path}: ${t('documentRecoveryConflict')}`);
@@ -150,14 +152,31 @@ export function useWorkbenchDocuments(options: WorkbenchDocumentOptions) {
     });
   }
 
+  /** 打开回执作废时释放核心登记；并发打开或本地已有同一文档时不能关闭。 */
+  function discardOpen(document: DocumentState, pending: PendingDocumentOpen): void {
+    if (isDisposed()) return;
+    const matches = (item: DocumentState) => item.workspaceId === pending.workspaceId
+      && (item.path === document.path || item.path === pending.path);
+    if (documents.some(matches)) return;
+    if ([...pendingOpens].some(item => item !== pending && item.workspaceId === pending.workspaceId && item.path === pending.path)) return;
+    const identity = key(document);
+    // 关闭失败时核心会在客户端释放时清理，不能让失败的 Promise 阻塞后续打开。
+    const cleanup = call('documents.close', { workspaceId: document.workspaceId, path: document.path, discard: true })
+      .then(() => undefined, () => undefined);
+    discardedOpens.set(identity, cleanup);
+    void cleanup.then(() => { if (discardedOpens.get(identity) === cleanup) discardedOpens.delete(identity); });
+  }
+
   async function open(path: string, workspaceId: string): Promise<DocumentState | undefined> {
+    const discarded = discardedOpens.get(workbenchDocumentKey({ workspaceId, path }));
+    if (discarded) await discarded;
     const existing = documents.find(document => document.workspaceId === workspaceId && document.path === path);
     if (existing) return existing;
-    const pending: PendingDocumentOpen = { workspaceId, valid: true, resets: [], changedPaths: new Set(), closedKeys: new Set() };
+    const pending: PendingDocumentOpen = { workspaceId, path, valid: true, resets: [], changedPaths: new Set(), closedKeys: new Set() };
     pendingOpens.add(pending);
     try {
       const opened = await call<DocumentState>('documents.open', { workspaceId, path });
-      if (isDisposed() || !connected || !pending.valid) return;
+      if (isDisposed() || !connected || !pending.valid) { discardOpen(opened, pending); return; }
       let current = opened;
       let synchronized = { text: opened.text, version: opened.version };
       let resendText: string | undefined;

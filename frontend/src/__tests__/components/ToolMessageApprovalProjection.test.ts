@@ -53,7 +53,7 @@ function createApproval(fromHistory = false, choices?: ToolUsage['approvalChoice
         messageTools: message.tools!, functionCallOrdinal }))
   }
   runtime.store = {
-    currentConversationId: 'conversation', currentConfig: { id: 'config' },
+    currentConversationId: 'conversation', configId: 'config', currentConfig: { id: 'config' },
     activeStreamId: 'live-stream', isGenerating: true, isWaitingForResponse: true,
     currentPromptModeId: 'code', getToolResponseById: vi.fn(() => undefined),
     beginToolConfirmationRound: vi.fn(), abortToolConfirmationRound: vi.fn()
@@ -129,7 +129,7 @@ describe('tool approval through the real render projection', () => {
     expect(wrapper.find('.status-error').exists()).toBe(true)
   })
 
-  test.each(['currentConversationId', 'currentConfig'])('missing %s gives a visible error without submitting or rebinding', async field => {
+  test.each(['currentConversationId', 'configId'])('missing %s gives a visible error without submitting or rebinding', async field => {
     const { project } = createApproval()
     runtime.store[field] = null
     wrapper = mount(ToolMessage, { props: { tools: project() } })
