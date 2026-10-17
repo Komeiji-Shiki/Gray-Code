@@ -36,7 +36,21 @@ beforeEach(() => {
   Object.defineProperty(window, 'matchMedia', { configurable: true, value: () => ({ matches: false, addEventListener() {}, removeEventListener() {} }) });
 });
 afterEach(() => { wrappers.splice(0).forEach(wrapper => wrapper.unmount()); mocks.listeners.clear(); vi.useRealTimers(); document.body.innerHTML = ''; });
-function shell() { const wrapper = shallowMount(App, { attachTo: document.body }); wrappers.push(wrapper); return wrapper; }
+function shell() {
+  const wrapper = shallowMount(App, {
+    attachTo: document.body,
+    // 默认浅挂载仍会启动异步 loader；显式替身避免无关面板导入越过测试的模块清理边界。
+    global: { stubs: {
+      Workbench: { template: '<div />' },
+      ResourceLibrary: { template: '<div />' },
+      CharacterSetup: { template: '<div />' },
+      AutomationsPanel: { template: '<div />' },
+      CompanionSetup: { template: '<div />' },
+    } },
+  });
+  wrappers.push(wrapper);
+  return wrapper;
+}
 function preparedView() { return { accepted: true, viewId: `main-view-${++mocks.viewSequence}` }; }
 function currentView(wrapper: ReturnType<typeof shallowMount>) {
   const viewId = new URL(wrapper.get<HTMLIFrameElement>('iframe.product-chat').element.src).searchParams.get('viewId');
