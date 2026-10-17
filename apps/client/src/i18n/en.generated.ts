@@ -317,6 +317,7 @@ export default {
   "nativeViewMenu": "View",
   "uiApprovalButtonsAllowExecution": "Allow execution",
   "uiWorkbenchEditorLoadingReplacement": "The editor has not finished loading. Retry the replacement.",
+  "uiWorkbenchEditorTargetNotText": "The target file cannot be opened as text.",
   "uiWorkbenchEditorChangedReplacement": "Edited content has changed. Search again before replacing.",
   "uiWorkbenchSubtasks": "Subtasks",
   "uiWorkbenchFileChangedKeepInput": "The file has changed. Your new input is kept. Save it as another file or copy it to preserve it.",

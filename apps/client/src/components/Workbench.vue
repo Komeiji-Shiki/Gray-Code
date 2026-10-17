@@ -182,7 +182,7 @@ async function readyModel(doc: DocumentState) {
   editorRegistry.value ??= new module.WorkbenchDocumentModels({ change, flush: flushDocument,
     open: async (path, workspaceId, range, focus) => {
       const target = await open(path, workspaceId, range, focus);
-      if (!target) throw new Error(t('uiWorkbenchEditorLoadingReplacement'));
+      if (!target) throw new Error(t('uiWorkbenchEditorTargetNotText'));
       // 跨文件编辑会后台打开目标，不能依赖可见文档的 watcher 创建模型与语言绑定。
       await readyModel(target);
     },

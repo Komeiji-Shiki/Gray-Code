@@ -317,6 +317,7 @@ export default {
   "nativeViewMenu": "视图",
   "uiApprovalButtonsAllowExecution": "允许执行",
   "uiWorkbenchEditorLoadingReplacement": "编辑器尚未完成加载，请重试替换。",
+  "uiWorkbenchEditorTargetNotText": "目标文件不能作为文本编辑打开。",
   "uiWorkbenchEditorChangedReplacement": "编辑内容已变化，请重新搜索后替换。",
   "uiWorkbenchSubtasks": "子任务",
   "uiWorkbenchFileChangedKeepInput": "文件已变化，新的输入仍保留，请另存或复制保存。",

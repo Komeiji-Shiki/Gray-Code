@@ -24,16 +24,18 @@ const AsyncDialogLoading = defineComponent({
   render: () => h('div', { class: 'async-dialog-loading', role: 'status' },
     [h('i', { class: 'codicon codicon-loading codicon-modifier-spin', 'aria-hidden': 'true' })]),
 })
-const asyncDialogOptions = {
-  loadingComponent: AsyncDialogLoading,
-  delay: 120,
-  onError(error: Error, _retry: () => void, fail: () => void) {
-    console.error('[InputArea] 对话框模块加载失败：', error)
-    fail()
-  },
+// 加载失败时复位入口状态，下一次点击会重新挂载并重试 import。
+function asyncDialogOptions(reset: () => void) {
+  return {
+    loadingComponent: AsyncDialogLoading,
+    delay: 120,
+    onError(error: Error, _retry: () => void, fail: () => void) {
+      console.error('[InputArea] 对话框模块加载失败：', error)
+      fail()
+      reset()
+    },
+  }
 }
-const ContextDetailDialog = defineAsyncComponent({ ...asyncDialogOptions, loader: () => import('./ContextDetailDialog.vue') })
-const PromptPreviewDialog = defineAsyncComponent({ ...asyncDialogOptions, loader: () => import('./PromptPreviewDialog.vue') })
 import type { ChannelOption, PromptMode } from './types'
 
 import { IconButton, Tooltip } from '../common'
@@ -700,6 +702,14 @@ const promptPreviewMounted = ref(false)
 // 第一次打开才加载模块，之后继续保留对话框自己的视图选择和读取生命周期。
 watch(showContextDetail, open => { if (open) contextDetailMounted.value = true }, { immediate: true })
 watch(showPromptPreview, open => { if (open) promptPreviewMounted.value = true }, { immediate: true })
+const ContextDetailDialog = defineAsyncComponent({ ...asyncDialogOptions(() => {
+  contextDetailMounted.value = false
+  showContextDetail.value = false
+}), loader: () => import('./ContextDetailDialog.vue') })
+const PromptPreviewDialog = defineAsyncComponent({ ...asyncDialogOptions(() => {
+  promptPreviewMounted.value = false
+  showPromptPreview.value = false
+}), loader: () => import('./PromptPreviewDialog.vue') })
 const promptPreviewRequest = computed(() => ({
   conversationId: chatStore.currentConversationId, configId: chatStore.configId,
   message: serializeNodes(editorNodes.value).trim(), attachments: (props.attachments ?? []).map(attachment => ({

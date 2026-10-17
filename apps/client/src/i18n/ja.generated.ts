@@ -317,6 +317,7 @@ export default {
   "nativeViewMenu": "表示",
   "uiApprovalButtonsAllowExecution": "実行を許可",
   "uiWorkbenchEditorLoadingReplacement": "エディターの読み込みがまだ完了していません。置換を再試行してください。",
+  "uiWorkbenchEditorTargetNotText": "対象ファイルはテキストとして開けません。",
   "uiWorkbenchEditorChangedReplacement": "編集内容が変わりました。再検索してから置換してください。",
   "uiWorkbenchSubtasks": "サブタスク",
   "uiWorkbenchFileChangedKeepInput": "ファイルが変更されました。新しく入力した内容は保持されています。別名で保存するか、コピーして保存してください。",
