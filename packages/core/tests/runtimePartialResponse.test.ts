@@ -1,6 +1,44 @@
 import { PlatformRuntime, RuntimeToolRegistry } from '@graycode/core';
 import { fixture, metadata } from './fixtures';
 
+test.each(['cancelled', 'interrupted'] as const)('输出转换期间 %s 仍保存已显示原文与来源', async reason => {
+  const f = await fixture();
+  let entered!: () => void, rejectTransformation!: (error: unknown) => void;
+  const transforming = new Promise<void>(resolve => { entered = resolve; });
+  const references = [{ scopeId: 'fixture-scope', id: 'fixture-memory', version: 1 }];
+  const parts = [{ text: '已经显示的完整正文。' }];
+  const runtime = new PlatformRuntime({ storage: f.store, tools: new RuntimeToolRegistry(),
+    actor: async () => ({ id: 'owner', displayName: '测试', role: 'owner', effects: [], workspaceIds: '*' }),
+    agent: async () => ({ id: 'test', name: '测试', providerId: 'fixture', systemPrompt: '', approvalMode: 'sensitive', maxIterations: 2, toolNames: [] }),
+    workspace: async () => null,
+    models: { generate: async input => { input.onDelta?.(parts); return { role: 'model', parts }; } },
+    transformOutput: async ({ message, request }) => {
+      // 与角色转换的正式契约一致：未完成消息只补来源，不重新转换原文。
+      if (message.incompleteReason) return { ...message, characterMode: true, longMemoryReferences: references };
+      const waiting = new Promise<void>((_resolve, reject) => { rejectTransformation = reject; });
+      const abort = () => rejectTransformation(request.signal.reason);
+      request.signal.addEventListener('abort', abort, { once: true });
+      entered();
+      try { await waiting; } finally { request.signal.removeEventListener('abort', abort); }
+      return message;
+    },
+  });
+  try {
+    await runtime.initialize(); await f.store.createConversation(metadata('partial-transform'));
+    const run = await runtime.start({ actorId: 'owner', agentId: 'test', conversationId: 'partial-transform', requestKey: 'partial-transform',
+      message: { role: 'user', parts: [{ text: '开始' }] } });
+    await transforming;
+    if (reason === 'cancelled') await runtime.cancel(run.id, 'owner');
+    else rejectTransformation(new Error('输出转换中断'));
+    expect((await runtime.wait(run.id))?.status).toBe(reason === 'cancelled' ? 'cancelled' : 'failed');
+    const history = await f.store.readFullHistory('partial-transform');
+    expect(history.messages).toHaveLength(2);
+    expect(history.messages[1]).toMatchObject({ role: 'model', parts, incompleteReason: reason,
+      characterMode: true, longMemoryReferences: references });
+    expect((await f.store.readRunEvents(run.id)).filter(event => event.type === 'message.saved')).toHaveLength(1);
+  } finally { await runtime.close(); await f.cleanup(); }
+});
+
 test.each([
   ['cancelled', true, true], ['interrupted', true, true], ['cancelled', false, true],
   ['interrupted', false, true], ['interrupted', true, false], ['interrupted', false, false],

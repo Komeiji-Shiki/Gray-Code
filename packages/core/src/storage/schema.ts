@@ -2,8 +2,8 @@ import Database from 'better-sqlite3';
 import { PlatformStorageError } from '../errors';
 import { LONG_MEMORY_SCHEMA } from './longMemory/schema';
 
-// 第 10 版增加对话正文索引，旧客户端必须拒绝，以免遗漏索引更新。
-export const SCHEMA_VERSION = 10;
+// 第 11 版按正文对象共用搜索索引，旧客户端必须拒绝，以免按旧布局写入。
+export const SCHEMA_VERSION = 11;
 const APPLICATION_ID = 0x47524350;
 
 /** One connection owns writes and collection; callers access it through the storage worker. */
@@ -67,7 +67,8 @@ export function openDatabase(file: string): SqliteConnection {
         if (version < 5) db.exec(LONG_MEMORY_SCHEMA);
         if (version === 5) db.exec('ALTER TABLE long_memory_tombstones ADD COLUMN reference TEXT;');
         if (version >= 5 && version < 9) db.exec('ALTER TABLE long_memory_dependencies ADD COLUMN association INTEGER NOT NULL DEFAULT 0;');
-        if (version < 10 && !db.prepare("SELECT 1 FROM pragma_table_info('histories') WHERE name='search_revision'").get()) db.exec(CONVERSATION_SEARCH_SCHEMA);
+        if (version < 10) db.exec(CONVERSATION_SEARCH_SCHEMA);
+        else if (version < 11) db.exec(SHARED_SEARCH_MIGRATION);
         if (version < SCHEMA_VERSION) db.pragma(`user_version = ${SCHEMA_VERSION}`);
       }).exclusive();
     }
@@ -141,13 +142,11 @@ CREATE TABLE migrations (
 ) WITHOUT ROWID;
 `;
 
-const CONVERSATION_SEARCH_SCHEMA = `
-ALTER TABLE histories ADD COLUMN search_revision INTEGER NOT NULL DEFAULT -1;
-ALTER TABLE histories ADD COLUMN search_position INTEGER NOT NULL DEFAULT 0;
+const SHARED_SEARCH_SCHEMA = `
+CREATE INDEX entries_by_body ON segment_entries(body_hash,segment_id,ordinal);
 CREATE TABLE history_search (
-  id INTEGER PRIMARY KEY, history_id TEXT NOT NULL REFERENCES histories(id) ON DELETE CASCADE,
-  position INTEGER NOT NULL, message_id TEXT, text TEXT NOT NULL, normalized TEXT NOT NULL,
-  UNIQUE(history_id,position)
+  id INTEGER PRIMARY KEY, body_hash BLOB NOT NULL UNIQUE REFERENCES objects(hash) ON DELETE CASCADE,
+  text TEXT NOT NULL, normalized TEXT NOT NULL
 );
 CREATE VIRTUAL TABLE history_search_fts USING fts5(normalized,content='history_search',content_rowid='id',tokenize='trigram');
 CREATE TRIGGER history_search_ai AFTER INSERT ON history_search BEGIN
@@ -156,6 +155,27 @@ END;
 CREATE TRIGGER history_search_ad AFTER DELETE ON history_search BEGIN
   INSERT INTO history_search_fts(history_search_fts,rowid,normalized) VALUES('delete',old.id,old.normalized);
 END;
+`;
+
+const CONVERSATION_SEARCH_SCHEMA = `
+ALTER TABLE histories ADD COLUMN search_revision INTEGER NOT NULL DEFAULT -1;
+ALTER TABLE histories ADD COLUMN search_position INTEGER NOT NULL DEFAULT 0;
+${SHARED_SEARCH_SCHEMA}
+`;
+
+// 复用已构建的正文与进度，避免升级时解码全部历史或把重建工作转移到首次搜索。
+const SHARED_SEARCH_MIGRATION = `
+DROP TRIGGER history_search_ai;
+DROP TRIGGER history_search_ad;
+DROP TABLE history_search_fts;
+ALTER TABLE history_search RENAME TO history_search_legacy;
+${SHARED_SEARCH_SCHEMA}
+INSERT OR IGNORE INTO history_search(body_hash,text,normalized)
+  SELECT e.body_hash,old.text,old.normalized FROM history_search_legacy old
+  JOIN history_spans span ON span.history_id=old.history_id
+    AND old.position>=span.start_index AND old.position<span.start_index+span.count
+  JOIN segment_entries e ON e.segment_id=span.segment_id AND e.ordinal=old.position-span.start_index+span.segment_offset;
+DROP TABLE history_search_legacy;
 `;
 
 const RUNTIME_SCHEMA = `

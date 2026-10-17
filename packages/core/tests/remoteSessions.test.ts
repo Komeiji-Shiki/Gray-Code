@@ -4,8 +4,26 @@ import { randomBytes } from 'node:crypto';
 import { PlatformApplication } from '../../../apps/server/src/application';
 import { ApplicationRouter } from '../../../apps/server/src/transport/router';
 import { RemoteAccessService } from '../../../apps/server/src/transport/remoteAccess';
+import { WebSessions, type WebSessionSnapshot } from '../../../apps/server/src/transport/webSessions';
 import { environmentSecretCodec } from '../../../apps/server/src/settings/environmentSecrets';
 import { fixture } from './fixtures';
+
+test('会话保存失败保留原错误，下一次等待重试保存且并发等待不重复写入', async () => {
+  const failure = new Error('temporary session save failure');
+  const write = jest.fn(async (_value: WebSessionSnapshot) => {}).mockRejectedValueOnce(failure);
+  const sessions = new WebSessions('isolated-session-save-retry-token', 'owner', false, undefined, {
+    read: async () => null, write,
+  });
+  sessions.rotate('isolated-session-save-new-token-01');
+  await expect(sessions.flush()).rejects.toBe(failure);
+  const retry = sessions.flush();
+  expect(sessions.flush()).toBe(retry);
+  await expect(retry).resolves.toBeUndefined();
+  expect(write).toHaveBeenCalledTimes(2);
+  expect(write.mock.calls[1][0]).toEqual(write.mock.calls[0][0]);
+  await sessions.flush();
+  expect(write).toHaveBeenCalledTimes(2);
+});
 
 test('网页登录跨核心重启保留，退出和撤销持久生效，停止入口后换回旧令牌也不恢复旧登录', async () => {
   const f = await fixture(); await f.store.close();

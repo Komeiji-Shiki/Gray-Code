@@ -240,6 +240,14 @@ function minimizeToTray(): void {
   window.hide();
 }
 let applicationMenuLanguage: ReturnType<typeof getActualLanguage> | undefined;
+async function openChatCommand(command: string): Promise<void> {
+  try {
+    await createWindow();
+    await application.productUi.call(client, 'ui.command', { command });
+  } catch (error) {
+    dialog.showErrorBox('GrayCode', error instanceof Error ? error.message : String(error));
+  }
+}
 function setApplicationMenu(): void {
   const language = getActualLanguage();
   // 设置变更还包含模型、工作区等内容，只有实际界面语言变化才需要重新创建原生菜单。
@@ -249,7 +257,7 @@ function setApplicationMenu(): void {
       id: 'file', label: t('desktop.shell.nativeFileMenu'),
       submenu: [
         { label: t('desktop.shell.uiConversationSidebarNewChat'), accelerator: shellShortcuts.newConversation.accelerator,
-          registerAccelerator: false, click: () => notify({ type: 'desktop.shortcut', command: 'newConversation' }) },
+          registerAccelerator: false, click: () => void openChatCommand('newChat') },
         { type: 'separator' },
         { label: t('desktop.shell.nativeMinimizeToTray'), click: () => minimizeToTray() },
         { label: t('desktop.quit'), accelerator: 'CmdOrCtrl+Q', click: () => void confirmQuit() },
@@ -266,7 +274,7 @@ function setApplicationMenu(): void {
         { role: 'paste', label: t('desktop.shell.nativePaste') },
         { role: 'selectAll', label: t('desktop.shell.nativeSelectAll') },
         { label: t('desktop.shell.uiConversationSidebarSettings'), visible: false, accelerator: 'CmdOrCtrl+,',
-          click: () => notify({ type: 'settings.open' }) },
+          click: () => void openChatCommand('showSettings') },
       ],
     },
     {
@@ -366,6 +374,7 @@ async function createWindow(): Promise<void> {
     activateDesktopWindow(window);
     return;
   }
+  application?.productUi.commands.invalidate(client.clientId);
   const colors = desktopColors();
   const primary = screen.getPrimaryDisplay();
   const geometry = restoreWindowBounds(windowState?.value, [primary.workArea, ...screen.getAllDisplays().filter(display => display.id !== primary.id).map(display => display.workArea)]);
@@ -392,10 +401,21 @@ async function createWindow(): Promise<void> {
   if (geometry.maximized) window.maximize();
   if (application) bindDesktopAppearance(window, application);
   desktopFiles.suspend();
-  window.webContents.on('did-start-navigation', (_event, _url, inPlace, mainFrame) => { if (mainFrame && !inPlace) desktopFiles.suspend(); });
+  window.webContents.on('did-start-navigation', (_event, _url, inPlace, mainFrame) => {
+    if (mainFrame && !inPlace) {
+      desktopFiles.suspend();
+      application?.productUi.commands.invalidate(client.clientId);
+    }
+  });
   trust(window);
-  window.webContents.on('render-process-gone', () => { void application?.computer.clientClosed(client.clientId); void application?.nodes.clientClosed(client.clientId); });
-  window.on('closed', () => { void application?.computer.clientClosed(client.clientId); void application?.nodes.clientClosed(client.clientId); });
+  window.webContents.on('render-process-gone', () => {
+    application?.productUi.commands.invalidate(client.clientId);
+    void application?.computer.clientClosed(client.clientId); void application?.nodes.clientClosed(client.clientId);
+  });
+  window.on('closed', () => {
+    application?.productUi.commands.invalidate(client.clientId);
+    void application?.computer.clientClosed(client.clientId); void application?.nodes.clientClosed(client.clientId);
+  });
   window.on("close", (event) => {
     if (exitPhase === 'ready') return;
     event.preventDefault();

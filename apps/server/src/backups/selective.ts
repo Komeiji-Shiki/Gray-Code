@@ -5,7 +5,7 @@ import { PlatformStorage } from '@graycode/core';
 import type { BackupRestoreSelectionPlan } from '@graycode/contracts';
 import { captureDirectory } from '../migration/directoryCapture';
 import { deviceFingerprint, directoryFingerprint, skillDirectories } from './catalog';
-import { validateBackupResources } from './resources';
+import { preferRestoredSettings, validateBackupResources } from './resources';
 
 const exists = async (directory: string) => fs.lstat(directory).then(() => true, error => { if (error.code === 'ENOENT') return false; throw error; });
 export async function buildSelectiveRestore(currentDirectory: string, importedDirectory: string, stagingDirectory: string, selection: BackupRestoreSelectionPlan) {
@@ -29,9 +29,16 @@ export async function buildSelectiveRestore(currentDirectory: string, importedDi
   await fs.rename(snapshot, stagingDirectory);
   const merged = await PlatformStorage.open(stagingDirectory);
   try {
+    const previousProfile = await merged.getRecord('portable-profile', 'main') as { preferDatabase?: boolean } | null;
     const result = await merged.mergeBackupUnits({ sourceDirectory: importedDirectory, groups: selection.groups });
+    let settingsRestored = false;
+    let profileRestored = false;
     for (const key of result.restored) {
-      const [kind, , id] = JSON.parse(key) as string[];
+      const [kind, namespace, id] = JSON.parse(key) as string[];
+      if (kind === 'record' && id === 'main') {
+        if (namespace === 'platform-settings' || namespace === 'product-settings') settingsRestored = true;
+        if (namespace === 'portable-profile') profileRestored = true;
+      }
       if (kind !== 'conversation') continue;
       const name = createHash('sha256').update(id).digest('hex');
       const target = path.join(stagingDirectory, 'bot-documents', name), source = path.join(importedDirectory, 'bot-documents', name);
@@ -43,6 +50,17 @@ export async function buildSelectiveRestore(currentDirectory: string, importedDi
       const target = path.join(stagingDirectory, directory.name), source = path.join(importedDirectory, directory.name);
       if (directory.conflict === 'keep' && await exists(target)) continue;
       await fs.rm(target, { recursive: true, force: true }); await captureDirectory(source, target, signal);
+    }
+    if (settingsRestored) await preferRestoredSettings(merged);
+    else if (profileRestored) {
+      const profile = await merged.getRecord('portable-profile', 'main') as Record<string, unknown>;
+      // 单独恢复缓存元数据不能带入来源的恢复意图，也不能丢掉本机尚未成功写回的设置。
+      if (profile.preferDatabase === true || previousProfile?.preferDatabase === true) {
+        const { preferDatabase, ...value } = profile;
+        await merged.putRecord({ namespace: 'portable-profile', id: 'main', value: {
+          ...value, ...(previousProfile?.preferDatabase === true ? { preferDatabase: true } : {}),
+        } });
+      }
     }
     await validateBackupResources(merged);
     const checked = await merged.verify(); if (!checked.ok) throw new Error(`选择性恢复未通过校验：${checked.issues.slice(0, 3).join('；')}`);

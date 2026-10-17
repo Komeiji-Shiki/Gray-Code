@@ -60,9 +60,13 @@ export class ExecutionNodes {
   }
   async initialize() { await this.identity.initialize(); await this.registry.initialize(); }
   async activate() {
-    if (this.active) return; this.active = true;
-    if (this.identity.settings.enabled) await this.startListener();
-    await this.clients.activate();
+    if (this.closed) throw new Error('执行节点正在关闭，无法接受新操作。');
+    // 宿主激活也可能等待证书和监听器，关闭必须等待这批已接受的工作。
+    await this.serialized(async () => {
+      if (this.active) return; this.active = true;
+      if (this.identity.settings.enabled) await this.startListener();
+      await this.clients.activate();
+    });
   }
   get keepsAlive() { return this.listenerState.state === 'listening' || [...this.registry.peers.values()].some(peer => peer.direction === 'outgoing' && !peer.revokedAt && !peer.paused); }
   currentOrigin() { return this.executor.currentOrigin(); }
@@ -197,6 +201,7 @@ export class ExecutionNodes {
   }
   async call(session: ClientSession, method: string, params: Record<string, any>) {
     this.app.requireOwner(session.actorId);
+    if (this.closed) throw new Error('执行节点正在关闭，无法接受新操作。');
     switch (method) {
       case 'nodes.status': return this.status(session.actorId);
       case 'nodes.options': return {

@@ -509,6 +509,7 @@ export class PlatformRuntime {
         signal.throwIfAborted();
         await this.event(run.id, 'model.started', { iteration });
         let generated: PlatformMessage;
+        let content: PlatformMessage;
         try {
           try {
             generated = await this.services.models.generate(request);
@@ -521,6 +522,10 @@ export class PlatformRuntime {
           }
           finally { deltas.finish(); await streamingEvent; }
           signal.throwIfAborted();
+          // 输出转换也可能被取消；完成前仍需保留已经显示的原文。
+          content = { ...generated, role: 'model', id: randomUUID(), runId: run.id, requestKey: run.requestKey,
+            parentId: page.messages.at(-1)?.id ?? null, timestamp: Date.now() };
+          if (this.services.transformOutput) content = await this.services.transformOutput({ run, message: content, request });
         } catch (error) {
           earlyController.abort(error);
           // 完整发出的只读调用已经执行或取消，必须保留配对身份，后续不再重复执行。
@@ -540,9 +545,6 @@ export class PlatformRuntime {
           throw error;
         }
         partialParts.length = 0;
-        let content: PlatformMessage = { ...generated, role: 'model', id: randomUUID(), runId: run.id, requestKey: run.requestKey,
-          parentId: page.messages.at(-1)?.id ?? null, timestamp: Date.now() };
-        if (this.services.transformOutput) content = await this.services.transformOutput({ run, message: content, request });
         const calls = this.calls(content);
         await this.services.storage.appendHistory(run.conversationId, [content], { expectedRevision: page.revision });
         this.trackToolPairing(run.id, content);
@@ -604,6 +606,12 @@ export class PlatformRuntime {
         await this.nativeTools.flush(run.conversationId);
         const afterTools = await this.services.afterTools?.(run, workspace, signal, content);
         if (afterTools?.stop) {
+          // 宿主完成前先撤销剩余审批并保存配对结果，使运行状态恢复到可完成的状态。
+          executionController.abort();
+          const detached = await this.nativeTools.interrupt(run.id);
+          await this.settleInterrupted(run, 'CANCELLED', detached);
+          interrupted = true;
+          signal.throwIfAborted();
           await this.event(run.id, 'run.completed', { reason: afterTools.reason ?? 'document_confirmation' }, { status: 'completed' }); return;
         }
       }

@@ -56,15 +56,22 @@ export class RemoteAccessService implements RemoteAccessHost {
   }
   private emit() { if (!this.closed) this.app.publish({ type: 'remote.changed' }); }
   private async disconnect() {
-    const server = this.server; this.server = undefined;
-    if (server) { this.state = 'stopping'; this.emit(); await server.close(); }
+    const server = this.server;
+    if (!server) return;
+    this.state = 'stopping'; this.emit();
+    await server.close();
+    this.server = undefined;
   }
   private async apply(): Promise<void> {
     if (this.closed || !this.initialized) return;
+    let cleanupAttempted = false;
     try {
       const config = this.configured();
       if (!this.override) validateRemoteAccess(config);
-      if (!config.enabled) { await this.disconnect(); this.state = 'disabled'; this.error = undefined; this.paused = false; this.desiredKey = ''; this.emit(); return; }
+      if (!config.enabled) {
+        cleanupAttempted = true; await this.disconnect();
+        this.state = 'disabled'; this.error = undefined; this.paused = false; this.desiredKey = ''; this.emit(); return;
+      }
       const token = this.override?.token ?? await this.app.settings.credential(config.credentialRef!);
       if (!token || token.length < 32) throw new Error('远程访问令牌不可用，请在设置中生成或填写至少 32 个字符的令牌。');
       const target = JSON.stringify([config.port, config.publicOrigin ?? '']);
@@ -73,17 +80,22 @@ export class RemoteAccessService implements RemoteAccessHost {
       if (this.desiredKey !== key) this.paused = false;
       this.desiredKey = key;
       if (this.paused) return;
-      if (this.server && target === this.target) {
+      if (this.server && this.state === 'listening' && target === this.target) {
         if (tokenHash !== this.tokenHash) await this.server.rotateToken(token);
         this.tokenHash = tokenHash; this.error = undefined; this.state = 'listening'; this.emit(); return;
       }
-      await this.disconnect(); this.state = 'starting'; this.error = undefined; this.emit();
+      cleanupAttempted = true; await this.disconnect();
+      this.state = 'starting'; this.error = undefined; this.emit();
       const server = await startHttpServer(this.app, { port: config.port, token, publicOrigin: config.publicOrigin,
         clientDirectory: this.options.clientDirectory, onConnectionsChanged: () => this.emit() });
       if (this.closed) { await server.close(); return; }
       this.server = server; this.target = target; this.tokenHash = tokenHash; this.state = 'listening'; this.emit();
     } catch (error) {
-      await this.disconnect(); this.state = 'error'; this.error = error instanceof Error ? error.message : String(error); this.emit(); throw error;
+      try { if (!cleanupAttempted) await this.disconnect(); }
+      finally {
+        this.state = 'error'; this.error = error instanceof Error ? error.message : String(error); this.emit();
+      }
+      throw error;
     }
   }
   async start(): Promise<RemoteAccessStatus> {

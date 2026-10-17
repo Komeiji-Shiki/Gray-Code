@@ -27,11 +27,19 @@ export interface DocumentReset {
   document?: DocumentState; error?: string;
   removed?: boolean;
 }
+interface DocumentRead { text: string; hash: string | null }
+interface DocumentOpening {
+  workspaceId: string; path: string; clientId: string; declared: string; valid: boolean;
+  absolute?: string; displayPath?: string;
+  reading: boolean; refreshVersion: number; refreshed?: DocumentRead;
+}
 export class WorkspaceFiles {
   private readonly queues = new Map<string, Promise<unknown>>();
   private readonly documents = new Map<string, DocumentState>();
+  private readonly documentRefreshStates = new WeakMap<DocumentState, { refreshVersion: number; savingCount: number }>();
   private readonly activeEditors = new Map<string, string>();
   private readonly detachedClients = new Set<string>();
+  private readonly openingDocuments = new Set<DocumentOpening>();
   private recoveryError?: string;
   constructor(
     private readonly changed: (
@@ -47,6 +55,7 @@ export class WorkspaceFiles {
     // 保留正文和原磁盘哈希供原标签页恢复，离线草稿不再长期阻塞其它写入。
     await this.locked('workspace-mutations', async () => {
       this.detachedClients.add(clientId); this.activeEditors.delete(clientId);
+      for (const opening of this.openingDocuments) if (opening.clientId === clientId) opening.valid = false;
       for (const [key, document] of this.documents) if (document.clientId === clientId && !document.dirty) this.documents.delete(key);
     });
   }
@@ -54,12 +63,15 @@ export class WorkspaceFiles {
 
   /** 设置发布时保留文档所指向的文件，只更新其显示路径；移出的目录仍保留草稿供复制。 */
   rebindWorkspaces(previous: readonly WorkspaceDefinition[], next: readonly WorkspaceDefinition[]): void {
+    const changed = new Set(previous.filter(before => JSON.stringify(before) !== JSON.stringify(next.find(after => after.id === before.id)))
+      .map(workspace => workspace.id));
+    for (const opening of this.openingDocuments) if (changed.has(opening.workspaceId)) opening.valid = false;
     let version = Math.max(0, ...[...this.documents.values()].map(document => document.version)) + 1;
     for (const document of this.documents.values()) {
+      if (!changed.has(document.workspaceId)) continue;
       const before = previous.find(item => item.id === document.workspaceId);
       const after = next.find(item => item.id === document.workspaceId);
-      if (!before || JSON.stringify(before) === JSON.stringify(after)) continue;
-      const absolute = resolveWorkspacePath(before, document.path);
+      const absolute = resolveWorkspacePath(before!, document.path);
       const file = after ? workspaceFilePath(after, absolute) : absolute;
       if (file === document.path) continue;
       const event: DocumentReset = { workspaceId: document.workspaceId, clientId: document.clientId, path: document.path,
@@ -120,13 +132,39 @@ export class WorkspaceFiles {
   dirtyPathsInDirectory(directory: string): string[] {
     return [...new Set([...this.documents].filter(([key, document]) => this.activeDraft(document) && this.documentInside(key, document, directory)).map(([, document]) => document.path))];
   }
+  private getDocumentRefreshState(document: DocumentState) {
+    let state = this.documentRefreshStates.get(document);
+    if (!state) { state = { refreshVersion: 0, savingCount: 0 }; this.documentRefreshStates.set(document, state); }
+    return state;
+  }
+  private beginDocumentRefresh(key: string, document: DocumentState): () => boolean {
+    const state = this.getDocumentRefreshState(document);
+    const refreshVersion = ++state.refreshVersion;
+    const version = document.version;
+    // 对象身份与两类版本分别覆盖关闭重建、正文编辑、读取和保存。
+    return () => this.documents.get(key) === document && document.version === version && state.refreshVersion === refreshVersion;
+  }
   /** 同步 Git 或外部操作改动的干净文件，保持原有草稿版本协议。 */
-  async reloadCleanDocuments(directory: string): Promise<void> {
+  async reloadCleanDocuments(directory: string, options: { invalidatePending?: boolean } = {}): Promise<void> {
+    if (options.invalidatePending) this.invalidateDocumentOpens(directory);
+    else for (const opening of [...this.openingDocuments]) {
+      const absolute = opening.absolute;
+      if (!opening.valid || !opening.reading || !absolute || !inside(this.key(directory), this.key(absolute))
+        || this.documents.has(this.documentKey(opening.clientId, absolute))) continue;
+      const version = ++opening.refreshVersion;
+      try {
+        // 普通 Git 状态查询也会刷新；无变更时保留打开，更新结果不能倒退到更早的并发读取。
+        const value = await this.readAbsolute(absolute);
+        if (opening.valid && opening.refreshVersion === version) opening.refreshed = value;
+      } catch {
+        if (opening.refreshVersion === version) opening.valid = false;
+      }
+    }
     for (const [key, previous] of this.documents) {
-      if (previous.dirty || !this.documentInside(key, previous, directory)) continue;
+      if (previous.dirty || this.documentRefreshStates.get(previous)?.savingCount || !this.documentInside(key, previous, directory)) continue;
       const event: DocumentReset = { workspaceId: previous.workspaceId, path: previous.path, clientId: previous.clientId,
         previousVersion: previous.version, previousText: previous.text };
-      const current = () => this.documents.get(key) === previous && !previous.dirty && previous.version === event.previousVersion;
+      const current = this.beginDocumentRefresh(key, previous);
       try {
         const value = await this.readAbsolute(key.slice(previous.clientId.length + 1));
         // Git 刷新也会读取外部修改；读取期间输入发生变化时，保留新草稿。
@@ -204,6 +242,7 @@ export class WorkspaceFiles {
           if ((await Promise.all(workspaceRoots(workspace).map(root => realpath(root.directory)))).some(root => path.relative(root, absolute) === '')) throw new Error('不能删除工作区根目录。');
           if (change.after) await mkdir(absolute, { recursive: true });
           else await rmdir(absolute);
+          this.invalidateDocumentOpens(absolute);
           this.changed(workspace.id, change.path, absolute);
         }
       }, apply: async (changes, readChunk) => {
@@ -221,6 +260,7 @@ export class WorkspaceFiles {
           if ((await captureAbsolute(absolute, { hashOnly: true })).hash !== change.before.hash) throw new Error(`FILE_CONFLICT: ${change.path} 已被修改。`);
           if (change.before.hash === change.after.hash) continue;
           await replaceFileVersion(absolute, change.after, readChunk);
+          this.invalidateDocumentOpens(absolute);
           this.changed(workspace.id, change.path, absolute);
         }
       } });
@@ -278,7 +318,7 @@ export class WorkspaceFiles {
   }
   private async readAbsolute(
     absolute: string,
-  ): Promise<{ text: string; hash: string | null }> {
+  ): Promise<DocumentRead> {
     try {
       const handle = await open(absolute, "r");
       try {
@@ -339,6 +379,16 @@ export class WorkspaceFiles {
   private documentKey(clientId: string, absolute: string): string {
     return `${clientId}:${this.key(absolute)}`;
   }
+  private invalidateDocumentOpens(absolute: string): void {
+    const root = this.key(absolute);
+    for (const opening of this.openingDocuments) {
+      const canonical = opening.absolute && this.key(opening.absolute);
+      const declared = this.key(opening.declared);
+      // 解析尚未完成时，声明路径可能经目录联接指向目标，不能据此认定它与变更无关。
+      // 子路径的成功变更也可能递归创建此前缺失的父目录，使它不再能作为空白文件打开。
+      if (!canonical || inside(root, canonical) || inside(root, declared) || inside(canonical, root) || inside(declared, root)) opening.valid = false;
+    }
+  }
   private checkDrafts(absolute: string, exceptClient?: string, ignored = new Set<string>()): void {
     for (const [key, document] of this.documents) {
       if (
@@ -362,6 +412,8 @@ export class WorkspaceFiles {
     }
   }
   async relocateDocuments(from: string, to: string | undefined, workspaces: readonly WorkspaceDefinition[]): Promise<void> {
+    this.invalidateDocumentOpens(from);
+    if (to) this.invalidateDocumentOpens(to);
     for (const [key, previous] of [...this.documents]) {
       // 离线草稿没有参与移动/删除确认，恢复时用原基线报冲突，不能换成磁盘正文。
       if (this.detachedClients.has(previous.clientId) && previous.dirty) continue;
@@ -422,37 +474,58 @@ export class WorkspaceFiles {
     clientId: string,
     reloadClean = false,
   ): Promise<DocumentState> {
-    const absolute = await this.resolve(workspace, file);
-    // 后到的打开请求先读取已建立的草稿，不能用迟到的磁盘结果覆盖新输入。
-    return this.locked(absolute, async () => {
-      const key = this.documentKey(clientId, absolute);
-      const existing = this.documents.get(key);
-      if (existing) {
-        if (reloadClean && !existing.dirty) {
-          const version = existing.version;
-          const value = await this.readAbsolute(absolute);
-          const current = this.documents.get(key);
-          // 刷新保持草稿身份、焦点和单调版本；读取期间的新输入优先。
-          if (current !== existing) return structuredClone(current ?? existing);
-          if (!existing.dirty && existing.version === version && value.hash !== existing.baseHash) {
-            existing.text = value.text; existing.baseHash = value.hash; existing.version++;
-          }
+    const opening: DocumentOpening = { workspaceId: workspace.id, path: file, clientId,
+      declared: resolveWorkspacePath(workspace, file), valid: true, reading: false, refreshVersion: 0 };
+    this.openingDocuments.add(opening);
+    try {
+      const absolute = opening.absolute = await this.resolve(workspace, opening.declared);
+      opening.displayPath = workspaceFilePath(workspace, absolute);
+      // 磁盘读取仍按路径排队；只有登记和刷新结果短暂取得共享写锁。
+      return await this.locked(absolute, async () => {
+        const key = this.documentKey(clientId, absolute);
+        const commit = (operation: () => DocumentState) => this.locked('workspace-mutations', async () => {
+          if (!opening.valid) throw new Error('DOCUMENT_CONFLICT: 文件打开期间已发生变化，请重新打开。');
+          return structuredClone(operation());
+        });
+        const existing = this.documents.get(key);
+        if (existing) {
+          const currentRefresh = reloadClean && !existing.dirty && !this.documentRefreshStates.get(existing)?.savingCount
+            ? this.beginDocumentRefresh(key, existing) : undefined;
+          const result = currentRefresh ? await this.readAbsolute(absolute).then(value => ({ value }), (error: unknown) => ({ error })) : undefined;
+          return commit(() => {
+            const current = this.documents.get(key);
+            if (!current) throw new Error('DOCUMENT_CONFLICT: 编辑文档已关闭，请重新打开。');
+            // 刷新保持草稿身份、焦点和单调版本；读取期间的新输入优先。
+            if (currentRefresh?.() && result) {
+              if ('error' in result) throw result.error;
+              if (result.value.hash !== existing.baseHash) {
+                existing.text = result.value.text; existing.baseHash = result.value.hash; existing.version++;
+              }
+            }
+            return current;
+          });
         }
-        return structuredClone(existing);
-      }
-      const value = await this.readAbsolute(absolute);
-      const document: DocumentState = {
-        workspaceId: workspace.id,
-        path: workspaceFilePath(workspace, absolute),
-        text: value.text,
-        baseHash: value.hash,
-        version: 1,
-        dirty: false,
-        clientId,
-      };
-      this.documents.set(key, document);
-      return structuredClone(document);
-    });
+        opening.reading = true;
+        const value = await this.readAbsolute(absolute);
+        return commit(() => {
+          const current = this.documents.get(key);
+          if (current) return current;
+          const latest = opening.refreshed ?? value;
+          if (value.hash !== null && latest.hash === null) throw new Error('DOCUMENT_CONFLICT: 文件打开期间已删除，请重新打开。');
+          const document: DocumentState = {
+            workspaceId: workspace.id,
+            path: workspaceFilePath(workspace, absolute),
+            text: latest.text,
+            baseHash: latest.hash,
+            version: 1,
+            dirty: false,
+            clientId,
+          };
+          this.documents.set(key, document);
+          return document;
+        });
+      });
+    } finally { this.openingDocuments.delete(opening); }
   }
   async updateDocument(
     workspace: WorkspaceDefinition,
@@ -487,16 +560,15 @@ export class WorkspaceFiles {
     if (!document || document.version !== version)
       throw new Error("DOCUMENT_CONFLICT: Editor draft is stale.");
     const text = document.text;
-    const result = await this.write(
-      workspace,
-      file,
-      text,
-      document.baseHash,
-      clientId,
-    );
-    document.baseHash = result.hash;
-    document.dirty = document.text !== text;
-    return structuredClone(document);
+    const state = this.getDocumentRefreshState(document);
+    // 写入等待期间也保留登记对象；刷新可能已持有工作区写锁，不能反向等待保存。
+    state.savingCount++; state.refreshVersion++;
+    try {
+      const result = await this.write(workspace, file, text, document.baseHash, clientId);
+      document.baseHash = result.hash;
+      document.dirty = document.text !== text;
+      return structuredClone(document);
+    } finally { state.savingCount--; state.refreshVersion++; }
   }
   async closeDocument(
     workspace: Pick<WorkspaceDefinition, 'id'>,
@@ -504,10 +576,14 @@ export class WorkspaceFiles {
     clientId: string,
     discard = false,
   ): Promise<void> {
-    const entry = [...this.documents].find(([, doc]) => doc.workspaceId === workspace.id && doc.clientId === clientId && doc.path === file);
-    if (!entry) return;
-    if (entry[1].dirty && !discard) throw new Error('Document has unsaved changes.');
-    this.documents.delete(entry[0]);
-    if (this.activeEditors.get(clientId) === entry[0]) this.activeEditors.delete(clientId);
+    await this.locked('workspace-mutations', async () => {
+      const entry = [...this.documents].find(([, doc]) => doc.workspaceId === workspace.id && doc.clientId === clientId && doc.path === file);
+      if (entry?.[1].dirty && !discard) throw new Error('Document has unsaved changes.');
+      for (const opening of this.openingDocuments) if (opening.workspaceId === workspace.id && opening.clientId === clientId
+        && (!opening.absolute || opening.path === file || opening.displayPath === file)) opening.valid = false;
+      if (!entry) return;
+      this.documents.delete(entry[0]);
+      if (this.activeEditors.get(clientId) === entry[0]) this.activeEditors.delete(clientId);
+    });
   }
 }

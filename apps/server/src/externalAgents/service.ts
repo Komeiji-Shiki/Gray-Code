@@ -19,6 +19,7 @@ interface Operation {
 interface ActiveOperation {
   context: ToolContext; signal: AbortSignal; cancel: AbortController; output: string[]; images: NonNullable<ToolOutcome['attachments']>;
   replay: boolean; text?: { type: string; chunks: string[]; bytes: number }; timer?: ReturnType<typeof setTimeout>;
+  lastPersistedEvent: number;
   writes: Promise<void>; permissions: Promise<unknown>;
 }
 interface LiveSession { record: SessionRecord; client?: AcpClient; active?: ActiveOperation; disposing?: Promise<void> }
@@ -140,7 +141,8 @@ export class ExternalAgents {
     const operation: Operation = { id, fingerprint, sessionId: live.record.id, runId: context.runId, status: 'running' };
     const cancel = new AbortController();
     const active: ActiveOperation = { context, cancel, signal: AbortSignal.any([context.signal, cancel.signal, this.shutdown.signal]), output: [], images: [],
-      replay: action === 'load' || action === 'fork', writes: Promise.resolve(), permissions: Promise.resolve() };
+      replay: action === 'load' || action === 'fork', lastPersistedEvent: live.record.lastEvent,
+      writes: Promise.resolve(), permissions: Promise.resolve() };
     live.active = active; live.record.status = 'running'; live.record.lastRunId = context.runId; live.record.error = undefined;
     let outcome: ToolOutcome;
     try {
@@ -197,6 +199,8 @@ export class ExternalAgents {
       this.flushText(live); await active.writes.catch(() => {});
       if (action === 'close' || !live.record.remoteSessionId || live.client?.connection.signal.aborted)
         await this.dispose(live).catch(cause => console.error('外部代理异常后的关闭失败：', cause));
+      // 已分配序号用于固定读取范围；最终会话不能把未成功保存的事件当成已存在。
+      live.record.lastEvent = active.lastPersistedEvent;
       live.record.status = active.signal.aborted ? 'interrupted' : 'error';
       live.record.error = error instanceof Error ? error.message : String(error);
       operation.status = error instanceof ExecutionUnknown ? 'unknown' : 'completed';
@@ -355,7 +359,7 @@ export class ExternalAgents {
     active.writes = active.writes.then(() => this.app.storage.commitRecords([
       { namespace: eventsNamespace, id: `${record.id}:${String(sequence).padStart(12, '0')}`, ownerId: record.conversationId, value: event },
       { namespace: sessionsNamespace, id: record.id, ownerId: record.conversationId, value: record },
-    ])).then(() => {});
+    ])).then(() => { active.lastPersistedEvent = sequence; });
     void active.writes.catch(error => active.cancel.abort(error));
   }
   private async dispose(live: LiveSession) {

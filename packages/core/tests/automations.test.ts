@@ -4,6 +4,11 @@ import type { AutomationRecord, ModelInput, PlatformMessage } from '@graycode/co
 import { PlatformApplication } from '../../../apps/server/src/application';
 import { PlatformPromptService } from '../../../apps/server/src/prompt/service';
 import { nextScheduledTime, validateSchedule } from '../../../apps/server/src/automations/schedule';
+import { ApplicationAutomations } from '../../../apps/server/src/automations/service';
+import { AutomationEventSources } from '../../../apps/server/src/automations/events';
+import { SubagentFeedback } from '../../../apps/server/src/subagents/feedback';
+import { deleteConversation } from '../../../apps/server/src/conversations/delete';
+import { createIdleCloseCheck } from '../../../apps/desktop/src/idleClose';
 import { fixture } from './fixtures';
 
 describe('持久目标和定时触发', () => {
@@ -117,6 +122,225 @@ describe('持久目标和定时触发', () => {
     now += 100000; await app.automations.tick(now); expect(calls).toHaveLength(2);
   });
 
+  test.each(['schedule', 'goal'])('%s 的运行已经完成后，结算写入失败可以恢复且只计数一次', async kind => {
+    if (kind === 'goal') generate = async () => complete();
+    const task = await create(kind === 'schedule'
+      ? { kind, schedule: { type: 'interval', startAt: now + 1000, everyMinutes: 1 }, missedRunPolicy: 'once' } : { kind });
+    const commit = app.storage.commitRecords.bind(app.storage);
+    let failed = false, notified!: () => void;
+    const failureNotice = new Promise<void>(resolve => { notified = resolve; });
+    const unsubscribe = app.subscribe(event => {
+      if (event.type === 'notification' && String(event.message).includes('fixture automation settlement')) notified();
+    });
+    jest.spyOn(app.storage, 'commitRecords').mockImplementation(async changes => {
+      if (!failed && changes.some(change => change.namespace === 'automations' && change.id === task.id && 'value' in change
+        && (change.value as AutomationRecord | undefined)?.completedRuns === 1 && !(change.value as AutomationRecord).currentRequestKey)) {
+        failed = true;
+        throw new Error('fixture automation settlement');
+      }
+      return commit(changes);
+    });
+    try {
+      now += 1000; await app.automations.tick(now); await failureNotice;
+      const waiting = (await app.automations.list('owner')).find(record => record.id === task.id)!;
+      const finished = await app.storage.getRunByRequestKey(waiting.currentRequestKey!);
+      expect(finished?.status).toBe('completed');
+      expect(waiting.completedRuns).toBe(0);
+      expect(app.automations.keepsAlive).toBe(true);
+      await app.automations.tick(now);
+      const recovered = await until(task.id, record => record.completedRuns === 1 && !record.currentRequestKey);
+      expect(recovered.lastRunId).toBe(finished!.id);
+      await app.automations.tick(now);
+      expect((await app.automations.list('owner')).find(record => record.id === task.id)!.completedRuns).toBe(1);
+      expect(calls).toHaveLength(1);
+      if (kind === 'schedule') {
+        now = recovered.nextRunAt!; await app.automations.tick(now);
+        await until(task.id, record => record.completedRuns === 2 && !record.currentRequestKey);
+        expect(calls).toHaveLength(2);
+      } else expect(recovered.status).toBe('completed');
+    } finally { unsubscribe(); }
+  });
+
+  test('一个任务持续结算失败不阻塞其他到期任务，恢复后不重新运行已完成模型', async () => {
+    const failing = await create({ kind: 'schedule', schedule: { type: 'once', at: now + 1000 }, missedRunPolicy: 'once' });
+    const commit = app.storage.commitRecords.bind(app.storage);
+    let notified!: () => void;
+    const failureNotice = new Promise<void>(resolve => { notified = resolve; });
+    const unsubscribe = app.subscribe(event => {
+      if (event.type === 'notification' && String(event.message).includes('fixture persistent settlement')) notified();
+    });
+    const failure = jest.spyOn(app.storage, 'commitRecords').mockImplementation(async changes => {
+      if (changes.some(change => change.namespace === 'automations' && change.id === failing.id && 'value' in change
+        && (change.value as AutomationRecord | undefined)?.completedRuns === 1)) throw new Error('fixture persistent settlement');
+      return commit(changes);
+    });
+    try {
+      now += 1000; await app.automations.tick(now); await failureNotice;
+      await app.createConversation('owner', '正常到期任务', undefined, { platformMode: 'chat' }, undefined, { id: 'healthy-chat' });
+      const healthy = await create({ kind: 'schedule', conversationId: 'healthy-chat', schedule: { type: 'once', at: now + 1000 }, missedRunPolicy: 'once' });
+      now += 1000; await app.automations.tick(now);
+      await until(healthy.id, record => record.completedRuns === 1 && record.status === 'completed' && !record.currentRequestKey);
+      expect(calls).toHaveLength(2);
+      expect((await app.automations.list('owner')).find(record => record.id === failing.id)!.currentRequestKey).toBeDefined();
+      failure.mockRestore();
+      await app.automations.tick(now);
+      await until(failing.id, record => record.completedRuns === 1 && record.status === 'completed' && !record.currentRequestKey);
+      expect(calls).toHaveLength(2);
+    } finally { failure.mockRestore(); unsubscribe(); }
+  });
+
+  test('完成事件部分交付失败由持久事件重放补齐，不重复结算来源且已收到的任务只执行一次', async () => {
+    await app.createConversation('owner', '来源任务', undefined, { platformMode: 'chat' }, undefined, { id: 'retry-source' });
+    await app.createConversation('owner', '第二个事件任务', undefined, { platformMode: 'chat' }, undefined, { id: 'retry-recipient' });
+    const event = { trigger: { type: 'run_completed', conversationId: 'retry-source' }, busyPolicy: 'latest', restartPolicy: 'resume' };
+    const first = await create({ kind: 'event', event });
+    const second = await create({ kind: 'event', event, conversationId: 'retry-recipient' });
+    const source = await create({ kind: 'schedule', conversationId: 'retry-source',
+      schedule: { type: 'once', at: now + 1000 }, missedRunPolicy: 'once' });
+    const settleFiles = jest.spyOn(AutomationEventSources.prototype, 'settleFiles');
+    const completed = AutomationEventSources.prototype.completed;
+    let sources!: AutomationEventSources;
+    jest.spyOn(AutomationEventSources.prototype, 'completed').mockImplementation(function (this: AutomationEventSources, id) {
+      sources = this;
+      return completed.call(this, id);
+    });
+    const commit = app.storage.commitRecords.bind(app.storage);
+    let failed = false, notified!: () => void;
+    const failureNotice = new Promise<void>(resolve => { notified = resolve; });
+    const unsubscribe = app.subscribe(value => {
+      if (value.type === 'notification' && String(value.message).includes('fixture event delivery')) notified();
+    });
+    jest.spyOn(app.storage, 'commitRecords').mockImplementation(async changes => {
+      if (!failed && changes.some(change => change.namespace === 'automation-event-receipts' && change.id.startsWith(second.id + ':run:'))) {
+        failed = true;
+        throw new Error('fixture event delivery');
+      }
+      return commit(changes);
+    });
+    try {
+      now += 1000; await app.automations.tick(now); await failureNotice;
+      const settled = await until(source.id, record => record.completedRuns === 1 && !record.currentRequestKey);
+      const runId = settled.lastRunId!;
+      expect((await app.automations.list('owner')).find(record => record.id === first.id)!.pendingEvent?.sourceRunId).toBe(runId);
+      expect((await app.automations.list('owner')).find(record => record.id === second.id)!.pendingEvent).toBeUndefined();
+      await app.automations.tick(now);
+      expect(settleFiles.mock.calls.filter(([run]) => run.id === runId)).toHaveLength(1);
+      expect((await app.automations.list('owner')).find(record => record.id === second.id)!.pendingEvent).toBeUndefined();
+      await sources.reconcile();
+      await app.automations.tick(now);
+      for (const task of [first, second]) {
+        const record = await until(task.id, value => value.completedRuns === 1 && !value.currentRequestKey);
+        expect(record.recentEvents?.filter(value => value.sourceRunId === runId)).toHaveLength(1);
+      }
+      expect(settleFiles.mock.calls.filter(([run]) => run.id === runId)).toHaveLength(1);
+      expect(calls).toHaveLength(3);
+    } finally { unsubscribe(); }
+  });
+
+  test('终态重试还在等待事件源校验时，其他到期任务可以开始运行', async () => {
+    const task = await create({ kind: 'schedule', schedule: { type: 'once', at: now + 1000 }, missedRunPolicy: 'once' });
+    const commit = app.storage.commitRecords.bind(app.storage);
+    let failed = false, notified!: () => void;
+    const failureNotice = new Promise<void>(resolve => { notified = resolve; });
+    const unsubscribe = app.subscribe(event => {
+      if (event.type === 'notification' && String(event.message).includes('fixture slow settlement')) notified();
+    });
+    jest.spyOn(app.storage, 'commitRecords').mockImplementation(async changes => {
+      if (!failed && changes.some(change => change.namespace === 'automations' && change.id === task.id && 'value' in change
+        && (change.value as AutomationRecord | undefined)?.completedRuns === 1)) {
+        failed = true; throw new Error('fixture slow settlement');
+      }
+      return commit(changes);
+    });
+    let release!: () => void, enter!: () => void, started!: () => void;
+    const waiting = new Promise<void>(resolve => { release = resolve; });
+    const entered = new Promise<void>(resolve => { enter = resolve; });
+    const healthyStarted = new Promise<void>(resolve => { started = resolve; });
+    let ticking: Promise<void> | undefined, timer: ReturnType<typeof setTimeout> | undefined;
+    try {
+      now += 1000; await app.automations.tick(now); await failureNotice;
+      const pending = (await app.automations.list('owner')).find(record => record.id === task.id)!;
+      const run = await app.storage.getRunByRequestKey(pending.currentRequestKey!);
+      const settle = AutomationEventSources.prototype.settleFiles;
+      let held = false;
+      jest.spyOn(AutomationEventSources.prototype, 'settleFiles').mockImplementation(async function (this: AutomationEventSources, value) {
+        await settle.call(this, value);
+        if (!held && value.id === run!.id) { held = true; enter(); await waiting; }
+      });
+      await app.createConversation('owner', '独立任务', undefined, { platformMode: 'chat' }, undefined, { id: 'independent-chat' });
+      await create({ kind: 'schedule', conversationId: 'independent-chat', schedule: { type: 'once', at: now + 1000 }, missedRunPolicy: 'once' });
+      generate = async input => { if (input.conversationId === 'independent-chat') started(); return answer(); };
+      now += 1000; ticking = app.automations.tick(now); await entered;
+      await Promise.race([healthyStarted, new Promise<never>((_resolve, reject) => {
+        timer = setTimeout(() => reject(new Error('慢终态重试阻塞了独立的到期任务')), 5000);
+      })]);
+      expect(calls).toHaveLength(2);
+      release(); await ticking;
+      await until(task.id, record => record.completedRuns === 1 && !record.currentRequestKey);
+    } finally { clearTimeout(timer); release(); await ticking; unsubscribe(); }
+  });
+
+  test('关闭自动任务会等待已经开始但尚未进入写入队列的终态处理', async () => {
+    generate = async () => complete();
+    const task = await create(); await app.automations.tick(now);
+    const finished = await until(task.id, record => record.completedRuns === 1 && !record.currentRequestKey);
+    const read = app.storage.getRun.bind(app.storage);
+    let enter!: () => void, release!: () => void, held = false;
+    const entered = new Promise<void>(resolve => { enter = resolve; });
+    const waiting = new Promise<void>(resolve => { release = resolve; });
+    jest.spyOn(app.storage, 'getRun').mockImplementation(async (...args) => {
+      const result = await read(...args);
+      if (!held && args[0] === finished.lastRunId) { held = true; enter(); await waiting; }
+      return result;
+    });
+    app.publish({ type: 'event', event: { type: 'run.completed', runId: finished.lastRunId } });
+    let closing: Promise<void> | undefined, closed = false;
+    try {
+      await entered;
+      closing = app.automations.close().then(() => { closed = true; });
+      await new Promise(resolve => setImmediate(resolve));
+      expect(closed).toBe(false);
+      release(); await closing;
+      expect((await app.automations.list('owner')).find(record => record.id === task.id)!.completedRuns).toBe(1);
+      expect(calls).toHaveLength(1);
+    } finally { release(); await closing; }
+  });
+
+  test('最后一条终态交付结束后，桌面等待退出能再次收到空闲状态', async () => {
+    let enter!: () => void, release!: () => void, checked!: () => void, closed!: () => void;
+    const entered = new Promise<void>(resolve => { enter = resolve; });
+    const waiting = new Promise<void>(resolve => { release = resolve; });
+    const firstCheck = new Promise<void>(resolve => { checked = resolve; });
+    const exited = new Promise<void>(resolve => { closed = resolve; });
+    const completeEvent = AutomationEventSources.prototype.completed;
+    jest.spyOn(AutomationEventSources.prototype, 'completed').mockImplementationOnce(async function (this: AutomationEventSources, id) {
+      await completeEvent.call(this, id); enter(); await waiting;
+    });
+    let pendingClose = false, timer: ReturnType<typeof setTimeout> | undefined;
+    const close = jest.fn(async () => { pendingClose = false; closed(); });
+    const report = jest.fn();
+    const check = createIdleCloseCheck({ pending: () => pendingClose,
+      active: async () => {
+        const active = !!(await app.storage.listRuns({ activeOnly: true, limit: 1 })).length || app.automations.keepsAlive;
+        checked(); return active;
+      }, close, report });
+    const unsubscribe = app.subscribe(event => { if (event.type === 'event' || event.type === 'automation.changed') check(); });
+    try {
+      const run = await app.runtime.start({ actorId: 'owner', conversationId: 'auto-chat', agentId: 'default', providerId,
+        requestKey: 'idle-final-completion', message: { role: 'user', parts: [{ text: '完成后退出。' }] } });
+      await app.runtime.wait(run.id); await entered;
+      pendingClose = true; check(); await firstCheck;
+      expect(close).not.toHaveBeenCalled();
+      release();
+      await Promise.race([exited, new Promise<never>((_resolve, reject) => {
+        timer = setTimeout(() => reject(new Error('终态清空后没有通知桌面重新检查退出')), 5000);
+      })]);
+      expect(close).toHaveBeenCalledTimes(1);
+      expect(app.automations.keepsAlive).toBe(false);
+      expect(report).not.toHaveBeenCalled();
+    } finally { pendingClose = false; release(); clearTimeout(timer); unsubscribe(); await app.automations.close(); }
+  });
+
   test('总结和子任务的用量归属同一目标，旧请求中的预算字段不限制持续执行', async () => {
     await app.createConversation('owner', '子任务测试', undefined, undefined, undefined, { id: 'child-chat' });
     let primary = 0;
@@ -219,6 +443,87 @@ describe('持久目标和定时触发', () => {
     expect(app.automations.keepsAlive).toBe(false); expect(await app.storage.getConversation('auto-chat')).not.toBeNull(); expect(calls).toEqual([]);
   });
 
+  test.each([true, false])('后台回执先恢复时，按原重启策略处理等待标记 %s 并保留唤醒', async awaitingBackground => {
+    const task = await create({ kind: 'schedule', schedule: { type: 'interval', startAt: now + 1000, everyMinutes: 1 }, missedRunPolicy: 'once' });
+    now += 1000; await app.automations.tick(now);
+    const first = await until(task.id, record => record.completedRuns === 1 && !record.currentRequestKey);
+    await app.storage.appendHistory('auto-chat', [{ id: 'restart-result', role: 'user', userFeedback: true, isUserInput: false,
+      parts: [{ text: '重启前保存的后台结果。' }] }]);
+    await app.storage.commitRecords([
+      { namespace: 'automations', id: task.id, ownerId: 'auto-chat', value: { ...first, awaitingBackground,
+        ...(awaitingBackground ? { nextRunAt: undefined } : {}) } },
+      { namespace: 'background-followups', id: 'restart-result', ownerId: 'auto-chat', value: { id: 'restart-result', conversationId: 'auto-chat',
+        actorId: 'owner', sourceRunId: first.lastRunId, status: 'pending', createdAt: now } },
+      { namespace: 'background-followup-pending', id: 'restart-result', ownerId: 'auto-chat', value: true },
+    ]);
+    await app.close();
+    let woke!: () => void;
+    const wakeFinished = new Promise<void>(resolve => { woke = resolve; });
+    const nativeWake = ApplicationAutomations.prototype.wake;
+    jest.spyOn(ApplicationAutomations.prototype, 'wake').mockImplementation(async function (this: ApplicationAutomations, id) {
+      await nativeWake.call(this, id);
+      if (id === task.id) woke();
+    });
+    const initialize = SubagentFeedback.prototype.initialize;
+    jest.spyOn(SubagentFeedback.prototype, 'initialize').mockImplementationOnce(async function (this: SubagentFeedback) {
+      await initialize.call(this);
+      // 固定生产中已有的先后关系：后台回执已唤醒，自动任务尚未开始恢复。
+      await wakeFinished;
+    });
+    app = await open();
+    const restored = (await app.automations.list('owner')).find(record => record.id === task.id)!;
+    if (awaitingBackground) {
+      expect(restored).toMatchObject({ status: 'paused', pauseReason: 'restart', awaitingBackground: true });
+      expect(restored.followupPending).not.toBe(true);
+      await app.automations.tick(now);
+      expect(calls).toHaveLength(1);
+      expect(await app.subagents.feedback.continuation.hasPending('auto-chat')).toBe(true);
+    } else {
+      expect(restored).toMatchObject({ status: 'active', followupPending: true, nextRunAt: now });
+      await app.automations.tick(now);
+      await until(task.id, record => record.completedRuns === 2 && !record.currentRequestKey);
+      expect(calls).toHaveLength(2);
+      expect(JSON.stringify(calls[1].messages)).toContain('重启前保存的后台结果');
+      expect(await app.subagents.feedback.continuation.hasPending('auto-chat')).toBe(false);
+    }
+  });
+
+  test('自动任务已经关闭后，迟到的后台唤醒不再更改记录', async () => {
+    const task = await create();
+    const before = await app.storage.getVersionedRecord('automations', task.id);
+    await app.automations.close();
+    await app.automations.wake(task.id);
+    expect(await app.storage.getVersionedRecord('automations', task.id)).toEqual(before);
+  });
+
+  test.each(['初次读取', '队列读取'])('后台唤醒的%s期间关闭后不再提交状态', async stage => {
+    const task = await create();
+    const before = await app.storage.getVersionedRecord('automations', task.id);
+    let enter!: () => void, release!: () => void;
+    const entered = new Promise<void>(resolve => { enter = resolve; });
+    const waiting = new Promise<void>(resolve => { release = resolve; });
+    if (stage === '初次读取') {
+      const read = app.storage.getRecord.bind(app.storage);
+      jest.spyOn(app.storage, 'getRecord').mockImplementationOnce(async (...args) => {
+        const result = await read(...args); enter(); await waiting; return result;
+      });
+    } else {
+      const read = app.storage.getVersionedRecord.bind(app.storage);
+      jest.spyOn(app.storage, 'getVersionedRecord').mockImplementationOnce(async (...args) => {
+        const result = await read(...args); enter(); await waiting; return result;
+      });
+    }
+    const waking = app.automations.wake(task.id);
+    let closing: Promise<void> | undefined;
+    try {
+      await entered;
+      closing = app.automations.close();
+      release();
+      await Promise.all([waking, closing]);
+      expect(await app.storage.getVersionedRecord('automations', task.id)).toEqual(before);
+    } finally { release(); await Promise.allSettled([waking, ...(closing ? [closing] : [])]); }
+  });
+
   test('暂停后可以修改目标和模型选择，原用量与对话保持，保存本身不执行', async () => {
     const goal = await create(); await app.automations.tick(now);
     await until(goal.id, record => record.completedRuns === 1 && !record.currentRequestKey); await app.automations.pause('owner', goal.id);
@@ -249,6 +554,117 @@ describe('持久目标和定时触发', () => {
     let cursor = { timestamp: now, runId: '' }; const paged: string[] = [];
     for (;;) { const rows = await app.storage.listRuns({ completedAfter: cursor, limit: 1 }); if (!rows.length) break; paged.push(rows[0].id); cursor = { timestamp: rows[0].updatedAt, runId: rows[0].id }; }
     expect(new Set(paged).size).toBe(3);
+  });
+
+  test.each([
+    { restart: false, pending: false }, { restart: false, pending: true },
+    { restart: true, pending: false }, { restart: true, pending: true },
+  ])('来源对话删除后暂停监听并保留执行对话：$restart 重启，$pending 待处理事件', async ({ restart, pending }) => {
+    await app.createConversation('owner', '将被删除的来源', undefined, { platformMode: 'chat' }, undefined, { id: 'deleted-source' });
+    const task = await create({ kind: 'event', event: {
+      trigger: { type: 'run_completed', conversationId: 'deleted-source' }, busyPolicy: 'latest', restartPolicy: 'resume',
+    } });
+    let sourceRunId: string | undefined;
+    if (pending) {
+      const source = await app.runtime.start({ actorId: 'owner', conversationId: 'deleted-source', agentId: 'default', providerId,
+        requestKey: 'deleted-source-seed', message: { role: 'user', parts: [{ text: '执行来源任务。' }] } });
+      sourceRunId = source.id;
+      await app.runtime.wait(source.id);
+      await until(task.id, record => !!record.pendingEvent);
+    }
+    // 关闭监听后删除来源，覆盖下一次启动才发现来源缺失的情况。
+    if (restart) await app.automations.close();
+    await deleteConversation(app, 'owner', 'deleted-source');
+    if (restart) { await app.close(); app = await open(); }
+    const paused = await until(task.id, record => record.status === 'paused' && record.pauseReason === 'error');
+    expect(paused.error).toContain('来源对话已经删除');
+    expect(paused.pendingEvent).toBeUndefined();
+    expect(paused.nextRunAt).toBeUndefined();
+    if (pending) expect(paused.recentEvents).toEqual(expect.arrayContaining([
+      expect.objectContaining({ sourceRunId, status: 'cancelled', reason: paused.error }),
+    ]));
+    expect(await app.storage.getConversation('auto-chat')).not.toBeNull();
+    expect(await app.storage.getConversation('deleted-source')).toBeNull();
+    await app.automations.tick(now);
+    expect(app.automations.keepsAlive).toBe(false);
+    expect(calls).toHaveLength(pending ? 1 : 0);
+  });
+
+  test.each(['当前运行', '父轮结束前的后台任务', '父轮结束后的后台任务'])('来源删除只暂停后续监听，保留%s的工具和模型循环', async stage => {
+    let toolEntered!: () => void, releaseTool!: () => void, parentEntered!: () => void, releaseParent!: () => void;
+    const toolStarted = new Promise<void>(resolve => { toolEntered = resolve; });
+    const toolWaiting = new Promise<void>(resolve => { releaseTool = resolve; });
+    const parentStarted = new Promise<void>(resolve => { parentEntered = resolve; });
+    const parentWaiting = new Promise<void>(resolve => { releaseParent = resolve; });
+    let gatedRunId = '', parentCalls = 0, childCalls = 0;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    app.tools.register({ declaration: { name: 'source_delete_gate', description: '来源删除期间保留执行的测试工具',
+      parameters: { type: 'object', properties: {} } }, effects: () => [], execute: async (_args, context) => {
+      gatedRunId = context.runId; toolEntered(); await toolWaiting; return { success: true };
+    } });
+    const settings = app.settings.snapshot();
+    settings.settings.agents.push({ ...settings.settings.agents[0], id: 'source-delete-agent', name: '来源删除测试', providerId,
+      toolNames: ['subagents', 'source_delete_gate'] });
+    await app.settings.save({ settings: settings.settings, expectedRevision: settings.revision });
+    await app.createConversation('owner', '删除来源', undefined, { platformMode: 'chat' }, undefined, { id: 'running-source' });
+    await app.createConversation('owner', '保留当前执行', undefined, { platformMode: 'code' }, undefined, { id: 'running-target' });
+    generate = async input => {
+      if (input.conversationId === 'running-source') return answer();
+      if (input.conversationId === 'running-target') {
+        if (++parentCalls === 1) return { ...answer(), parts: [{ functionCall: stage === '当前运行'
+          ? { id: 'retain-parent', name: 'source_delete_gate', args: {} }
+          : { id: 'retain-child', name: 'subagents', args: { agentName: 'General Worker', prompt: '完成已开始的后台工作。', background: true } } }] };
+        if (stage !== '当前运行') { parentEntered(); await parentWaiting; }
+        return answer();
+      }
+      return ++childCalls === 1 ? { ...answer(), parts: [{ functionCall: { id: 'child-gate', name: 'source_delete_gate', args: {} } }] } : answer();
+    };
+    const task = await create({ kind: 'event', conversationId: 'running-target', agentId: 'source-delete-agent', event: {
+      trigger: { type: 'run_completed', conversationId: 'running-source' }, busyPolicy: 'latest', restartPolicy: 'resume',
+    } });
+    try {
+      const source = await app.runtime.start({ actorId: 'owner', conversationId: 'running-source', agentId: 'default', providerId,
+        requestKey: 'running-source-seed', message: { role: 'user', parts: [{ text: '触发事件任务。' }] } });
+      await app.runtime.wait(source.id); await until(task.id, record => !!record.pendingEvent);
+      await app.automations.tick(now);
+      await Promise.race([Promise.all([toolStarted, ...(stage === '当前运行' ? [] : [parentStarted])]), new Promise<never>((_resolve, reject) => {
+        timer = setTimeout(() => reject(new Error('来源删除夹具未进入模型和工具门闩')), 5000);
+      })]);
+      clearTimeout(timer);
+      if (stage === '父轮结束后的后台任务') {
+        releaseParent();
+        await until(task.id, record => record.completedRuns === 1 && !!record.awaitingBackground && !record.currentRequestKey);
+      }
+      await deleteConversation(app, 'owner', 'running-source');
+      await until(task.id, record => record.status === 'paused' && record.pauseReason === 'error');
+      if (stage === '父轮结束前的后台任务') {
+        releaseParent(); await until(task.id, record => record.completedRuns === 1 && !record.currentRequestKey);
+      }
+      releaseTool();
+      expect((await app.runtime.wait(gatedRunId))?.status).toBe('completed');
+      const settled = await until(task.id, record => record.completedRuns === 1 && !record.currentRequestKey);
+      expect(settled.status).toBe('paused'); expect(settled.error).toContain('来源对话已经删除');
+      await app.automations.tick(now + 60_000);
+      expect(parentCalls).toBe(2); expect(childCalls).toBe(stage === '当前运行' ? 0 : 2);
+    } finally { clearTimeout(timer); releaseTool(); releaseParent(); }
+  });
+
+  test('删除来源时一个监听读取失败不妨碍其他同源监听暂停', async () => {
+    await app.createConversation('owner', '共享来源', undefined, { platformMode: 'chat' }, undefined, { id: 'shared-source' });
+    await app.createConversation('owner', '其他监听', undefined, { platformMode: 'chat' }, undefined, { id: 'other-listener' });
+    const event = { trigger: { type: 'run_completed', conversationId: 'shared-source' }, busyPolicy: 'latest', restartPolicy: 'resume' };
+    const first = await create({ kind: 'event', event });
+    const other = await create({ kind: 'event', conversationId: 'other-listener', event });
+    const read = app.storage.getVersionedRecord.bind(app.storage);
+    let failed = false;
+    jest.spyOn(app.storage, 'getVersionedRecord').mockImplementation(async (namespace, id) => {
+      if (!failed && namespace === 'automations' && id === first.id) { failed = true; throw new Error('fixture deleted-source read'); }
+      return read(namespace, id);
+    });
+    await deleteConversation(app, 'owner', 'shared-source');
+    const paused = await until(other.id, record => record.status === 'paused');
+    expect(paused.error).toContain('来源对话已经删除');
+    expect(failed).toBe(true); expect(calls).toHaveLength(0);
   });
 
   test('补发读取期间切换来源，旧来源游标不能覆盖新配置或重放新来源的旧任务', async () => {

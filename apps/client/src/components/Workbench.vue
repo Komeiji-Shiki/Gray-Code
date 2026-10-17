@@ -180,7 +180,12 @@ async function readyModel(doc: DocumentState) {
   const module = await (modelModule ??= import('../workbenchModels'));
   if (disposed || !documents.includes(doc)) throw new Error(t('uiWorkbenchEditorLoadingReplacement'));
   editorRegistry.value ??= new module.WorkbenchDocumentModels({ change, flush: flushDocument,
-    open: (path, workspaceId, range, focus) => open(path, workspaceId, range, focus),
+    open: async (path, workspaceId, range, focus) => {
+      const target = await open(path, workspaceId, range, focus);
+      if (!target) throw new Error(t('uiWorkbenchEditorLoadingReplacement'));
+      // 跨文件编辑会后台打开目标，不能依赖可见文档的 watcher 创建模型与语言绑定。
+      await readyModel(target);
+    },
   });
   return editorRegistry.value.prepare(doc).model;
 }
@@ -311,6 +316,7 @@ async function open(path: string, workspaceId = state.workspaceId, selection?: I
       if (selection) selections[id] = { ...selection };
     }
     await nextTick();
+    return doc;
   } catch (error) {
     if (!disposed && (!focus || currentIntent())) throw error;
   }

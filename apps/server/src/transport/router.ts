@@ -39,6 +39,10 @@ export class ApplicationRouter {
     if (!app.actor(session.actorId)) throw new Error("Account is unavailable.");
     validateRpcParams(method, params);
     this.clientConnected(session.clientId);
+    if (method === 'ui.view.prepare') {
+      app.requireOwner(session.actorId);
+      return app.productUi.commands.prepare(session, params.resumeViewId);
+    }
     if (hasRpcHandler(method)) return rpcRequest(app, session, method, params);
     if (method.startsWith('git.')) return gitRequest(app, session, method, params);
     if (method.startsWith('debug.')) return debugRequest(app, session, method, params);

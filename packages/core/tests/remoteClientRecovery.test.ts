@@ -153,6 +153,35 @@ test('旧提示词准备挂起时仍能经真实 HTTP 重连并进入取消，�
   }
 });
 
+test('关闭入口释放失败后仍可重试，并发关闭和成功后的关闭共用结果', async () => {
+  const f = await fixture(); await f.store.close();
+  const app = await PlatformApplication.open({ dataDirectory: f.data });
+  const token = 'isolated-close-retry-client-token';
+  const http = await startHttpServer(app, { token });
+  const close = jest.spyOn(http.router, 'clientClosed').mockRejectedValueOnce(new Error('temporary close failure'));
+  const warn = jest.spyOn(console, 'warn').mockImplementation(() => {});
+  try {
+    const response = await fetch(`http://127.0.0.1:${http.port}/rpc`, {
+      method: 'POST', headers: { Authorization: 'Bearer ' + token, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ method: 'session.info' }),
+    });
+    expect(response.status).toBe(200); await response.json();
+    const first = http.close();
+    expect(http.close()).toBe(first);
+    await expect(first).rejects.toThrow('Web 客户端资源未能全部释放');
+    expect(http.diagnostics().failedClientReleases).toBe(1);
+    await expect(http.close()).resolves.toBeUndefined();
+    expect(http.diagnostics().failedClientReleases).toBe(0);
+    expect(close).toHaveBeenCalledTimes(2);
+    await http.close();
+    expect(close).toHaveBeenCalledTimes(2);
+  } finally {
+    close.mockRestore(); warn.mockRestore();
+    // 旧实现复现时监听已关，但失败 Promise 仍被缓存；应用负责释放本夹具的剩余资源。
+    await http.close().catch(() => {}); await app.close(); await f.cleanup();
+  }
+});
+
 test('释放失败保留诊断并在离线期间重试，成功后才清除失败状态', async () => {
   const f = await fixture(); await f.store.close();
   const app = await PlatformApplication.open({ dataDirectory: f.data });
@@ -190,4 +219,74 @@ test('离线的脏文档经过其它客户端目录移动后仍可恢复原正�
     await expect(rpc('documents.save', { path: recovered.path, version: recovered.version })).rejects.toThrow('FILE_CONFLICT');
     expect(await readFile(path.join(f.source, 'moved.txt'), 'utf8')).toBe('saved');
   } finally { await app.close(); await f.cleanup(); }
+});
+
+test('显式界面命令等待真实 SSE 接通，断线期间的普通 RPC 不恢复投递', async () => {
+  const f = await fixture(); await f.store.close();
+  const app = await PlatformApplication.open({ dataDirectory: f.data });
+  const token = 'isolated-ui-command-stream-token';
+  const http = await startHttpServer(app, { token });
+  const origin = `http://127.0.0.1:${http.port}`;
+  const headers = { Authorization: 'Bearer ' + token, 'Content-Type': 'application/json' };
+  const controllers: AbortController[] = [];
+  const deadlines: ReturnType<typeof setTimeout>[] = [];
+  const published: Record<string, unknown>[] = [];
+  const unsubscribe = app.subscribe(event => { if (event.type === 'ui.message') published.push(event); });
+  const rpc = async (method: string, params: object = {}) => {
+    const response = await fetch(origin + '/rpc', { method: 'POST', headers, body: JSON.stringify({ method, params }) });
+    const value = await response.json() as { result: unknown; error?: string };
+    if (!response.ok) throw new Error(value.error);
+    return value.result;
+  };
+  const ui = (type: string, data: object = {}) => rpc('ui.request', { type, data });
+  const connect = async () => {
+    const controller = new AbortController(); controllers.push(controller);
+    // 失败也要结束拥有的流，不能让漏发命令把夹具永远留在 reader.read。
+    const deadline = setTimeout(() => controller.abort(), 10_000); deadline.unref(); deadlines.push(deadline);
+    const response = await fetch(origin + '/events', { headers, signal: controller.signal });
+    const reader = response.body!.getReader();
+    return { controller, reader, ...await synchronized(reader) };
+  };
+  const received = async (connection: Awaited<ReturnType<typeof connect>>, command: string) => {
+    while (!connection.text.includes(`"command":"${command}"`)) {
+      const chunk = await connection.reader.read();
+      if (chunk.done) throw new Error('命令交付前事件连接结束');
+      connection.text += Buffer.from(chunk.value).toString('utf8');
+    }
+  };
+  try {
+    const prepared = await rpc('ui.view.prepare');
+    if (!prepared || typeof prepared !== 'object' || !('viewId' in prepared) || typeof prepared.viewId !== 'string') {
+      throw new Error('主聊天身份未准备');
+    }
+    const viewId = prepared.viewId;
+    await ui('ui.command', { command: 'newChat' });
+    await ui('webviewReady', { viewId });
+    expect(published).toEqual([]);
+    const first = await connect();
+    await received(first, 'newChat');
+    expect(published).toHaveLength(1);
+
+    first.controller.abort();
+    await waitUntil(() => http.diagnostics().connections === 0);
+    await ui('ui.command', { command: 'showSettings' });
+    await ui('ui.state.get');
+    expect(published).toHaveLength(1);
+    const second = await connect();
+    expect(published).toHaveLength(1);
+    await ui('webviewReady', { viewId });
+    await received(second, 'showSettings');
+    expect(published).toHaveLength(2);
+
+    const parallel = await connect();
+    second.controller.abort();
+    await waitUntil(() => http.diagnostics().connections === 1);
+    await ui('ui.command', { command: 'showHistory' });
+    await received(parallel, 'showHistory');
+    expect(published).toHaveLength(3);
+  } finally {
+    for (const deadline of deadlines) clearTimeout(deadline);
+    for (const controller of controllers) controller.abort();
+    unsubscribe(); await http.close(); await app.close(); await f.cleanup();
+  }
 });

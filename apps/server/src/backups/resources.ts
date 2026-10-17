@@ -1,10 +1,18 @@
 import { createHash } from 'node:crypto';
-import type { BackupManifest, PetResource } from '@graycode/contracts';
+import type { BackupManifest, PetResource, ScreenSenseStoredConfiguration } from '@graycode/contracts';
 import type { PlatformStorage } from '@graycode/core';
 import { petAssetPath } from '../../../../shared/petFormat';
+import { pauseRestoredFeedback } from '../subagents/feedback';
+import { pauseRestoredTerminalFeedback } from '../terminal/service';
 
 const hash = (bytes: Uint8Array | string) => createHash('sha256').update(bytes).digest('hex');
 const resourceVersions = new Set(['conversations', 'settings', 'memories', 'devices', 'pets', 'screen', 'skills', 'other']);
+
+/** 标记随恢复副本一起切换；便携配置成功写回前，重启仍以本次恢复的设置为准。 */
+export async function preferRestoredSettings(storage: PlatformStorage) {
+  const previous = await storage.getRecord('portable-profile', 'main') as Record<string, unknown> | null;
+  await storage.putRecord({ namespace: 'portable-profile', id: 'main', value: { ...previous, preferDatabase: true } });
+}
 
 /** 清单版本之外，再核对桌宠文件之间的引用；附件块校验不能代替资源完整性校验。 */
 export async function validateBackupResources(storage: PlatformStorage, manifest?: BackupManifest) {
@@ -32,6 +40,8 @@ export async function validateBackupResources(storage: PlatformStorage, manifest
 
 /** 从备份恢复的连接和未完成任务等待重新启用，避免重复发送旧请求。 */
 export async function pauseRestoredActivities(storage: PlatformStorage) {
+  await pauseRestoredFeedback(storage);
+  await pauseRestoredTerminalFeedback(storage);
   for (const id of await storage.listRecords('automations')) {
     const record = await storage.getRecord('automations', id) as Record<string, any>;
     if (record.status === 'completed') continue;
@@ -46,6 +56,10 @@ export async function pauseRestoredActivities(storage: PlatformStorage) {
     ...(settings.remoteAccess ? { remoteAccess: { ...settings.remoteAccess, enabled: false } } : {}),
     ...(settings.clawd ? { clawd: { ...settings.clawd, enabled: false } } : {}),
   } });
+  const screen = await storage.getRecord('screen-sense-configuration', 'local') as ScreenSenseStoredConfiguration | null;
+  if (screen?.target && screen.autoStartOnOpen) await storage.putRecord({
+    namespace: 'screen-sense-configuration', id: 'local', value: { ...screen, autoStartOnOpen: false },
+  });
   const node = await storage.getRecord('execution-node', 'local') as Record<string, any> | null;
   if (node) await storage.putRecord({ namespace: 'execution-node', id: 'local', value: { ...node, settings: { ...node.settings, enabled: false } } });
   for (const id of await storage.listRecords('node-peers')) {

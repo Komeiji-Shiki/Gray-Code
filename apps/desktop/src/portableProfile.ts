@@ -54,7 +54,10 @@ export class DesktopPortableProfile {
     }
     this.codec = keySecretCodec(key);
     if (!bytes) { await this.save(application); return; }
-    const previous = await application.storage.getRecord('portable-profile', 'main') as { fingerprint: string; revision: number } | null;
+    const previous = await application.storage.getRecord('portable-profile', 'main') as {
+      fingerprint?: string; revision?: number; preferDatabase?: boolean;
+    } | null;
+    if (previous?.preferDatabase === true) { await this.save(application); return; }
     if (previous?.fingerprint === fingerprint(bytes) && previous.revision === application.settings.snapshot().revision) return;
     // 在启动后台任务之前导入；解密或校验失败时保留原文件，不以空配置覆盖。
     const value = JSON.parse(await this.codec.decrypt(bytes));

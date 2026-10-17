@@ -76,8 +76,7 @@ export function createTab(
 export function closeTab(
   state: ChatStoreState,
   tabId: string,
-  cancelStreamAndRejectTools: () => Promise<void>,
-  streamHandlerCtx?: StreamHandlerContext,
+  activateTab: (tabId: string) => void,
   cancelStreamByConversationId?: (conversationId: string) => Promise<void>
 ): void {
   const tabs = state.openTabs.value
@@ -119,14 +118,12 @@ export function closeTab(
       // 切换到相邻标签页（优先右边，否则左边）
       const nextIndex = Math.min(tabIndex, newTabs.length - 1)
       const nextTab = newTabs[nextIndex]
-      switchTab(state, nextTab.id, cancelStreamAndRejectTools, streamHandlerCtx)
+      // 关闭触发的聚焦也经过上层恢复，避免只切换快照而漏掉配置和历史刷新。
+      activateTab(nextTab.id)
     } else {
       // 没有剩余标签页，创建一个新的
       const newTabId = createTab(state, { title: t('components.tabs.newChat'), switchTo: false })
-      if (newTabId) {
-        resetConversationState(state)
-        state.activeTabId.value = newTabId
-      }
+      if (newTabId) activateTab(newTabId)
     }
   }
 }

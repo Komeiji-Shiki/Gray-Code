@@ -187,24 +187,30 @@ export async function extractBackupArchive(options: {
       options.signal.throwIfAborted();
       const source = await archive.openReadStreamPromise(entries.get(file.path));
       const content = key ? Readable.from(decrypt(source, key, file.path)) : source;
-      const hash = createHash('sha256'); let bytes = 0;
-      const check = new Transform({ transform(chunk, _encoding, done) {
-        bytes += chunk.length; processed += chunk.length; hash.update(chunk);
-        options.progress(processed, total, file.path); done(null, chunk);
-      } });
-      if (file.path === 'credentials.json') {
-        const value = await buffer(content, metadataLimit);
-        bytes = value.length; hash.update(value);
-        credentials = JSON.parse(value.toString('utf8'));
-        if (!credentials || typeof credentials !== 'object' || Array.isArray(credentials) ||
-          Object.values(credentials).some(value => typeof value !== 'string')) throw new Error('备份密钥格式无效。');
-      } else {
-        const target = path.join(options.directory, file.path.slice('data/'.length));
-        await fs.mkdir(path.dirname(target), { recursive: true });
-        await pipeline(content, check, createWriteStream(target, { flags: 'wx', mode: file.mode }), { signal: options.signal });
-        await fs.chmod(target, file.mode);
+      try {
+        const hash = createHash('sha256'); let bytes = 0;
+        const check = new Transform({ transform(chunk, _encoding, done) {
+          bytes += chunk.length; processed += chunk.length; hash.update(chunk);
+          options.progress(processed, total, file.path); done(null, chunk);
+        } });
+        if (file.path === 'credentials.json') {
+          const value = await buffer(content, metadataLimit);
+          bytes = value.length; hash.update(value);
+          credentials = JSON.parse(value.toString('utf8'));
+          if (!credentials || typeof credentials !== 'object' || Array.isArray(credentials) ||
+            Object.values(credentials).some(value => typeof value !== 'string')) throw new Error('备份密钥格式无效。');
+        } else {
+          const target = path.join(options.directory, file.path.slice('data/'.length));
+          await fs.mkdir(path.dirname(target), { recursive: true });
+          await pipeline(content, check, createWriteStream(target, { flags: 'wx', mode: file.mode }), { signal: options.signal });
+          await fs.chmod(target, file.mode);
+        }
+        if (bytes !== file.bytes || hash.digest('hex') !== file.sha256) throw new Error(`备份校验失败：${file.path}`);
+      } finally {
+        content.destroy();
+        // 解密迭代尚未开始时，销毁包装流不会进入生成器，仍须释放 ZIP 条目的独立文件引用。
+        if (content !== source) source.destroy();
       }
-      if (bytes !== file.bytes || hash.digest('hex') !== file.sha256) throw new Error(`备份校验失败：${file.path}`);
     }
     return { manifest, credentials };
   } finally { key?.fill(0); archive.close(); }

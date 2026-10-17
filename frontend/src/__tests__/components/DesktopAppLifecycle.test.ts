@@ -5,7 +5,8 @@ import App from '../../../../apps/client/src/App.vue';
 import { state } from '../../../../apps/client/src/state';
 
 const mocks = vi.hoisted(() => ({ call: vi.fn(), report: vi.fn(), initialize: vi.fn(), listener: undefined as ((event: any) => void) | undefined, unsubscribe: vi.fn() }));
-vi.mock('../../../../apps/client/src/api', () => ({ call: mocks.call, subscribe: (listener: typeof mocks.listener) => { mocks.listener = listener; return mocks.unsubscribe; } }));
+vi.mock('../../../../apps/client/src/api', () => ({ call: mocks.call, rpc: mocks.call,
+  subscribe: (listener: typeof mocks.listener) => { mocks.listener = listener; return mocks.unsubscribe; } }));
 vi.mock('../../../../apps/client/src/state', async () => {
   const { reactive, ref } = await import('vue');
   return { state: reactive({ ready: false, mode: 'chat', chatFocused: false, settingsOpen: false, workspaceId: 'project', conversationId: 'conversation', snapshot: { settings: { workspaces: [] } } }),
@@ -27,11 +28,16 @@ vi.mock('../../../../apps/client/src/components/PetSurface.vue', () => ({ defaul
 vi.mock('../../../../apps/client/src/components/ScreenSenseStatus.vue', () => ({ default: { template: '<div />' } }));
 let wrapper: ReturnType<typeof shallowMount> | undefined;
 beforeEach(() => {
-  mocks.call.mockReset().mockResolvedValue({}); mocks.initialize.mockReset(); mocks.report.mockReset(); mocks.unsubscribe.mockReset(); mocks.listener = undefined;
+  mocks.call.mockReset().mockImplementation(async (method: string) => {
+    if (method === 'ui.view.prepare') return { accepted: true, viewId: 'lifecycle-main' };
+    if (method === 'desktop.files.ready') mocks.listener?.({ type: 'ui.ready', viewId: 'lifecycle-main' });
+    return {};
+  });
+  mocks.initialize.mockReset(); mocks.report.mockReset(); mocks.unsubscribe.mockReset(); mocks.listener = undefined;
   Object.assign(state, { ready: false, mode: 'chat', chatFocused: false, settingsOpen: false, workspaceId: 'project' });
   localStorage.clear();
   vi.stubGlobal('matchMedia', () => ({ matches: false, addEventListener() {}, removeEventListener() {} }));
-  mocks.initialize.mockImplementation(async () => { state.ready = true; mocks.listener?.({ type: 'ui.ready' }); });
+  mocks.initialize.mockImplementation(async () => { state.ready = true; });
 });
 afterEach(() => { wrapper?.unmount(); wrapper = undefined; localStorage.clear(); vi.unstubAllGlobals(); });
 

@@ -16,6 +16,7 @@ export class WebSessions {
   private bearerInfo?: Omit<WebConnectionInfo, 'connected'>;
   private generation = 0;
   private saves: Promise<void> = Promise.resolve();
+  private saveFailed = false;
   private lastActivitySaved = 0;
   constructor(token: string, private readonly actorId: string, private readonly secure: boolean, private readonly changed: () => void = () => {}, private readonly store?: WebSessionStore) {
     if (token.length < 32) throw new Error('请通过环境变量提供至少 32 个字符的随机访问令牌。');
@@ -34,12 +35,16 @@ export class WebSessions {
   private persist(): void {
     if (!this.store) return;
     const value: WebSessionSnapshot = { version: 1, tokenHash: this.expected.toString('hex'), browsers: structuredClone([...this.browsers]) };
-    this.saves = this.saves.catch(() => {}).then(() => this.store!.write(value));
-    // 请求和关闭入口时等待写入；后台更新时间不产生未处理的拒绝。
-    void this.saves.catch(() => {});
+    const saving = this.saves.catch(() => {}).then(() => this.store!.write(value));
+    this.saves = saving; this.saveFailed = false;
+    // 只标记最新快照的失败；已排队的新快照会覆盖旧写入，无需再追加一次保存。
+    void saving.catch(() => { if (this.saves === saving) this.saveFailed = true; });
     this.lastActivitySaved = Date.now();
   }
-  flush(): Promise<void> { return this.saves; }
+  flush(): Promise<void> {
+    if (this.saveFailed) this.persist();
+    return this.saves;
+  }
   matches(token: unknown): boolean { return typeof token === 'string' && timingSafeEqual(this.expected, this.hash(token)); }
   private cookie(request: IncomingMessage): string | undefined {
     return request.headers.cookie?.split(';').map(part => part.trim()).find(part => part.startsWith(`${cookieName}=`))?.slice(cookieName.length + 1);

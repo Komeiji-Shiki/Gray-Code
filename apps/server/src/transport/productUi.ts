@@ -28,6 +28,7 @@ import type { ClientSession } from './router';
 import type { ProductSettingsDraft } from '../settings/product';
 import { productSettingsHandlers } from './productSettings';
 import { ProductChat } from './productChat';
+import { ProductCommands } from './productCommands';
 import { SettingsTransfer } from '../settings/transfer';
 import { ConversationNavigation } from '../conversations/navigation';
 import { NavigationOrderingStore } from '../conversations/navigationOrdering';
@@ -43,6 +44,7 @@ interface UiSession { mode?: 'chat' | 'code' | 'character'; preferences: Product
 export class ProductUi {
   readonly conversations: ConversationManager;
   readonly chat: ProductChat;
+  readonly commands: ProductCommands;
   private readonly checkpointUi: CheckpointUi;
   private readonly clients = new Map<string, Promise<UiSession>>();
   private readonly clientContexts = new Map<string, Pick<UiSession, 'mode' | 'workspaceId'>>();
@@ -52,6 +54,7 @@ export class ProductUi {
   private readonly fileSearches = new WorkspaceFileSearches();
   constructor(private readonly app: PlatformApplication) {
     this.chat = new ProductChat(app);
+    this.commands = new ProductCommands(event => app.publish(event));
     this.checkpointUi = new CheckpointUi(app);
     this.conversations = new ConversationManager(new SqliteStorageAdapter(app.storage));
   }
@@ -79,6 +82,7 @@ export class ProductUi {
   }
   async clientClosed(clientId: string): Promise<void> {
     this.disconnectedClients.add(clientId); this.chat.clientClosed(clientId);
+    this.commands.disconnected(clientId);
     const queued = this.queues.get(clientId); const session = this.clients.get(clientId);
     // 已受理的输入和设置写入继续完成；离线草稿可重连恢复，不能阻塞其他客户端交互。
     // 清理等待留在后台，不能让旧的准备请求挡住重连后的取消入口。
@@ -96,6 +100,12 @@ export class ProductUi {
   }
   async call(client: ClientSession, type: string, data: Record<string, any> = {}): Promise<unknown> {
     this.clientConnected(client.clientId);
+    // 握手不能排在等待页面接收的交互后面；它不读取或修改设置草稿。
+    if (type === 'webviewReady') {
+      this.app.requireOwner(client.actorId);
+      if (typeof data.viewId !== 'string' || !data.viewId) throw new Error('主聊天视图身份无效。');
+      return this.commands.ready(client.clientId, data.viewId);
+    }
     if (type === 'conversation.listConversations') {
       this.app.requireOwner(client.actorId);
       // 全量 ID 扫描只读已保存会话，不能排在首次发送和会话切换前占用交互队列。
@@ -206,7 +216,7 @@ export class ProductUi {
       case 'ui.state.get': return this.uiState(client);
       case 'ui.state.set':
         await this.app.storage.putRecord({ namespace: 'ui-state', id: JSON.stringify([client.actorId, client.uiStateKey ?? client.clientId]), value: data.value }); return;
-      case 'ui.command': notify({ type: 'command', command: data.command, data: data.data }); return;
+      case 'ui.command': this.commands.send(client.clientId, { type: 'command', command: data.command, data: data.data }); return;
       case 'ui.view.set': this.app.publish({ type: 'ui.view.changed', clientId: client.clientId, view: data.view }); return;
       case 'ui.conversation.views': {
         const views = (Array.isArray(data.views) ? data.views : []).slice(0, 100).map((item: any) => ({
@@ -215,7 +225,6 @@ export class ProductUi {
         }));
         this.app.publish({ type: 'ui.conversation.views', clientId: client.clientId, views }); return { success: true };
       }
-      case 'webviewReady': this.app.publish({ type: 'ui.ready', clientId: client.clientId }); return { success: true };
     }
     if (type === 'ui.context.set' || type === 'ui.conversation.focus') {
       const existing = await this.clients.get(client.clientId);

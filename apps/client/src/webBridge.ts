@@ -61,7 +61,8 @@ export async function webRequest(url: string, body?: unknown, timeoutMs = ['/aut
   }
 }
 async function rpc(method: string, params: Record<string, unknown> = {}) {
-  const timeout = method === 'settings.get' || method === 'ui.context.set' || (method === 'ui.request' && params.type === 'webviewReady') ? 20_000 : 0;
+  const timeout = method === 'settings.get' || method === 'ui.context.set' || method === 'ui.view.prepare'
+    || (method === 'ui.request' && params.type === 'webviewReady') ? 20_000 : 0;
   return (await webRequest('/rpc', { method, params }, timeout)).result;
 }
 export async function browseDirectory(directory = '') {

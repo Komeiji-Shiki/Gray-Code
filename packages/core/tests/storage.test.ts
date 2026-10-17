@@ -244,8 +244,11 @@ describe('independent SQLite storage worker', () => {
     await f.store.appendHistory('existing', [message(1)]);
     await f.store.close();
     const database = new Database(path.join(f.data, 'platform.sqlite'));
-    // 还原一代数据库时同时移除后续加入的记忆表，避免把新结构伪装成旧版本。
-    database.exec(`DROP TABLE long_memory_job_dependencies; DROP TABLE long_memory_jobs;
+    // 同时移除后续加入的索引和记忆表，避免把新结构伪装成旧版本。
+    database.exec(`DROP TRIGGER history_search_ai; DROP TRIGGER history_search_ad;
+      DROP TABLE history_search_fts; DROP TABLE history_search; DROP INDEX entries_by_body;
+      ALTER TABLE histories DROP COLUMN search_revision; ALTER TABLE histories DROP COLUMN search_position;
+      DROP TABLE long_memory_job_dependencies; DROP TABLE long_memory_jobs;
       DROP TABLE long_memory_dependencies; DROP TABLE long_memory_supersedes; DROP TABLE long_memory_vectors;
       DROP TABLE long_memory_terms; DROP TABLE long_memory_records; DROP TABLE long_memory_sources;
       DROP TABLE long_memory_tombstones; DROP TABLE long_memory_scopes;

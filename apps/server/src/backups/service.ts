@@ -206,7 +206,7 @@ export class ApplicationBackups {
               { namespace: 'workspace-operations', id, delete: true }]);
           }
           await pauseRestoredActivities(restored);
-          migrations.push('从备份恢复的自动任务、Bot 自动连接和执行设备入口保持暂停；临时登录会话与未完成记忆整理不继续执行。');
+          migrations.push('从备份恢复的自动任务、Bot 自动连接和执行设备入口保持暂停，屏幕感知的自动开启功能已关闭；后台结果保留并等待手动继续，临时登录会话与未完成记忆整理不继续执行。');
           const catalog = await restoreCatalog(restored, this.storage, migrations, unavailableCredentials);
           pending.preview = catalog.preview; pending.requiresSelection = options.previewOnly === true; pending.unavailableCredentials = unavailableCredentials;
           await restored.checkpoint();

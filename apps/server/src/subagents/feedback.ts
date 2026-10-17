@@ -1,6 +1,6 @@
-import { BackgroundContinuation, type BackgroundFollowup } from './continuation';
+import { BackgroundContinuation, pauseRestoredContinuations, type BackgroundFollowup } from './continuation';
 import type { PlatformMessage, RunRecord, RecordMutation, VersionedRecord } from '@graycode/contracts';
-import { PlatformStorageError } from '@graycode/core';
+import { PlatformStorageError, type PlatformStorage } from '@graycode/core';
 import type { PlatformApplication } from '../application';
 import type { PlatformSubagent, SubagentParentConfiguration } from './types';
 import { PUSH_MESSAGE_NAMES } from '../../../../shared/protocol';
@@ -8,6 +8,26 @@ export interface PendingFeedback { id: string; conversationId: string; actorId: 
 
 // 每条交付最多写四条记录，单批保持在存储事务的 256 条上限内。
 const MAX_FEEDBACK_BATCH = 64;
+
+export async function pauseRestoredFeedback(storage: PlatformStorage): Promise<void> {
+  await pauseRestoredContinuations(storage);
+  for (const id of await storage.listRecords('subagent-feedback')) {
+    const pending = await storage.getRecord('subagent-feedback', id) as PendingFeedback;
+    if (pending.displayOnly) continue;
+    // 启动仍补齐结果历史和交付回执，但不能从旧备份再次创建自动模型请求。
+    await storage.putRecord({ namespace: 'subagent-feedback', id, ownerId: pending.conversationId,
+      value: { ...pending, displayOnly: true } satisfies PendingFeedback });
+  }
+  for (const id of await storage.listRecords('platform-subagents')) {
+    const child = await storage.getRecord('platform-subagents', id) as PlatformSubagent;
+    if (!child.background || child.restoredFeedbackOnly) continue;
+    const feedbackId = `subagent-${child.taskId ?? child.id}`;
+    if (await storage.getRecord('subagent-feedback', feedbackId) || await storage.getRecord('subagent-deliveries', feedbackId)) continue;
+    // 初始化会补建缺失回执；将暂停意图保存在原任务上，输出仍由原交付流程生成。
+    await storage.putRecord({ namespace: 'platform-subagents', id, ownerId: child.parentConversationId,
+      value: { ...child, restoredFeedbackOnly: true } satisfies PlatformSubagent });
+  }
+}
 
 /** 后台结果先保存到队列，只在主任务模型边界或空闲时追加历史。 */
 export class SubagentFeedback {
@@ -30,6 +50,7 @@ export class SubagentFeedback {
     const id = `subagent-${child.taskId ?? child.id}`;
     if (await this.app.storage.getRecord('subagent-deliveries', id)) return;
     const pending: PendingFeedback = { id, conversationId: child.parentConversationId, actorId: child.actorId, sourceRunId: child.parentRunId, parentConfiguration: child.parentConfiguration,
+      ...(child.restoredFeedbackOnly ? { displayOnly: true } : {}),
       message: { id, role: 'user', parts: [{ text: `[Background task ${child.status}]\n${child.agentName}\n\n${response}` }],
         timestamp: Date.now(), isUserInput: false, source: 'background_task', backgroundTask: { kind: 'subagent', taskId: child.id, runId: child.id, conversationId: child.parentConversationId, name: child.agentName, status: child.status }, userFeedback: { kind: 'subagent', subagentId: child.id } } };
     await this.enqueueMessage(pending);

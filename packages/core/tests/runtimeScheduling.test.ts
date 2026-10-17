@@ -4,9 +4,21 @@ import { fixture, metadata } from './fixtures';
 test('独立读取最多四个同时执行，写入保序，图片结果仍按调用顺序保存', async () => {
   const f = await fixture(); const tools = new RuntimeToolRegistry();
   let active = 0, maximum = 0, version = 0; const finished: number[] = [];
+  let releaseFirstBatch!: () => void;
+  const firstBatchReady = new Promise<void>(resolve => { releaseFirstBatch = resolve; });
+  // 工具开始事件先异步写入存储；不能假设四次写入会在第一个 12 ms 计时器结束前完成。
+  // 串行调度回归仍会放行并由 maximum 断言失败，避免夹具自身无限等待。
+  let firstBatchTimer: ReturnType<typeof setTimeout> | undefined;
   tools.register({ declaration: { name: 'read', description: '读取', parameters: { type: 'object', properties: { index: { type: 'integer' } } } },
     parallelRead: true, effects: () => ['public_read'], execute: async args => {
       const index = Number(args.index); active++; maximum = Math.max(maximum, active);
+      if (index < 4) {
+        if (!firstBatchTimer) {
+          firstBatchTimer = setTimeout(releaseFirstBatch, 1000); firstBatchTimer.unref();
+        }
+        if (active === 4) releaseFirstBatch();
+        await firstBatchReady;
+      }
       await new Promise(resolve => setTimeout(resolve, (4 - index % 4) * 3));
       active--; finished.push(index);
       return { success: true, data: { index, version }, attachments: [{ mimeType: 'image/png', data: Buffer.from('image-' + index).toString('base64') }] };
@@ -38,7 +50,7 @@ test('独立读取最多四个同时执行，写入保序，图片结果仍按�
     expect(emitted.flat().map(part => part.text).join('')).toBe('文'.repeat(1000)); expect(emitted).toHaveLength(2);
     const events = await f.store.readRunEvents(run.id);
     expect(events.find(event => event.type === 'message.saved')?.payload.streaming).toEqual({ inputEvents: 1000, outputEvents: 2 });
-  } finally { await runtime.close(); await f.cleanup(); }
+  } finally { clearTimeout(firstBatchTimer); await runtime.close(); await f.cleanup(); }
 });
 
 test('连续的派发调用一起启动，不受只读批次上限约束，后续写入等待整组结束', async () => {

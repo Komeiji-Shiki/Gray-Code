@@ -13,6 +13,61 @@ const until = async <T>(read: () => T | Promise<T>): Promise<T> => {
   throw new Error('远程状态未在预期时间内更新。');
 };
 
+test('停止入口失败后保留资源供重新启动和应用关闭重试', async () => {
+  const f = await fixture(); await f.store.close();
+  const token = 'isolated-remote-close-retry-token';
+  const app = await PlatformApplication.open({ dataDirectory: f.data,
+    remoteAccess: application => new RemoteAccessService(application, {}) });
+  const remote = app.remoteAccess!;
+  const close = jest.spyOn(app.files, 'clientClosed').mockRejectedValueOnce(new Error('temporary files close failure'));
+  const warn = jest.spyOn(console, 'warn').mockImplementation(() => {});
+  const connect = async () => {
+    const response = await fetch(remote.status().address! + '/rpc', {
+      method: 'POST', headers: { Authorization: 'Bearer ' + token, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ method: 'session.info' }),
+    });
+    expect(response.status).toBe(200); await response.json();
+  };
+  try {
+    await remote.initialize({ token, port: 0 }); await connect();
+    remote.stop(); await until(() => remote.status().state === 'error');
+    expect(remote.status().eventStream).toMatchObject({ failedClientReleases: 1 });
+    expect((await remote.start()).state).toBe('listening');
+    expect(close).toHaveBeenCalledTimes(2);
+    await connect();
+    close.mockRejectedValueOnce(new Error('temporary shutdown failure'));
+    await expect(app.close()).rejects.toThrow('远程入口');
+    await expect(app.close()).resolves.toBeUndefined();
+    expect(close).toHaveBeenCalledTimes(4);
+    expect(remote.status().state).toBe('stopped');
+  } finally { close.mockRestore(); warn.mockRestore(); await app.close(); await f.cleanup(); }
+});
+
+test('重新启动时残留资源仍释放失败，状态继续报告错误并允许稍后恢复', async () => {
+  const f = await fixture(); await f.store.close();
+  const token = 'isolated-remote-persistent-failure-token';
+  const app = await PlatformApplication.open({ dataDirectory: f.data,
+    remoteAccess: application => new RemoteAccessService(application, {}) });
+  const remote = app.remoteAccess!;
+  const close = jest.spyOn(app.files, 'clientClosed').mockRejectedValue(new Error('resources still busy'));
+  const warn = jest.spyOn(console, 'warn').mockImplementation(() => {});
+  try {
+    await remote.initialize({ token, port: 0 });
+    const response = await fetch(remote.status().address! + '/rpc', {
+      method: 'POST', headers: { Authorization: 'Bearer ' + token, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ method: 'session.info' }),
+    });
+    expect(response.status).toBe(200); await response.json();
+    remote.stop(); await until(() => remote.status().state === 'error');
+    await expect(remote.start()).rejects.toThrow('Web 客户端资源未能全部释放');
+    expect(remote.status().state).toBe('error');
+    expect(close).toHaveBeenCalledTimes(2);
+    expect(remote.status().eventStream).toMatchObject({ failedClientReleases: 1 });
+    close.mockRestore();
+    expect((await remote.start()).state).toBe('listening');
+  } finally { close.mockRestore(); warn.mockRestore(); await app.close(); await f.cleanup(); }
+});
+
 test('远程设置随共享草稿保存，设备撤销与令牌轮换立即生效，关闭入口保留核心任务', async () => {
   const f = await fixture(); await f.store.close();
   const assets = path.join(f.root, 'web'); await mkdir(assets); await writeFile(path.join(assets, 'index.html'), '<p>Remote fixture</p>');

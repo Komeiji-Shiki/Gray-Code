@@ -46,6 +46,8 @@ export async function loadCurrentConfig(state: ChatStoreState): Promise<void> {
     state.selectedModelId.value = ''
     return
   }
+  // 切换后详情尚未返回时，旧渠道的默认模型不能影响当前会话的发送参数。
+  if (state.currentConfig.value?.id !== configIdAtStart) state.currentConfig.value = null
   try {
     const config = await sendToExtension<any>(MESSAGE_NAMES['config.getConfig'], { configId: configIdAtStart })
     // 归属校验：await 期间 configId 可能已切换（如快速切换标签页触发新的 loadCurrentConfig），

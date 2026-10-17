@@ -136,7 +136,7 @@ export class WorkspaceGit {
       const base = create ? await this.startPoint(root, startPoint) : undefined;
       if (!create && !(await this.branches(root)).some(item => item.name === branch)) throw new Error('请选择现有本地分支，或明确创建新分支。');
       const result = await this.run(root, create ? ['switch', '--no-guess', '-c', branch, ...base ? [base] : []] : ['switch', '--no-guess', '--', branch]);
-      await this.files.reloadCleanDocuments(absolute);
+      await this.files.reloadCleanDocuments(absolute, { invalidatePending: true });
       return result;
     }, { rejectDirty: true, dirtyDirectory: absolute }).catch(error => {
       if (error.code === 'DOCUMENT_DIRTY') throw new Error('当前仓库还有未保存编辑，请先在对应窗口保存或关闭文件，再切换分支。');
@@ -177,7 +177,7 @@ export class WorkspaceGit {
       if ((await this.run(targetRoot, ['status', '--porcelain=v1', '-z', '--untracked-files=all', '--ignored'])).length)
         throw new Error('工作树还有修改、未跟踪或忽略的文件，请先保留所需内容。');
       await this.run(root, ['worktree', 'remove', '--', absolute]);
-      await this.files.reloadCleanDocuments(absolute);
+      await this.files.reloadCleanDocuments(absolute, { invalidatePending: true });
     });
   }
 }

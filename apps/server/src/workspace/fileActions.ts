@@ -1,6 +1,6 @@
 import { workspaceFilePath, workspaceRootFor, workspaceRoots } from './paths';
 import { createHash } from 'node:crypto';
-import { lstat, mkdir, rename, rm } from 'node:fs/promises';
+import { lstat, rename, rm } from 'node:fs/promises';
 import path from 'node:path';
 import { UI_FILE_UPLOAD_LIMIT, type FileEntryInfo, type WorkspaceDefinition } from '@graycode/contracts';
 import type { PlatformApplication } from '../application';
@@ -63,11 +63,11 @@ export class WorkspaceFileActions {
     const workspace = this.workspace(actorId, workspaceId, true);
     if (!['file', 'directory'].includes(kind)) throw new Error('请选择新建文件或目录。');
     if (kind === 'file') await this.app.files.write(workspace, file, '', null);
-    else await this.app.files.transaction(workspace, async () => {
+    else await this.app.files.transaction(workspace, async transaction => {
       const target = await this.entry(workspace, file); this.mutable(workspace, target.absolute);
       if (target.kind !== 'missing') throw new Error('FILE_CONFLICT: 该路径已存在。');
       this.app.files.assertCleanEntries(target.absolute, this.app.settings.snapshot().settings.workspaces);
-      await mkdir(target.absolute, { recursive: true });
+      await transaction.applyDirectories([{ path: file, before: false, after: true }]);
     });
     const entry = await this.inspect(actorId, workspaceId, file); this.changed(workspace, 'create', entry.path); return entry;
   }
@@ -104,7 +104,11 @@ export class WorkspaceFileActions {
       if (entry.kind === 'directory' && !recursive) throw new Error('请明确确认删除目录及其内容。');
       this.app.files.assertCleanEntries(entry.absolute, this.app.settings.snapshot().settings.workspaces);
       try { await rm(entry.absolute, { recursive: entry.kind === 'directory', force: false }); }
-      catch (error) { this.changed(workspace, 'refresh', entry.path); throw new Error(`删除未完成，请刷新检查当前目录：${String(error)}`); }
+      catch (error) {
+        await this.app.files.reloadCleanDocuments(entry.absolute, { invalidatePending: true });
+        this.changed(workspace, 'refresh', entry.path);
+        throw new Error(`删除未完成，请刷新检查当前目录：${String(error)}`);
+      }
       await this.app.files.relocateDocuments(entry.absolute, undefined, this.app.settings.snapshot().settings.workspaces);
       this.changed(workspace, 'remove', entry.path);
     });

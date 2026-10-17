@@ -3,6 +3,7 @@ import type {
   ScreenSenseConfiguration, ScreenSenseRecord, ScreenSenseSnapshot,
 } from '@graycode/contracts';
 import { PlatformApplication } from '../../../apps/server/src/application';
+import { pauseRestoredActivities } from '../../../apps/server/src/backups/resources';
 import { screenRecords, ScreenSenseHistory } from '../../../apps/server/src/pets/screenSenseHistory';
 import type { ComputerNativePort, ComputerScreenPort } from '../../../apps/server/src/computer/port';
 import { PlatformDatabase } from '../src/storage/database';
@@ -55,6 +56,21 @@ describe('屏幕感知独立开启、范围与用量', () => {
     expect(requests.mock.calls.some(([method]) => method === 'windows')).toBe(false);
     expect(requests.mock.calls.some(([method]) => method === 'observe')).toBe(true);
     await app.close(); app = await open(); expect((await app.screenSense.snapshot()).configuration?.maxCaptures).toBe(2); expect(app.screenSense.status().active).toBe(false); expect((await app.screenSense.snapshot()).preview).toBeUndefined();
+  });
+  test.each([false, true])('再次打开陪伴对话时，只有普通重启沿用自动开启选择（备份恢复：%s）', async restored => {
+    const view = await app.companion.get(client, { conversationId });
+    await app.companion.save(client, { conversationId, metadataToken: view.metadataToken,
+      configuration: { enabled: true, name: '测试陪伴', userName: '测试用户', tone: '仅供恢复回归。' } });
+    await save({ ...config(), trigger: 'interval', intervalSeconds: 60, autoStartOnOpen: true });
+    const before = (await app.screenSense.snapshot()).configuration!;
+    if (restored) await pauseRestoredActivities(app.storage);
+    await app.close(); app = await open();
+    await rpc('screenSense.conversationOpened', { conversationId });
+    expect(app.screenSense.status().active).toBe(!restored);
+    expect(app.screenSense.status().nextCaptureAt !== undefined).toBe(!restored);
+    expect((await app.screenSense.snapshot()).configuration).toEqual({ ...before, autoStartOnOpen: !restored });
+    expect(native.captures).toBe(0);
+    expect(inputs).toEqual([]);
   });
   test('停止期间未完成的截图被丢弃，窗口被其他进程复用时停止采集', async () => {
     await save(); await rpc('screenSense.start'); let release!: () => void; native.hold = () => new Promise<void>(resolve => { release = resolve; });

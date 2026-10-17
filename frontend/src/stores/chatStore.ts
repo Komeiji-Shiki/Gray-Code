@@ -298,6 +298,7 @@ export const useChatStore = defineStore('chat', () => {
   const renameBranchCandidate = (nodeId: string, label: string) => renameBranchCandidateAction(state, nodeId, label)
 
   // ============ 对话操作 ============
+  let navigationEpoch = 0
   
   /**
    * 创建新对话 - 标签页感知
@@ -305,6 +306,7 @@ export const useChatStore = defineStore('chat', () => {
    * 如果当前标签页是空白的（无对话），直接复用；否则创建新标签页
    */
   const createNewConversation = async () => {
+    navigationEpoch++
     // 如果当前标签页已经是空白的，直接在当前标签页创建
     if (!state.currentConversationId.value && state.allMessages.value.length === 0) {
       // 空白标签页可能已入队消息/附件/编辑器节点：resetConversationState 会清空它们，
@@ -355,6 +357,7 @@ export const useChatStore = defineStore('chat', () => {
    */
   const switchConversation = async (id: string) => {
     if (window.__GRAYCODE_HOST) return openConversationInTab(id)
+    navigationEpoch++
     // 检查对话是否已在某个标签页中打开
     const existingTab = findTabByConversationId(state, id)
     if (existingTab) {
@@ -387,13 +390,31 @@ export const useChatStore = defineStore('chat', () => {
     const sourceConversationId = state.currentConversationId.value
     if (!sourceConversationId) return
     if (!Number.isFinite(messageBackendIndex) || messageBackendIndex < 0) return
+    const epoch = ++navigationEpoch
+    const sourceWorkspaceUri = state.currentWorkspaceUri.value
 
     if (state.isWaitingForResponse.value || state.isStreaming.value) {
-      await cancelStreamAndRejectTools()
+      try {
+        await cancelStreamAndRejectTools()
+      } catch (error) {
+        if (epoch !== navigationEpoch) return
+        throw error
+      }
     }
 
-    const conv = await createBranchConversationAction(state, sourceConversationId, messageBackendIndex)
-    if (!conv) return
+    const conv = await createBranchConversationAction(state, sourceConversationId, messageBackendIndex, { workspaceUri: sourceWorkspaceUri })
+      .catch((error: unknown) => {
+        console.error('[chatStore] Failed to create branch conversation:', error)
+        if (epoch === navigationEpoch) {
+          state.error.value = {
+            code: error instanceof Error && 'code' in error && typeof error.code === 'string' ? error.code : 'CREATE_BRANCH_CONVERSATION_ERROR',
+            message: error instanceof Error ? error.message : 'Failed to create branch conversation'
+          }
+        }
+        return null
+      })
+    // 创建仍属于点击时的来源，等待期间的新导航只取消这次自动打开。
+    if (!conv || epoch !== navigationEpoch) return
 
     const tabId = createTabAction(state, {
       conversationId: conv.id,
@@ -403,6 +424,7 @@ export const useChatStore = defineStore('chat', () => {
     if (tabId) {
       switchTabWrapped(tabId)
       await switchConvAction(state, conv.id, cancelStreamAndRejectTools)
+      if (state.activeTabId.value !== tabId || state.currentConversationId.value !== conv.id) return
       void loadBranchGraphAction(state)
       updateTabTitle(state, tabId, conv.title)
     } else {
@@ -570,6 +592,7 @@ export const useChatStore = defineStore('chat', () => {
    * 创建新标签页
    */
   function createNewTab(): string | null {
+    navigationEpoch++
     if (window.__GRAYCODE_HOST && !state.currentConversationId.value && !state.allMessages.value.length && !state.inputValue.value.trim()
       && state.editorNodes.value.every(node => node.type === 'text' && !node.text.trim()) && !state.attachments.value.length && !state.isWaitingForResponse.value) return state.activeTabId.value
     const tabId = createTabAction(state, { title: t('components.tabs.newChat') })
@@ -587,8 +610,7 @@ export const useChatStore = defineStore('chat', () => {
     closeTabAction(
       state,
       tabId,
-      cancelStreamAndRejectTools,
-      streamHandlerCtx,
+      switchTabWrapped,
       window.__GRAYCODE_HOST ? undefined : async (conversationId) => {
         try {
           await sendToExtension(MESSAGE_NAMES.cancelStream, { conversationId })
@@ -622,6 +644,8 @@ export const useChatStore = defineStore('chat', () => {
     if (state.currentConversationId.value) await restoreRemoteView(state.currentConversationId.value)
   }
   function switchTabWrapped(tabId: string): void {
+    // 再次选择当前标签同样表示取消尚未完成的历史导航。
+    navigationEpoch++
     if (state.activeTabId.value === tabId) {
       if (state.currentConversationId.value && staleRemoteViews.has(state.currentConversationId.value)) void restoreRemoteView(state.currentConversationId.value)
       return
@@ -664,7 +688,6 @@ export const useChatStore = defineStore('chat', () => {
   /**
    * 从历史打开对话（在新标签页或当前空白标签页中）
    */
-  let navigationEpoch = 0
   async function openConversationInTab(conversationId: string): Promise<void> {
     const epoch = ++navigationEpoch
     await ensureConversationSummary(state, conversationId)
@@ -696,14 +719,14 @@ export const useChatStore = defineStore('chat', () => {
     })
     if (tabId) {
       switchTabWrapped(tabId)
-      // 切换后需要从后端加载历史
-      await switchConvAction(state, conversationId, cancelStreamAndRejectTools)
-      void loadBranchGraphAction(state)
-      if (state.activeTabId.value !== tabId || epoch !== navigationEpoch) return
+      // 导航已被接受，标签身份先与目标一致；历史加载期间重复选中本标签不能留下空白绑定。
       updateTabConversationId(state, tabId, conversationId)
       if (conv) {
         updateTabTitle(state, tabId, conv.title)
       }
+      await switchConvAction(state, conversationId, cancelStreamAndRejectTools)
+      if (state.activeTabId.value !== tabId || state.currentConversationId.value !== conversationId) return
+      void loadBranchGraphAction(state)
     }
   }
 

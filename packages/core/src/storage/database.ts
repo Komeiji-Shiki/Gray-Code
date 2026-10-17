@@ -5,6 +5,7 @@ import { assertIdentifier, invalid, PlatformStorageError } from '../errors';
 import { openDatabase, SCHEMA_VERSION, type SqliteConnection } from './schema';
 import { ObjectStore } from './objects';
 import { HistoryStore } from './histories';
+import { historyTextMatches } from './historySearch';
 import { MemoryRepository } from './memories';
 import { LongMemoryRepository } from './longMemory/repository';
 import { VectorRanker } from './longMemory/vectorWorker';
@@ -591,14 +592,8 @@ export class PlatformDatabase {
 
   private conversationSearchCondition(query: string): { sql: string; args: string[] } {
     const title = "instr(lower(coalesce(conversations.title,'')),?)>0";
-    if (Array.from(query).length >= 3 && !query.includes('\0')) return {
-      sql: `(${title} OR conversations.history_id IN (
-        SELECT s.history_id FROM history_search_fts f JOIN history_search s ON s.id=f.rowid
-        WHERE f.normalized LIKE ? AND instr(s.normalized,?)>0))`,
-      args: [query, `%${query}%`, query],
-    };
-    return { sql: `(${title} OR conversations.history_id IN (
-      SELECT history_id FROM history_search WHERE instr(normalized,?)>0))`, args: [query, query] };
+    const matches = historyTextMatches(query);
+    return { sql: `(${title} OR conversations.id IN (SELECT conversation_id FROM (${matches.sql})))`, args: [query, ...matches.args] };
   }
 
   private searchConversationIds(value: string): StorageOperations['searchConversationIds']['output'] {
@@ -609,17 +604,15 @@ export class PlatformDatabase {
     for (const row of this.db.prepare("SELECT id FROM conversations WHERE instr(lower(coalesce(title,'')),?)>0").all(query) as { id: string }[]) {
       matches.set(row.id, { id: row.id });
     }
-    const trigrams = Array.from(query).length >= 3 && !query.includes('\0');
-    const source = trigrams
-      ? `history_search_fts f JOIN history_search s ON s.id=f.rowid WHERE f.normalized LIKE ? AND instr(s.normalized,?)>0`
-      : 'history_search s WHERE instr(s.normalized,?)>0';
-    const args = trigrams ? [query, `%${query}%`, query] : [query, query];
-    const rows = this.db.prepare(`SELECT c.id,h.position,h.message_id,h.excerpt FROM conversations c JOIN (
-      SELECT s.history_id,s.position,s.message_id,
-        substr(s.text,max(1,instr(s.normalized,?)-48),180) AS excerpt,
+    const source = historyTextMatches(query);
+    // 排序只携带位置和索引身份，选出每个会话最后一次命中后再读取正文生成摘录。
+    const rows = this.db.prepare(`SELECT hit.conversation_id AS id,hit.position,hit.message_id,
+      substr(body.text,max(1,instr(body.normalized,?)-48),180) AS excerpt FROM (
+      SELECT s.conversation_id,s.position,s.message_id,s.search_id,
         row_number() OVER(PARTITION BY s.history_id ORDER BY s.position DESC) AS rank
-      FROM ${source}
-    ) h ON h.history_id=c.history_id AND h.rank=1`).all(...args) as Array<{ id: string; position: number; message_id: string | null; excerpt: string }>;
+      FROM (${source.sql}) s
+    ) hit JOIN history_search body ON body.id=hit.search_id WHERE hit.rank=1`)
+      .all(query, ...source.args) as Array<{ id: string; position: number; message_id: string | null; excerpt: string }>;
     for (const row of rows) matches.set(row.id, { id: row.id, messageIndex: row.position,
       ...(row.message_id ? { messageId: row.message_id } : {}), excerpt: row.excerpt.replace(/\s+/g, ' ').trim() });
     return { matches: [...matches.values()], indexing };

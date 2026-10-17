@@ -165,7 +165,7 @@ export class HistoryStore {
 
   /** 每次搜索只补建有限数量的旧消息，避免长对话阻塞其他存储操作。 */
   advanceSearchIndex(): boolean {
-    const insert = this.db.prepare('INSERT INTO history_search(history_id,position,message_id,text,normalized) VALUES(?,?,?,?,?)');
+    const insert = this.db.prepare('INSERT OR IGNORE INTO history_search(body_hash,text,normalized) VALUES(?,?,?)');
     let budget = 512;
     for (let histories = 0; histories < 16 && budget > 0; histories++) {
       const pending = this.db.prepare(`SELECT c.history_id FROM conversations c JOIN histories h ON h.id=c.history_id
@@ -177,9 +177,9 @@ export class HistoryStore {
       const end = Math.min(info.message_count, info.search_position + budget);
       const rows = this.rows(id, info.search_position, end);
       if (rows.length !== end - info.search_position) throw new PlatformStorageError('CORRUPT_DATA', 'History sequence contains missing entries.');
-      rows.forEach((row, offset) => {
+      rows.forEach(row => {
         const text = searchableText(this.objects.getValue<Pick<PlatformMessage, 'parts'>>(row.body_hash, { fields: ['parts'], omitBinary: true }));
-        if (text) insert.run(id, info.search_position + offset, row.message_id, text, text.toLowerCase());
+        if (text) insert.run(row.body_hash, text, text.toLowerCase());
       });
       this.db.prepare('UPDATE histories SET search_position=?,search_revision=? WHERE id=?')
         .run(end, end === info.message_count ? info.revision : -1, id);
@@ -373,10 +373,10 @@ export class HistoryStore {
     if (pendingSpan) writeSpan.run(id, pendingSpan.start_index, pendingSpan.segment_id, pendingSpan.segment_offset, pendingSpan.count);
     this.db.prepare('UPDATE histories SET message_count=?,revision=revision+1 WHERE id=?').run(total, id);
     if (indexed) {
-      const insert = this.db.prepare('INSERT INTO history_search(history_id,position,message_id,text,normalized) VALUES(?,?,?,?,?)');
+      const insert = this.db.prepare('INSERT OR IGNORE INTO history_search(body_hash,text,normalized) VALUES(?,?,?)');
       messages.forEach((message, offset) => {
         const text = searchableText(message);
-        if (text) insert.run(id, info.message_count + offset, message.id ?? null, text, text.toLowerCase());
+        if (text) insert.run(entries[offset].body_hash, text, text.toLowerCase());
       });
       this.db.prepare('UPDATE histories SET search_revision=?,search_position=? WHERE id=?').run(info.revision + 1, total, id);
     }
@@ -422,8 +422,7 @@ export class HistoryStore {
       ORDER BY start_index`).all(id, ordered[ordered.length - 1][0], ordered[0][0]) as SpanRow[];
     const insertEntry = this.db.prepare('INSERT INTO segment_entries(segment_id,ordinal,body_hash,message_id,role,timestamp) VALUES(?,?,?,?,?,?)');
     const insertSpan = this.db.prepare('INSERT INTO history_spans(history_id,start_index,segment_id,segment_offset,count) VALUES(?,?,?,?,?)');
-    const removeSearch = this.db.prepare('DELETE FROM history_search WHERE history_id=? AND position=?');
-    const insertSearch = this.db.prepare('INSERT INTO history_search(history_id,position,message_id,text,normalized) VALUES(?,?,?,?,?)');
+    const insertSearch = this.db.prepare('INSERT OR IGNORE INTO history_search(body_hash,text,normalized) VALUES(?,?,?)');
     let next = 0, changed = false;
     for (const span of spans) {
       const end = span.start_index + span.count;
@@ -446,12 +445,11 @@ export class HistoryStore {
       this.db.prepare('DELETE FROM history_spans WHERE history_id=? AND start_index=?').run(id, span.start_index);
       if (prefix) insertSpan.run(id, span.start_index, span.segment_id, span.segment_offset, prefix);
       insertSpan.run(id, start, segmentId, 0, entries.length);
-      for (const { index, message } of replacements) {
-        removeSearch.run(id, index);
-        // 已完成的索引前缀原位更新；尚未索引的部分继续从原进度构建，不重扫无关后缀。
+      for (const { index, message, entry } of replacements) {
+        // 索引只补充已完成前缀的新正文；旧正文可能仍被其他分支引用，由对象回收统一清理。
         if (index < info.search_position) {
           const text = searchableText(message);
-          if (text) insertSearch.run(id, index, message.id ?? null, text, text.toLowerCase());
+          if (text) insertSearch.run(entry.body_hash, text, text.toLowerCase());
         }
       }
     }
@@ -477,10 +475,7 @@ export class HistoryStore {
       FROM history_spans WHERE history_id=? AND start_index<?`).run(target, end, id, end);
     this.db.prepare('UPDATE histories SET message_count=? WHERE id=?').run(end, target);
     const indexedUntil = Math.min(end, info.search_position);
-    if (indexedUntil) {
-      this.db.prepare(`INSERT INTO history_search(history_id,position,message_id,text,normalized)
-        SELECT ?,position,message_id,text,normalized FROM history_search WHERE history_id=? AND position<?`).run(target, id, indexedUntil);
-    }
+    // 正文索引随不可变对象共用，分叉只继承可见前缀与构建进度。
     this.db.prepare('UPDATE histories SET search_revision=?,search_position=? WHERE id=?')
       .run(indexedUntil === end ? 0 : -1, indexedUntil, target);
     return target;
@@ -531,7 +526,6 @@ export class HistoryStore {
   }
 
   private truncate(id: string, length: number): void {
-    this.db.prepare('DELETE FROM history_search WHERE history_id=? AND position>=?').run(id, length);
     this.db.prepare('UPDATE histories SET search_position=min(search_position,?) WHERE id=?').run(length, id);
     this.db.prepare('DELETE FROM history_spans WHERE history_id=? AND start_index>=?').run(id, length);
     this.db.prepare('UPDATE history_spans SET count=?-start_index WHERE history_id=? AND start_index+count>?').run(length, id, length);

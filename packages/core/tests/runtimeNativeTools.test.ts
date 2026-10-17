@@ -197,6 +197,32 @@ test('重启从 SQLite 恢复异步终态与附件，不重放操作或重复补
   } finally { await context.runtime.close(); await context.f.cleanup(); }
 });
 
+test('宿主确认结束时先撤销待审批的原生调用，再记录运行完成', async () => {
+  const requested = deferred();
+  const execute = jest.fn(async () => ({ success: true }));
+  const context = await setup({ generate: async input => {
+    expect(input.onToolCallReady?.(call)).toBe(true);
+    await requested.promise;
+    return { role: 'model', parts: [{ functionCall: call }] };
+  } }, execute, 'ask', true, true);
+  const unsubscribe = context.runtime.subscribe(event => {
+    if (event.type === 'event' && event.event.type === 'approval.requested') requested.resolve();
+  });
+  try {
+    const run = await context.start();
+    expect((await context.runtime.wait(run.id))?.status).toBe('completed');
+    expect(execute).not.toHaveBeenCalled();
+    expect(context.runtime.pendingApprovals()).toEqual([]);
+    const events = await context.f.store.readRunEvents(run.id);
+    expect(events.filter(event => ['approval.requested', 'approval.resolved', 'run.completed'].includes(event.type))
+      .map(event => event.type)).toEqual(['approval.requested', 'approval.resolved', 'run.completed']);
+    expect(events.find(event => event.type === 'approval.resolved')?.payload).toMatchObject({ cancelled: true });
+    const responses = (await context.f.store.readFullHistory('native')).messages.flatMap(message => message.parts)
+      .flatMap(part => part.functionResponse ? [part.functionResponse] : []);
+    expect(responses).toEqual([expect.objectContaining({ id: call.id, response: expect.objectContaining({ code: 'CANCELLED' }) })]);
+  } finally { unsubscribe(); await context.runtime.close(); await context.f.cleanup(); }
+});
+
 test('宿主确认后结束任务会取消剩余观察，并保存配对结果', async () => {
   const entered = deferred(); let cancelled = false;
   const context = await setup({ generate: async input => {

@@ -28,13 +28,18 @@ describe('独立代理消息的持久化与调度', () => {
     actorId: 'owner', agentId: agent.id, requestKey: `request-${Date.now()}-${Math.random()}`, workspaceId, message: { role: 'user', parts: [{ text }] } });
   const idle = () => waitUntil(async () => app.subagents.activeIds().length === 0 && !app.subagents.hasPendingWork()
     && (await app.storage.listRuns({ activeOnly: true })).length === 0);
+  const registerFixtureTools = () => app.tools.register({
+    declaration: { name: 'fixture_scope', description: 'fixture', parameters: { type: 'object', properties: {} } },
+    effects: () => ['workspace_read'], execute: async (_args, ctx) => ({ success: true, data: {
+      directory: ctx.workspace?.directory,
+      content: ctx.workspace ? await readFile(path.join(ctx.workspace.directory, 'marker.txt'), 'utf8') : 'none',
+    } }),
+  });
 
   beforeEach(async () => {
     f = await fixture(); await f.store.close(); generate = async () => answer('done');
     app = await PlatformApplication.open({ dataDirectory: f.data, models: { generate: input => generate(input) } });
-    app.tools.register({ declaration: { name: 'fixture_scope', description: 'fixture', parameters: { type: 'object', properties: {} } },
-      effects: () => ['workspace_read'], execute: async (_args, ctx) => ({ success: true, data: {
-        directory: ctx.workspace?.directory, content: ctx.workspace ? await readFile(path.join(ctx.workspace.directory, 'marker.txt'), 'utf8') : 'none' } }) });
+    registerFixtureTools();
     const preferences = await app.product.draft();
     const providerId = await preferences.configs.createConfig({ type: 'openai', enabled: true, timeout: 5000, url: 'http://127.0.0.1:9/v1', name: '隔离模型', model: 'fixture', apiKey: '' });
     await app.product.save(preferences);
@@ -69,6 +74,50 @@ describe('独立代理消息的持久化与调度', () => {
     const first = await app.storage.getRecord('background-followups', pending[0].id) as { requestKey: string; status: string };
     const last = await app.storage.getRecord('background-followups', pending.at(-1)!.id) as { requestKey: string; status: string };
     expect(first.status).toBe('started'); expect(last.requestKey).toBe(first.requestKey);
+  });
+
+  test('排队取消后重启并继续子代理，会独立交付新的真实结果', async () => {
+    const root = await app.createConversation('owner', '排队取消后的再次派发');
+    const parent = await start(root.id);
+    await app.runtime.wait(parent.id);
+    const occupied = hold();
+    const entered = deferred();
+    generate = async input => {
+      if (input.conversationId === root.id) return answer('主任务收到后台回执');
+      if (textOf(input).includes('## Task\n占用并发席位')) {
+        entered.resolve();
+        await occupied.promise;
+        return answer('占用席位的任务完成');
+      }
+      return answer('第二轮成功结果');
+    };
+    await app.subagents.dispatch({ agentName: 'General Worker', prompt: '占用并发席位', background: true }, context(parent, 'blocker'));
+    await entered.promise;
+    const dispatched = await app.subagents.dispatch({ agentName: 'General Worker', prompt: '等待并发席位', background: true },
+      context(parent, 'queued'));
+    const first = dispatched.data as { runId: string; taskId: string };
+    await app.subagents.control('owner', first.runId, 'exit');
+    expect(await app.subagents.get('owner', first.runId)).toMatchObject({ status: 'cancelled', coreRunIds: [] });
+    await waitUntil(async () => !!await app.storage.getRecord('subagent-deliveries', `subagent-${first.taskId}`));
+    occupied.resolve();
+    await idle();
+    await app.close();
+    app = await PlatformApplication.open({ dataDirectory: f.data, models: { generate: input => generate(input) } });
+    registerFixtureTools();
+
+    const continued = await app.subagents.dispatch({ agentName: 'General Worker', continueFromRunId: first.runId,
+      prompt: '继续执行被取消的任务', background: true }, context(parent, 'continued'));
+    const next = continued.data as { runId: string; taskId: string };
+    await idle();
+    const results = (await app.storage.readFullHistory(root.id)).messages.filter(message => message.id?.startsWith(`subagent-${first.runId}:`));
+    expect(results).toHaveLength(2);
+    expect(results[1].parts).toEqual([{ text: expect.stringContaining('第二轮成功结果') }]);
+    expect(next.runId).toBe(first.runId);
+    expect(next.taskId).not.toBe(first.taskId);
+    expect((await app.subagents.get('owner', first.runId))?.coreRunIds).toHaveLength(1);
+    for (const taskId of [first.taskId, next.taskId]) {
+      expect(await app.storage.getRecord('subagent-deliveries', `subagent-${taskId}`)).not.toBeNull();
+    }
   });
 
   test('默认 Agent 自动包含新增内置工具，自定义范围与显式禁用保持有效', async () => {

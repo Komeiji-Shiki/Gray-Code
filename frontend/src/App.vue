@@ -477,8 +477,8 @@ onMounted(async () => {
   const startupNavigationRevision = desktopNavigationRevision
   rememberDesktopConversation = true
 
-  // command 订阅与 initialize 同步准备都已完成后再发送 ready 握手。扩展端会在握手中
-  // 立即 flush pendingCommands；此顺序保证积压的 newChat 既不会丢，也不会命中未准备的 store。
+  // command 订阅与 initialize 同步准备都已完成后再发送 ready 握手。
+  // 宿主随即投递待发命令，此顺序保证 newChat 不会丢失，也不会命中未准备的 store。
   sendToExtension(MESSAGE_NAMES.webviewReady, {}).catch(error => {
     console.error('[App] Failed to notify extension that webview is ready:', error)
   })
