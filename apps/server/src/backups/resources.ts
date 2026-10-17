@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import type { BackupManifest, PetResource } from '@graycode/contracts';
+import type { BackupManifest, PetResource, ScreenSenseStoredConfiguration } from '@graycode/contracts';
 import type { PlatformStorage } from '@graycode/core';
 import { petAssetPath } from '../../../../shared/petFormat';
 
@@ -46,6 +46,10 @@ export async function pauseRestoredActivities(storage: PlatformStorage) {
     ...(settings.remoteAccess ? { remoteAccess: { ...settings.remoteAccess, enabled: false } } : {}),
     ...(settings.clawd ? { clawd: { ...settings.clawd, enabled: false } } : {}),
   } });
+  const screen = await storage.getRecord('screen-sense-configuration', 'local') as ScreenSenseStoredConfiguration | null;
+  if (screen?.target && screen.autoStartOnOpen) await storage.putRecord({
+    namespace: 'screen-sense-configuration', id: 'local', value: { ...screen, autoStartOnOpen: false },
+  });
   const node = await storage.getRecord('execution-node', 'local') as Record<string, any> | null;
   if (node) await storage.putRecord({ namespace: 'execution-node', id: 'local', value: { ...node, settings: { ...node.settings, enabled: false } } });
   for (const id of await storage.listRecords('node-peers')) {
