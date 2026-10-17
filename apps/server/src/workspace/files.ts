@@ -36,7 +36,7 @@ interface DocumentOpening {
 export class WorkspaceFiles {
   private readonly queues = new Map<string, Promise<unknown>>();
   private readonly documents = new Map<string, DocumentState>();
-  private readonly documentRefreshVersions = new WeakMap<DocumentState, number>();
+  private readonly documentRefreshStates = new WeakMap<DocumentState, { refreshVersion: number; savingCount: number }>();
   private readonly activeEditors = new Map<string, string>();
   private readonly detachedClients = new Set<string>();
   private readonly openingDocuments = new Set<DocumentOpening>();
@@ -132,14 +132,19 @@ export class WorkspaceFiles {
   dirtyPathsInDirectory(directory: string): string[] {
     return [...new Set([...this.documents].filter(([key, document]) => this.activeDraft(document) && this.documentInside(key, document, directory)).map(([, document]) => document.path))];
   }
+  private getDocumentRefreshState(document: DocumentState) {
+    let state = this.documentRefreshStates.get(document);
+    if (!state) { state = { refreshVersion: 0, savingCount: 0 }; this.documentRefreshStates.set(document, state); }
+    return state;
+  }
   private beginDocumentRefresh(key: string, document: DocumentState): () => boolean {
-    const refreshVersion = (this.documentRefreshVersions.get(document) ?? 0) + 1;
+    const state = this.getDocumentRefreshState(document);
+    const refreshVersion = ++state.refreshVersion;
     const version = document.version;
     const baseHash = document.baseHash;
     // 内容未变也使较早读取失效；刷新身份独立于面向编辑器的正文版本。
-    this.documentRefreshVersions.set(document, refreshVersion);
     return () => this.documents.get(key) === document && !document.dirty && document.version === version && document.baseHash === baseHash
-      && this.documentRefreshVersions.get(document) === refreshVersion;
+      && state.savingCount === 0 && state.refreshVersion === refreshVersion;
   }
   /** 同步 Git 或外部操作改动的干净文件，保持原有草稿版本协议。 */
   async reloadCleanDocuments(directory: string, options: { invalidatePending?: boolean } = {}): Promise<void> {
@@ -158,7 +163,7 @@ export class WorkspaceFiles {
       }
     }
     for (const [key, previous] of this.documents) {
-      if (previous.dirty || !this.documentInside(key, previous, directory)) continue;
+      if (previous.dirty || this.documentRefreshStates.get(previous)?.savingCount || !this.documentInside(key, previous, directory)) continue;
       const event: DocumentReset = { workspaceId: previous.workspaceId, path: previous.path, clientId: previous.clientId,
         previousVersion: previous.version, previousText: previous.text };
       const current = this.beginDocumentRefresh(key, previous);
@@ -486,7 +491,8 @@ export class WorkspaceFiles {
         });
         const existing = this.documents.get(key);
         if (existing) {
-          const currentRefresh = reloadClean && !existing.dirty ? this.beginDocumentRefresh(key, existing) : undefined;
+          const currentRefresh = reloadClean && !existing.dirty && !this.documentRefreshStates.get(existing)?.savingCount
+            ? this.beginDocumentRefresh(key, existing) : undefined;
           const result = currentRefresh ? await this.readAbsolute(absolute).then(value => ({ value }), (error: unknown) => ({ error })) : undefined;
           return commit(() => {
             const current = this.documents.get(key);
@@ -556,18 +562,15 @@ export class WorkspaceFiles {
     if (!document || document.version !== version)
       throw new Error("DOCUMENT_CONFLICT: Editor draft is stale.");
     const text = document.text;
-    const result = await this.write(
-      workspace,
-      file,
-      text,
-      document.baseHash,
-      clientId,
-    );
-    // 保存成功确认了新的磁盘基线，即使内容未变也不能再接受此前的刷新结果。
-    this.documentRefreshVersions.set(document, (this.documentRefreshVersions.get(document) ?? 0) + 1);
-    document.baseHash = result.hash;
-    document.dirty = document.text !== text;
-    return structuredClone(document);
+    const state = this.getDocumentRefreshState(document);
+    // 写入等待期间也保留登记对象；刷新可能已持有工作区写锁，不能反向等待保存。
+    state.savingCount++; state.refreshVersion++;
+    try {
+      const result = await this.write(workspace, file, text, document.baseHash, clientId);
+      document.baseHash = result.hash;
+      document.dirty = document.text !== text;
+      return structuredClone(document);
+    } finally { state.savingCount--; state.refreshVersion++; }
   }
   async closeDocument(
     workspace: Pick<WorkspaceDefinition, 'id'>,

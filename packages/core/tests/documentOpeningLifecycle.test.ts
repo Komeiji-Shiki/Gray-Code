@@ -57,6 +57,16 @@ describe('文件打开与工作区生命周期的真实读盘竞态', () => {
     return { entered: entered.promise, release: waiting.release };
   }
 
+  function holdSaves(count = 1) {
+    const write = app.files.write.bind(app.files);
+    const writes = jest.spyOn(app.files, 'write');
+    return Array.from({ length: count }, () => {
+      const entered = gate(), waiting = gate();
+      writes.mockImplementationOnce(async (...args) => { entered.release(); await waiting.promise; return write(...args); });
+      return { entered: entered.promise, release: waiting.release };
+    });
+  }
+
   test.each(['move', 'move-directory', 'remove', 'partial-remove', 'client-close', 'document-close', 'rebind', 'write', 'git-refresh', 'refresh-close'])
   ('慢读取期间发生 %s 后不登记旧文档', async action => {
     const reload = action === 'refresh-close';
@@ -245,6 +255,91 @@ describe('文件打开与工作区生命周期的真实读盘竞态', () => {
       held.release();
       await Promise.allSettled([first, ...(second ? [second] : [])]);
     }
+  });
+
+  test.each(['目录刷新', '显式重载'].flatMap(kind => ['旧正文', '二进制错误'].map(content => ({ kind, content }))))
+  ('$kind 的$content在保存尚未完成时返回，仍保留正在保存的文档', async ({ kind, content }) => {
+    const original = await app.files.openDocument(workspace, file, client);
+    const target = path.join(f.source, file);
+    await fs.writeFile(target, content === '旧正文' ? '保存前读取的过时正文' : Buffer.from([0, 1, 2]));
+    const held = await holdRead();
+    const reading = kind === '目录刷新' ? app.files.reloadCleanDocuments(workspace.directory)
+      : app.files.openDocument(workspace, file, client, true);
+    void reading.catch(() => {});
+    const [write] = holdSaves();
+    let saving: Promise<DocumentState> | undefined;
+    try {
+      await held.entered;
+      await fs.writeFile(target, original.text);
+      saving = app.files.saveDocument(workspace, file, client, original.version);
+      await write.entered;
+      held.release();
+      const result = await reading;
+      expect(app.files.clientDocument(client, workspace.id, file)).toEqual(original);
+      if (kind === '显式重载') expect(result).toEqual(original);
+      write.release();
+      expect(await saving).toEqual(original);
+      expect(app.files.clientDocument(client, workspace.id, file)).toEqual(original);
+    } finally { held.release(); write.release(); await Promise.allSettled([reading, ...(saving ? [saving] : [])]); }
+  });
+
+  test.each(['目录刷新', '显式重载'])('保存已经开始后，%s保留当前文档而不读取中间磁盘状态', async kind => {
+    const original = await app.files.openDocument(workspace, file, client);
+    const target = path.join(f.source, file);
+    const [write] = holdSaves();
+    const saving = app.files.saveDocument(workspace, file, client, original.version);
+    try {
+      await write.entered;
+      await fs.writeFile(target, '保存期间的中间正文');
+      if (kind === '目录刷新') await app.files.reloadCleanDocuments(workspace.directory);
+      else expect(await app.files.openDocument(workspace, file, client, true)).toEqual(original);
+      expect(app.files.clientDocument(client, workspace.id, file)).toEqual(original);
+      await fs.writeFile(target, original.text);
+      write.release();
+      expect(await saving).toEqual(original);
+    } finally { await fs.writeFile(target, original.text); write.release(); await saving.catch(() => {}); }
+  });
+
+  test('两个保存重叠时，第一个完成不能提前恢复文档刷新', async () => {
+    const original = await app.files.openDocument(workspace, file, client);
+    const target = path.join(f.source, file);
+    const [firstWrite, secondWrite] = holdSaves(2);
+    const first = app.files.saveDocument(workspace, file, client, original.version);
+    await firstWrite.entered;
+    const second = app.files.saveDocument(workspace, file, client, original.version);
+    try {
+      await secondWrite.entered;
+      firstWrite.release();
+      expect(await first).toEqual(original);
+      await fs.writeFile(target, '第二个保存尚未完成时的中间正文');
+      await app.files.reloadCleanDocuments(workspace.directory);
+      expect(app.files.clientDocument(client, workspace.id, file)).toEqual(original);
+      await fs.writeFile(target, original.text);
+      secondWrite.release();
+      expect(await second).toEqual(original);
+    } finally {
+      await fs.writeFile(target, original.text);
+      firstWrite.release(); secondWrite.release(); await Promise.allSettled([first, second]);
+    }
+  });
+
+  test.each([false, true])('保存发生真实文件冲突后释放刷新保护，并保留未保存草稿 %s', async dirty => {
+    const original = await app.files.openDocument(workspace, file, client);
+    const document = dirty ? await app.files.updateDocument(workspace, file, client, '尚未保存的编辑', original.version) : original;
+    const [write] = holdSaves();
+    const saving = app.files.saveDocument(workspace, file, client, document.version);
+    void saving.catch(() => {});
+    try {
+      await write.entered;
+      await fs.writeFile(path.join(f.source, file), '保存期间的外部修改');
+      await app.files.reloadCleanDocuments(workspace.directory);
+      expect(app.files.clientDocument(client, workspace.id, file)).toEqual(document);
+      write.release();
+      await expect(saving).rejects.toThrow('FILE_CONFLICT');
+      await app.files.reloadCleanDocuments(workspace.directory);
+      if (dirty) expect(app.files.clientDocument(client, workspace.id, file)).toEqual(document);
+      else expect(app.files.clientDocument(client, workspace.id, file)).toMatchObject({ text: '保存期间的外部修改', dirty: false });
+    } finally { write.release(); await saving.catch(() => {}); }
   });
 
   test('首次保存空文件后，旧的缺失读取不能移除已保存文档', async () => {
