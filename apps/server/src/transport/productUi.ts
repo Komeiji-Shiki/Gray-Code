@@ -83,6 +83,7 @@ export class ProductUi {
   async clientClosed(clientId: string): Promise<void> {
     this.disconnectedClients.add(clientId); this.chat.clientClosed(clientId);
     this.commands.disconnected(clientId);
+    this.commands.remove(clientId);
     const queued = this.queues.get(clientId); const session = this.clients.get(clientId);
     // 已受理的输入和设置写入继续完成；离线草稿可重连恢复，不能阻塞其他客户端交互。
     // 清理等待留在后台，不能让旧的准备请求挡住重连后的取消入口。

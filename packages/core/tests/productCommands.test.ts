@@ -92,3 +92,15 @@ test('服务重启后只恢复缺失的主视图身份，桌面窗口失效后�
   await ui(first, 'webviewReady', { viewId: replacement });
   expect(events[0]).toMatchObject({ viewId: replacement, message: { command: 'newChat' } });
 });
+
+test('客户端释放后清除视图登记与未投递命令，重连不会收到旧命令', async () => {
+  const viewId = await prepare(first);
+  await ui(first, 'ui.command', { command: 'newChat' });
+  expect(events).toEqual([]);
+  await app.productUi.clientClosed(first.clientId);
+  events.length = 0;
+  await expect(ui(first, 'webviewReady', { viewId })).resolves.toEqual({ success: false, reason: 'missing' });
+  await expect(router.call(first, 'ui.view.prepare', { resumeViewId: viewId })).resolves.toEqual({ accepted: true, viewId });
+  await ui(first, 'webviewReady', { viewId });
+  expect(events).toEqual([{ type: 'ui.ready', clientId: first.clientId, viewId }]);
+});

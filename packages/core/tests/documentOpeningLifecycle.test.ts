@@ -163,6 +163,48 @@ describe('文件打开与工作区生命周期的真实读盘竞态', () => {
     } finally { held.release(); await opening.catch(() => undefined); }
   });
 
+  test('刷新晚于登记开始时，打开必须等刷新落定再登记', async () => {
+    const target = await fs.realpath(path.join(f.source, file));
+    const readEntered = gate(), refreshEntered = gate(), releaseRead = gate(), releaseRefresh = gate();
+    const nativeOpen = fs.open;
+    let reads = 0;
+    jest.spyOn(fs, 'open').mockImplementation(async (...args) => {
+      const handle = await nativeOpen(...args);
+      if (args[0] === target && reads < 2) {
+        const index = reads++;
+        const close = handle.close.bind(handle);
+        jest.spyOn(handle, 'close').mockImplementationOnce(async () => {
+          await close();
+          (index ? refreshEntered : readEntered).release();
+          await (index ? releaseRefresh : releaseRead).promise;
+        });
+      }
+      return handle;
+    });
+    const opening = app.files.openDocument(workspace, file, client);
+    let refreshing: Promise<void> | undefined;
+    let resolved = false;
+    try {
+      await readEntered.promise;
+      await fs.writeFile(target, '刷新读到的新正文');
+      refreshing = app.files.reloadCleanDocuments(workspace.directory);
+      await refreshEntered.promise;
+      void opening.then(() => { resolved = true; }, () => { resolved = true; });
+      releaseRead.release();
+      await new Promise(resolve => setImmediate(resolve));
+      // 刷新还没落定时不能先用初次读取的旧正文登记。
+      expect(resolved).toBe(false);
+      releaseRefresh.release();
+      await refreshing;
+      expect(await opening).toMatchObject({ text: '刷新读到的新正文', dirty: false });
+    } finally {
+      releaseRead.release();
+      releaseRefresh.release();
+      await opening.catch(() => undefined);
+      await refreshing?.catch(() => undefined);
+    }
+  });
+
   test('两个刷新交错完成时，较早的读取不能覆盖较新的待打开正文', async () => {
     const target = await fs.realpath(path.join(f.source, file));
     const firstRead = gate(), firstRefresh = gate(), releaseRead = gate(), releaseRefresh = gate();

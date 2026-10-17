@@ -64,6 +64,10 @@ export class ProductCommands {
     const view = this.views.get(clientId);
     if (view) view.viewId = undefined;
   }
+  /** 客户端真正释放后清除登记，避免长期运行的远程服务按标签页累积视图与未投递命令。 */
+  remove(clientId: string): void {
+    this.views.delete(clientId);
+  }
   private flush(clientId: string, view: CommandView): void {
     if (!view.viewId || !view.ready || !view.connected) return;
     for (const message of view.pending.splice(0)) this.publish({ type: 'ui.message', clientId, viewId: view.viewId, message });

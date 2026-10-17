@@ -32,6 +32,8 @@ interface DocumentOpening {
   workspaceId: string; path: string; clientId: string; declared: string; valid: boolean;
   absolute?: string; displayPath?: string;
   reading: boolean; refreshVersion: number; refreshed?: DocumentRead;
+  /** 正在进行的在途刷新；登记文档前必须等它落定，否则会采用更早的读取结果。 */
+  refresh?: Promise<void>;
 }
 export class WorkspaceFiles {
   private readonly queues = new Map<string, Promise<unknown>>();
@@ -152,13 +154,17 @@ export class WorkspaceFiles {
       if (!opening.valid || !opening.reading || !absolute || !inside(this.key(directory), this.key(absolute))
         || this.documents.has(this.documentKey(opening.clientId, absolute))) continue;
       const version = ++opening.refreshVersion;
-      try {
-        // 普通 Git 状态查询也会刷新；无变更时保留打开，更新结果不能倒退到更早的并发读取。
-        const value = await this.readAbsolute(absolute);
-        if (opening.valid && opening.refreshVersion === version) opening.refreshed = value;
-      } catch {
-        if (opening.refreshVersion === version) opening.valid = false;
-      }
+      const refresh = (async () => {
+        try {
+          // 普通 Git 状态查询也会刷新；无变更时保留打开，更新结果不能倒退到更早的并发读取。
+          const value = await this.readAbsolute(absolute);
+          if (opening.valid && opening.refreshVersion === version) opening.refreshed = value;
+        } catch {
+          if (opening.refreshVersion === version) opening.valid = false;
+        }
+      })();
+      opening.refresh = refresh;
+      await refresh;
     }
     for (const [key, previous] of this.documents) {
       if (previous.dirty || this.documentRefreshStates.get(previous)?.savingCount || !this.documentInside(key, previous, directory)) continue;
@@ -483,9 +489,9 @@ export class WorkspaceFiles {
       // 磁盘读取仍按路径排队；只有登记和刷新结果短暂取得共享写锁。
       return await this.locked(absolute, async () => {
         const key = this.documentKey(clientId, absolute);
-        const commit = (operation: () => DocumentState) => this.locked('workspace-mutations', async () => {
+        const commit = (operation: () => DocumentState | Promise<DocumentState>) => this.locked('workspace-mutations', async () => {
           if (!opening.valid) throw new Error('DOCUMENT_CONFLICT: 文件打开期间已发生变化，请重新打开。');
-          return structuredClone(operation());
+          return structuredClone(await operation());
         });
         const existing = this.documents.get(key);
         if (existing) {
@@ -507,9 +513,15 @@ export class WorkspaceFiles {
         }
         opening.reading = true;
         const value = await this.readAbsolute(absolute);
-        return commit(() => {
+        return commit(async () => {
           const current = this.documents.get(key);
           if (current) return current;
+          // 等已开始的刷新落定；刷新期间可能又启动了更新的一轮，逐次等到稳定。
+          while (opening.refresh) {
+            const refresh = opening.refresh;
+            await refresh;
+            if (opening.refresh === refresh) break;
+          }
           const latest = opening.refreshed ?? value;
           if (value.hash !== null && latest.hash === null) throw new Error('DOCUMENT_CONFLICT: 文件打开期间已删除，请重新打开。');
           const document: DocumentState = {
