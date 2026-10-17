@@ -606,6 +606,12 @@ export class PlatformRuntime {
         await this.nativeTools.flush(run.conversationId);
         const afterTools = await this.services.afterTools?.(run, workspace, signal, content);
         if (afterTools?.stop) {
+          // 宿主完成前先撤销剩余审批并保存配对结果，使运行状态恢复到可完成的状态。
+          executionController.abort();
+          const detached = await this.nativeTools.interrupt(run.id);
+          await this.settleInterrupted(run, 'CANCELLED', detached);
+          interrupted = true;
+          signal.throwIfAborted();
           await this.event(run.id, 'run.completed', { reason: afterTools.reason ?? 'document_confirmation' }, { status: 'completed' }); return;
         }
       }
