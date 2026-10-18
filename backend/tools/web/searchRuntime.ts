@@ -6,13 +6,9 @@
  */
 
 import { createProxyFetch } from '../../modules/channel/proxyFetch';
+import { clampInteger, postJson, type FetchImplementation } from './request';
 
-const REQUEST_TIMEOUT_MS = 30_000;
 const MAX_CONTENT_CHARS = 20_000;
-const RETRY_DELAY_MS = 1_000;
-const MAX_RETRY_DELAY_MS = 5_000;
-/** 这些状态表示暂时不可用，等待后可以重试；其余 4xx 修改请求前重试没有意义。 */
-const RETRYABLE_STATUS = new Set([408, 429, 500, 502, 503, 504]);
 
 export interface WebSearchRuntimeConfig {
     endpoint: string;
@@ -40,13 +36,6 @@ export interface WebSearchItem {
     authority?: number;
     rerankScore?: number;
 }
-
-type FetchImplementation = (url: string, init: {
-    method?: string;
-    headers?: Record<string, string>;
-    body?: string;
-    signal?: AbortSignal;
-}) => Promise<Response>;
 
 interface UpstreamItem {
     title?: unknown;
@@ -108,7 +97,7 @@ export async function executeWebSearch(
     const oriQuestion = typeof args.oriQuestion === 'string' ? args.oriQuestion.trim() : '';
     if (oriQuestion) requestBody.ori_question = oriQuestion;
 
-    const result = await requestSearch(fetchImpl, endpoint, apiKey, requestBody, signal);
+    const result = await postJson(fetchImpl, endpoint, apiKey, requestBody, signal);
     if (!result.ok) {
         if (result.timeout) {
             return { success: false, code: 'WEB_SEARCH_TIMEOUT', error: '搜索请求超时，请稍后重试。' };
@@ -136,58 +125,6 @@ export async function executeWebSearch(
     };
 }
 
-type RequestResult =
-    | { ok: true; payload: unknown }
-    | { ok: false; status?: number; message?: string; timeout?: boolean };
-
-async function requestSearch(
-    fetchImpl: FetchImplementation,
-    endpoint: string,
-    apiKey: string,
-    body: Record<string, unknown>,
-    signal: AbortSignal
-): Promise<RequestResult> {
-    for (let attempt = 0; attempt < 2; attempt++) {
-        const controller = AbortSignal.any([signal, AbortSignal.timeout(REQUEST_TIMEOUT_MS)]);
-        try {
-            const response = await fetchImpl(endpoint, {
-                method: 'POST',
-                headers: { 'content-type': 'application/json', authorization: `Bearer ${apiKey}` },
-                body: JSON.stringify(body),
-                signal: controller
-            });
-            const text = await response.text();
-            if (response.ok) return { ok: true, payload: parseJson(text) };
-            if (attempt === 0 && RETRYABLE_STATUS.has(response.status)) {
-                await delay(retryDelay(response), signal);
-                continue;
-            }
-            return { ok: false, status: response.status, message: upstreamMessage(text, response.status) };
-        } catch (error) {
-            // 调用方取消时直接向上传递，不把用户停止运行当成网络故障。
-            signal.throwIfAborted();
-            if (attempt === 0) {
-                await delay(RETRY_DELAY_MS, signal);
-                continue;
-            }
-            return {
-                ok: false,
-                timeout: error instanceof Error && error.name === 'TimeoutError',
-                message: error instanceof Error ? error.message : String(error)
-            };
-        }
-    }
-    return { ok: false };
-}
-
-function parseJson(text: string): unknown {
-    try {
-        return JSON.parse(text);
-    } catch {
-        return null;
-    }
-}
-
 function projectItem(item: UpstreamItem, needContent: boolean): { value: WebSearchItem; truncated: boolean } {
     const content = typeof item.content === 'string' ? item.content : '';
     const truncated = needContent && content.length > MAX_CONTENT_CHARS;
@@ -211,30 +148,6 @@ function stringValue(value: unknown): string {
     return typeof value === 'string' ? value : '';
 }
 
-function clampInteger(value: unknown, min: number, max: number, fallback: number): number {
-    const number = typeof value === 'number' && Number.isFinite(value) ? Math.trunc(value) : fallback;
-    return Math.min(max, Math.max(min, number));
-}
-
-/** 优先采用上游给出的 Retry-After，避免账户级 QPS 限制下连续重试。 */
-function retryDelay(response: Response): number {
-    const header = response.headers.get('retry-after');
-    if (header) {
-        const seconds = Number(header);
-        if (Number.isFinite(seconds) && seconds >= 0) return Math.min(MAX_RETRY_DELAY_MS, seconds * 1000);
-        const date = Date.parse(header);
-        if (Number.isFinite(date)) return Math.min(MAX_RETRY_DELAY_MS, Math.max(0, date - Date.now()));
-    }
-    return RETRY_DELAY_MS;
-}
-
-function upstreamMessage(text: string, status: number): string | undefined {
-    const parsed = parseJson(text) as { error?: { message?: unknown } } | null;
-    if (typeof parsed?.error?.message === 'string' && parsed.error.message) return parsed.error.message;
-    const plain = text.trim().slice(0, 500);
-    return plain || `HTTP ${status}`;
-}
-
 function explainFailure(status: number | undefined, message: string | undefined): string {
     const detail = message ? `：${message}` : '';
     switch (status) {
@@ -250,22 +163,4 @@ function explainFailure(status: number | undefined, message: string | undefined)
         case 504: return `搜索服务暂时不可用${detail}`;
         default: return `搜索失败${detail}`;
     }
-}
-
-function delay(ms: number, signal: AbortSignal): Promise<void> {
-    return new Promise((resolve, reject) => {
-        if (signal.aborted) {
-            reject(signal.reason);
-            return;
-        }
-        const timer = setTimeout(() => {
-            signal.removeEventListener('abort', onAbort);
-            resolve();
-        }, ms);
-        const onAbort = () => {
-            clearTimeout(timer);
-            reject(signal.reason);
-        };
-        signal.addEventListener('abort', onAbort, { once: true });
-    });
 }

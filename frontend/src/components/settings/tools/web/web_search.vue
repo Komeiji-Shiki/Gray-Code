@@ -15,6 +15,7 @@ import { useDesktopSettingsDraft } from '@/platform/settingsDraft'
 
 interface WebSearchConfig {
   endpoint: string
+  fetchEndpoint: string
   apiKey: string
   count: number
   needContent: boolean
@@ -22,6 +23,7 @@ interface WebSearchConfig {
 
 const DEFAULT_CONFIG: WebSearchConfig = {
   endpoint: 'https://api.deepseek.com/v1/tools/search',
+  fetchEndpoint: 'https://api.deepseek.com/v1/tools/fetch',
   apiKey: '',
   count: 10,
   needContent: false
@@ -42,6 +44,7 @@ async function loadConfig() {
     })
     if (response?.config) {
       config.endpoint = response.config.endpoint ?? DEFAULT_CONFIG.endpoint
+      config.fetchEndpoint = response.config.fetchEndpoint ?? DEFAULT_CONFIG.fetchEndpoint
       config.apiKey = response.config.apiKey ?? DEFAULT_CONFIG.apiKey
       config.count = response.config.count ?? DEFAULT_CONFIG.count
       config.needContent = response.config.needContent ?? DEFAULT_CONFIG.needContent
@@ -68,6 +71,7 @@ async function persistConfig() {
       toolName: 'web_search',
       config: {
         endpoint: config.endpoint.trim(),
+        fetchEndpoint: config.fetchEndpoint.trim(),
         apiKey: config.apiKey.trim(),
         count: clampCount(config.count),
         needContent: config.needContent
@@ -125,6 +129,18 @@ onUnmounted(cancelSaveTimer)
             @input="scheduleSave"
           />
           <span class="field-hint">{{ t('components.settings.toolSettings.web.webSearch.endpointHint') }}</span>
+        </label>
+
+        <label class="field">
+          <span class="field-label">{{ t('components.settings.toolSettings.web.webSearch.fetchEndpoint') }}</span>
+          <input
+            v-model="config.fetchEndpoint"
+            type="text"
+            spellcheck="false"
+            :placeholder="DEFAULT_CONFIG.fetchEndpoint"
+            @input="scheduleSave"
+          />
+          <span class="field-hint">{{ t('components.settings.toolSettings.web.webSearch.fetchEndpointHint') }}</span>
         </label>
 
         <label class="field">

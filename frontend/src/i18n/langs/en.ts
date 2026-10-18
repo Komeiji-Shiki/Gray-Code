@@ -2679,9 +2679,11 @@ const en: LanguageMessages = {
                 },
                 web: {
                     webSearch: {
-                        title: 'Web Search',
+                        title: 'Web Search and Fetch',
                         endpoint: 'Search endpoint',
                         endpointHint: 'Uses the official DeepSeek Search API by default. Point it at a proxy that implements the same endpoint if needed.',
+                        fetchEndpoint: 'Fetch endpoint',
+                        fetchEndpointHint: 'Uses the official DeepSeek Fetch API by default and shares the search API key.',
                         apiKey: 'API Key',
                         apiKeyPlaceholder: 'Enter a DeepSeek API key',
                         showKey: 'Show API key',
@@ -2778,6 +2780,7 @@ const en: LanguageMessages = {
                     find_files: 'Find Files',
                     search_in_files: 'Search in Files',
                     web_search: 'Web Search',
+                    web_fetch: 'Web Fetch',
                     history_search: 'History Search',
                     get_symbols: 'Get Symbols',
                     goto_definition: 'Goto Definition',
@@ -2852,6 +2855,7 @@ const en: LanguageMessages = {
                     find_files: 'Find files by glob patterns. Returns matched file list with details.',
                     search_in_files: 'Search or search-and-replace content in workspace files. Supports regex.',
                     web_search: 'Search public web pages with the official DeepSeek search service and return titles, links, summaries and source information.',
+                    web_fetch: 'Fetch a single public web page with the official DeepSeek fetch service and return its Markdown content.',
                     history_search: 'Search and read conversation history. Supports keyword search and line-range read modes.',
                     get_symbols: 'Get all symbols (classes, functions, variables, etc.) in files. Returns hierarchical symbol list with line numbers.',
                     goto_definition: 'Go to the definition of a symbol and return the complete definition code with line numbers.',
@@ -3472,6 +3476,11 @@ const en: LanguageMessages = {
                 resultCount: '{count} results',
                 authority: 'Authority {level}',
                 empty: 'No matching pages.'
+            },
+            webFetch: {
+                contentLength: '{count} characters',
+                truncated: 'Content truncated; original length {count} characters.',
+                empty: 'The page has no extractable content.'
             },
             executing: 'Executing...',
             structured: {

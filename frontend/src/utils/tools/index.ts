@@ -18,6 +18,7 @@ import './file/delete_code'
 import './search/find_files'
 import './search/search_in_files'
 import './web/web_search'
+import './web/web_fetch'
 
 // 终端工具
 import './terminal/execute_command'

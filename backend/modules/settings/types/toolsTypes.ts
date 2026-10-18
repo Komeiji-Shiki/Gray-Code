@@ -401,16 +401,19 @@ export interface ExecuteCommandToolConfig {
  * 图像生成工具配置
  */
 /**
- * 网页搜索工具配置
+ * 网页搜索与抓取工具配置
  *
- * 使用 DeepSeek 官方 Search API 检索公开网页；endpoint 可指向支持同一接口的代理。
- * 搜索凭据与模型渠道相互独立，避免第三方模型中转无法使用官方搜索。
+ * 使用 DeepSeek 官方 Search / Fetch API；端点可指向支持同一接口的代理。
+ * 凭据与模型渠道相互独立，避免第三方模型中转无法使用官方搜索。
  */
 export interface WebSearchToolConfig {
     /** 搜索接口完整地址 */
     endpoint: string;
 
-    /** 搜索服务的 API Key */
+    /** 抓取接口完整地址 */
+    fetchEndpoint: string;
+
+    /** 搜索与抓取共用的 API Key */
     apiKey: string;
 
     /** 调用参数未指定时返回的结果数 */
@@ -825,6 +828,7 @@ export const DEFAULT_TOOL_AUTO_EXEC_CONFIG: ToolAutoExecConfig = {
  */
 export const DEFAULT_WEB_SEARCH_CONFIG: WebSearchToolConfig = {
     endpoint: 'https://api.deepseek.com/v1/tools/search',
+    fetchEndpoint: 'https://api.deepseek.com/v1/tools/fetch',
     apiKey: '',
     count: 10,
     needContent: false

@@ -2679,9 +2679,11 @@ const ja: LanguageMessages = {
                 },
                 web: {
                     webSearch: {
-                        title: 'ウェブ検索',
+                        title: 'ウェブ検索と取得',
                         endpoint: '検索エンドポイント',
                         endpointHint: '既定では DeepSeek 公式 Search API を使用します。同じエンドポイントを実装したプロキシに変更できます。',
+                        fetchEndpoint: '取得エンドポイント',
+                        fetchEndpointHint: '既定では DeepSeek 公式 Fetch API を使用します。検索と API Key を共有します。',
                         apiKey: 'API Key',
                         apiKeyPlaceholder: 'DeepSeek API Key を入力',
                         showKey: 'API Key を表示',
@@ -2778,6 +2780,7 @@ const ja: LanguageMessages = {
                     find_files: 'ファイルを検索',
                     search_in_files: 'ファイル内を検索',
                     web_search: 'ウェブ検索',
+                    web_fetch: 'ウェブ取得',
                     history_search: '履歴を検索',
                     get_symbols: 'シンボルを取得',
                     goto_definition: '定義に移動',
@@ -2852,6 +2855,7 @@ const ja: LanguageMessages = {
                     find_files: 'Glob パターンでファイルを検索します。一致したファイル一覧を返します。',
                     search_in_files: 'ワークスペースファイル内で検索または置換を行います。正規表現対応。',
                     web_search: 'DeepSeek 公式検索サービスで公開ウェブページを検索し、タイトル、リンク、要約、出典情報を返します。',
+                    web_fetch: 'DeepSeek 公式取得サービスで公開ウェブページを 1 件取得し、Markdown 本文を返します。',
                     history_search: '会話履歴を検索・読み取りします。キーワード検索と行範囲読み取りに対応。',
                     get_symbols: 'ファイル内のシンボル（クラス、関数、変数等）を取得します。階層リストと行番号を返します。',
                     goto_definition: 'シンボルの定義に移動し、完全な定義コードを行番号付きで返します。',
@@ -3472,6 +3476,11 @@ const ja: LanguageMessages = {
                 resultCount: '{count} 件の結果',
                 authority: '権威レベル {level}',
                 empty: '一致するウェブページはありません。'
+            },
+            webFetch: {
+                contentLength: '{count} 文字',
+                truncated: '本文は切り詰められました。元の長さは {count} 文字です。',
+                empty: '抽出できる本文がありません。'
             },
             executing: '実行中...',
             structured: {

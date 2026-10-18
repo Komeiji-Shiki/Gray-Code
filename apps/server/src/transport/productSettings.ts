@@ -80,7 +80,7 @@ export function productSettingsHandlers(draft: ProductSettingsDraft, app: Platfo
         category: /^(read_file|write_file|apply_diff|insert_code|delete_code|delete_file|create_directory|list_files|find_files|search_in_files)$/.test(tool.name) ? 'file'
           : /^(execute_command|terminal_task)$/.test(tool.name) ? 'terminal'
             : tool.name.startsWith('memory_') || tool.name === 'engineering_log' ? 'memory' : tool.name === 'read_skill' ? 'skills' : tool.name.startsWith('todo_') ? 'todo' : tool.name === 'history_search' ? 'history'
-              : tool.name === 'get_activity_stats' ? 'activity' : tool.name.startsWith('mcp_') ? 'mcp' : tool.name === 'web_search' ? 'web'
+              : tool.name === 'get_activity_stats' ? 'activity' : tool.name.startsWith('mcp_') ? 'mcp' : ['web_search', 'web_fetch'].includes(tool.name) ? 'web'
                 : ['generate_image', 'remove_background', 'crop_image', 'resize_image', 'rotate_image'].includes(tool.name) ? 'media' : 'other' })) };
     },
     'tools.setToolEnabled': async data => { await settings.setToolEnabled(data.toolName, data.enabled); return { success: true }; },

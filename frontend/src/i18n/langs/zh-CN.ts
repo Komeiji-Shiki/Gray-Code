@@ -2681,9 +2681,11 @@ const zhCN = {
                 },
                 web: {
                     webSearch: {
-                        title: '网页搜索',
+                        title: '网页搜索与抓取',
                         endpoint: '搜索接口地址',
                         endpointHint: '默认使用 DeepSeek 官方 Search API。支持同一接口的代理可改为自己的地址。',
+                        fetchEndpoint: '抓取接口地址',
+                        fetchEndpointHint: '默认使用 DeepSeek 官方 Fetch API。与搜索共用 API Key。',
                         apiKey: 'API Key',
                         apiKeyPlaceholder: '输入 DeepSeek API Key',
                         showKey: '显示 API Key',
@@ -2780,6 +2782,7 @@ const zhCN = {
                     find_files: '查找文件',
                     search_in_files: '在文件中搜索',
                     web_search: '网页搜索',
+                    web_fetch: '网页抓取',
                     history_search: '历史搜索',
                     get_symbols: '获取符号',
                     goto_definition: '跳转定义',
@@ -2854,6 +2857,7 @@ const zhCN = {
                     find_files: '根据一个或多个 glob 模式查找文件，返回匹配的文件列表及行数详情。',
                     search_in_files: '在工作区文件中搜索或搜索替换内容，支持正则表达式。',
                     web_search: '使用 DeepSeek 官方搜索服务检索公开网页，返回标题、链接、摘要和来源信息。',
+                    web_fetch: '使用 DeepSeek 官方抓取服务读取单个公开网页，返回 Markdown 正文。',
                     history_search: '搜索和读取对话历史记录。支持搜索关键词和按行读取两种模式。',
                     get_symbols: '获取文件中的所有符号（类、函数、变量等），返回层级符号列表及行号。',
                     goto_definition: '跳转到符号定义位置并返回完整定义代码（含行号）。',
@@ -3474,6 +3478,11 @@ const zhCN = {
                 resultCount: '{count} 条结果',
                 authority: '权威等级 {level}',
                 empty: '没有匹配的网页。'
+            },
+            webFetch: {
+                contentLength: '{count} 字符',
+                truncated: '正文已截断，原始长度 {count} 字符。',
+                empty: '页面没有可提取的正文。'
             },
             executing: '执行中...',
             structured: {
