@@ -17,6 +17,11 @@
  * 原始发生时间入窗——后台标签页缓冲回放 / 隐藏 webview 积压的数据会因时间戳落在窗口外而被
  * 立即修剪，这正是期望行为（积压不参与实时 TPS）。live 判定始终基于真实接收时刻（调用时刻）。
  *
+ * 跨设备时钟：chunk.createdAt 来自服务端，窗口修剪使用浏览器本地时钟。Web 版在另一台设备
+ * 运行时浏览器时钟可能慢于服务端，事件时间戳落在本地时间之后；未来事件永远不会被 1s 窗口
+ * 修剪，token 会无限累积并顶到 MAX_RATE。未来时间戳因此按接收时刻计入，过去时间戳仍保留
+ * 积压修剪语义。
+ *
  * live 判定：最近 2s 内有过真实 record 调用。流结束/空闲后 EMA 自然指数衰减，
  * 衰减到不可见阈值（SETTLE_EPS）以下即精确归零，由 UI 展示为 0 与空画布；
  * 不注入任何模拟数据。
@@ -81,7 +86,9 @@ class TpsMeter {
     // live 判定用真实接收时刻（调用时刻），与事件时间戳无关
     this.lastRecordAt = now
     if (source === 'tokenizer' || source === 'estimate') this.lastSource = source
-    const t = typeof timestamp === 'number' && Number.isFinite(timestamp) ? timestamp : now
+    // 服务端时间戳不可能晚于本地接收时刻（网络只会增加延迟）。晚于 now 说明浏览器时钟
+    // 慢于服务端（常见于另一台设备的 Web 版）；若按未来时间戳入窗，窗口将永远不修剪。
+    const t = typeof timestamp === 'number' && Number.isFinite(timestamp) && timestamp <= now ? timestamp : now
 
     // 突发摊薄：单事件 > MAX_SINGLE_EVENT_TOKENS 时拆成 k = ceil(n/250) 个小事件，
     // 时间均匀分布在 [t - BURST_SPREAD_MS, t]（最后一个小事件落在 t），

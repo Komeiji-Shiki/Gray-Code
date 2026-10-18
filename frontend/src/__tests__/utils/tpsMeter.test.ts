@@ -135,16 +135,33 @@ describe('突发摊薄与速率上限', () => {
   })
 
   test('突发摊薄总量守恒：拆分后小事件之和等于原始输入', () => {
-    // 用显式未来时间戳使全部摊薄小事件落在同一个 1s 采样窗口内（fake timers 下确定）：
-    // 260 > 250 → 拆成 2 个事件（130 + 130），散布在 [t-1000, t]，t = now + 1000
+    // 260 > 250 → 拆成 2 个事件（130 + 130），散布在 [t-1000, t]。未来时间戳按接收时刻
+    // 计入（见下方 Web 时钟用例），t = now；首次采样窗口只覆盖靠近 now 的一半。
     tpsMeter.record(260, Date.now() + 1000)
     const samples: TpsSample[] = []
     subscribe((s) => samples.push(s))
 
     vi.advanceTimersByTime(200)
 
-    // 窗口内 total=260 → rate=260（未触发上限）→ 首次采样 ema=260，证明拆分总量守恒
-    expect(samples[0].ema).toBeCloseTo(260, 5)
+    // 窗口内 total=130 → rate=130：拆分没有重复计入原始 260
+    expect(samples[0].ema).toBeCloseTo(130, 5)
+    vi.advanceTimersByTime(200)
+    // 窗口滑出更早的小事件后仍为 130，拆分总量不会继续放大
+    expect(samples[1].ema).toBeCloseTo(130, 5)
+  })
+
+  test('Web 端浏览器时钟慢于服务端：未来时间戳按接收时刻计入，窗口仍会修剪', () => {
+    const samples: TpsSample[] = []
+    subscribe((s) => samples.push(s))
+
+    // 服务端时间比浏览器快 30 秒：每条 chunk.createdAt 都落在本地时间之后。
+    tpsMeter.record(100, Date.now() + 30_000)
+    vi.advanceTimersByTime(200)
+    expect(samples[0].ema).toBeCloseTo(100, 5)
+
+    // 未纠正时事件永远留在窗口中，EMA 不会衰减；纠正后按接收时刻过期并归零。
+    for (let i = 0; i < 40; i++) vi.advanceTimersByTime(200)
+    expect(samples[samples.length - 1].ema).toBe(0)
   })
 
   test('回放/积压：record(500, 过去时间戳) 后事件立即被修剪，不产生尖峰', () => {
