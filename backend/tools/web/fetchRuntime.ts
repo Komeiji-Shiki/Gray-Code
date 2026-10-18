@@ -21,6 +21,7 @@ export interface WebFetchRuntimeConfig {
 export interface WebFetchArgs {
     url?: unknown;
     maxChars?: unknown;
+    offset?: unknown;
 }
 
 export interface WebFetchSuccess {
@@ -32,7 +33,12 @@ export interface WebFetchSuccess {
         content: string;
         /** 截断前正文的字符数。 */
         contentLength: number;
+        /** 本页正文在完整正文中的起始位置。 */
+        offset: number;
+        /** 正文还有后续内容时为 true。 */
         truncated: boolean;
+        /** 下一次读取的 offset；没有后续内容时省略。 */
+        nextOffset?: number;
     };
 }
 
@@ -46,7 +52,7 @@ export interface WebFetchFailure {
 
 export type WebFetchOutcome = WebFetchSuccess | WebFetchFailure;
 
-/** 抓取单个页面；正文超过 maxChars 时截断并标记。 */
+/** 抓取单个页面；正文按 offset 分页，每页最多 maxChars 字符。 */
 export async function executeWebFetch(
     args: WebFetchArgs,
     config: WebFetchRuntimeConfig,
@@ -67,6 +73,7 @@ export async function executeWebFetch(
     if (invalid) return { success: false, code: 'WEB_FETCH_FAILED', error: invalid };
 
     const maxChars = clampInteger(args.maxChars, MIN_MAX_CHARS, MAX_MAX_CHARS, DEFAULT_MAX_CHARS);
+    const offset = clampInteger(args.offset, 0, Number.MAX_SAFE_INTEGER, 0);
     const result = await postJson(fetchImpl, endpoint, apiKey, { url }, signal);
     if (!result.ok) {
         if (result.timeout) {
@@ -80,20 +87,30 @@ export async function executeWebFetch(
         };
     }
 
+    // 200 也可能来自网关或错误页；没有正文对象时不能当成空页面。
     const payload = result.payload as { title?: unknown; content?: unknown } | null;
-    const title = typeof payload?.title === 'string' ? payload.title : '';
-    const content = typeof payload?.content === 'string' ? payload.content : '';
+    if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
+        return { success: false, code: 'WEB_FETCH_FAILED', error: '抓取服务返回了无法解析的响应。' };
+    }
+    const title = typeof payload.title === 'string' ? payload.title : '';
+    const content = typeof payload.content === 'string' ? payload.content : '';
     if (!content) return { success: false, code: 'WEB_FETCH_FAILED', error: '页面没有可提取的正文。' };
+    if (offset >= content.length) {
+        return { success: false, code: 'WEB_FETCH_FAILED', error: `offset 超出正文长度（共 ${content.length} 字符）。` };
+    }
 
-    const truncated = content.length > maxChars;
+    const end = Math.min(content.length, offset + maxChars);
+    const truncated = end < content.length;
     return {
         success: true,
         data: {
             url,
             title,
-            content: truncated ? content.slice(0, maxChars) : content,
+            content: content.slice(offset, end),
             contentLength: content.length,
-            truncated
+            offset,
+            truncated,
+            ...(truncated ? { nextOffset: end } : {})
         }
     };
 }
@@ -121,6 +138,8 @@ function explainFailure(status: number | undefined, message: string | undefined)
         case 402: return `搜索账户余额不足${detail}`;
         case 403: return `页面被安全策略拒绝${detail}`;
         case 404: return `无法取得页面内容，可能不可用、被站点阻止或内容类型不支持${detail}`;
+        case 408: return `抓取请求超时，请稍后重试${detail}`;
+        case 413: return `抓取请求体过大，请检查网页地址${detail}`;
         case 429: return `抓取请求超过频率限制，请稍后重试${detail}`;
         case 500:
         case 502:

@@ -176,6 +176,23 @@ function compactSearchResponse(toolName: string, response: Record<string, unknow
 }
 
 /**
+ * web_search 的 snippet 是给结果卡片展示的短摘要，模型读 summary 就够。
+ * 存储结果保留两个字段供界面使用，只在发给模型前移除 snippet。
+ */
+function compactWebSearchResponse(toolName: string, response: Record<string, unknown>): Record<string, unknown> {
+    if (toolName !== 'web_search') return response;
+    const data = response.data;
+    if (!data || typeof data !== 'object' || Array.isArray(data)) return response;
+    const record = data as Record<string, unknown>;
+    if (!Array.isArray(record.results)) return response;
+    return { ...response, data: { ...record, results: record.results.map(item => {
+        if (!item || typeof item !== 'object' || Array.isArray(item)) return item;
+        const { snippet: _snippet, ...rest } = item as Record<string, unknown>;
+        return rest;
+    }) } };
+}
+
+/**
  * 批量文件工具成功时，计数与 false 标志都能从结果本身看出；只在出现失败、截断
  * 或计数和结果条数不一致时保留，避免每次单文件读取都附带一行默认值。
  */
@@ -345,7 +362,8 @@ export function serializeToolResultForLLM(
         return String(response);
     }
 
-    response = compactBatchResponse(toolName, compactSearchResponse(toolName, withoutToolErrorDisplayMetadata(response)));
+    response = compactBatchResponse(toolName, compactSearchResponse(toolName,
+        compactWebSearchResponse(toolName, withoutToolErrorDisplayMetadata(response))));
     const textBody = formatTextBody(toolName, response);
     if (textBody !== undefined) return textBody;
     const data = response.data as Record<string, unknown> | undefined;

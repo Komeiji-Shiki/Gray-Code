@@ -16,6 +16,7 @@ export function webTools(app: PlatformApplication): RuntimeTool[] {
     {
       declaration: { name: search.name, description: search.description, parameters: search.parameters },
       effects: () => ['public_read'],
+      parallelRead: true,
       execute: (args, context) => {
         const { config, proxyUrl } = settingsConfig();
         return executeWebSearch(args, {
@@ -30,6 +31,7 @@ export function webTools(app: PlatformApplication): RuntimeTool[] {
     {
       declaration: { name: fetch.name, description: fetch.description, parameters: fetch.parameters },
       effects: () => ['public_read'],
+      parallelRead: true,
       execute: (args, context) => {
         const { config, proxyUrl } = settingsConfig();
         return executeWebFetch(args, {

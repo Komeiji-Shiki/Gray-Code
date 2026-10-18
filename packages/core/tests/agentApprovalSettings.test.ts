@@ -116,3 +116,27 @@ test('默认 Agent 不预先携带环境工具，普通对话不发送 Bot 附�
     expect(declarations.filter(declaration => JSON.stringify(declaration).length > 4000).map(declaration => declaration.name)).toEqual([]);
   } finally { await app.close(); await f.cleanup(); }
 });
+
+test('未配置网页搜索凭据时不发送搜索与抓取声明，配置后恢复', async () => {
+  const f = await fixture(); await f.store.close();
+  const app = await PlatformApplication.open({ dataDirectory: f.data, secretCodec: {
+    encrypt: async value => Buffer.from(value, 'utf8'),
+    decrypt: async value => Buffer.from(value).toString('utf8'),
+  } });
+  try {
+    const original = app.settings.snapshot().settings.agents[0];
+    const custom = { ...original, id: 'custom', toolNames: ['web_search', 'web_fetch'] };
+    expect(configuredAgent(app, original).toolNames).not.toContain('web_search');
+    expect(configuredAgent(app, original).toolNames).not.toContain('web_fetch');
+    expect(configuredAgent(app, custom).toolNames).toEqual([]);
+
+    const draft = await app.product.draft();
+    await draft.settings.updateWebSearchConfig({ apiKey: 'sk-test' });
+    await app.product.save(draft);
+
+    const configured = configuredAgent(app, original).toolNames;
+    expect(configured).toContain('web_search');
+    expect(configured).toContain('web_fetch');
+    expect(configuredAgent(app, custom).toolNames).toEqual(['web_search', 'web_fetch']);
+  } finally { await app.close(); await f.cleanup(); }
+});

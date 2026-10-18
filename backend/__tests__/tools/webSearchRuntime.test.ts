@@ -146,4 +146,35 @@ describe('executeWebSearch', () => {
         await expect(pending).rejects.toThrow();
         expect(fetchImpl).toHaveBeenCalledTimes(1);
     });
+
+    it('200 但响应不是 JSON 时返回解析失败，而不是零结果', async () => {
+        const fetchImpl = jest.fn(async () => new Response('<html>gateway</html>', {
+            status: 200, headers: { 'content-type': 'text/html' }
+        }));
+
+        const outcome = await executeWebSearch({ query: 'bad payload' }, config, signal(), fetchImpl);
+
+        expect(outcome).toMatchObject({ success: false, code: 'WEB_SEARCH_FAILED' });
+        if (outcome.success) throw new Error('expected failure');
+        expect(outcome.error).toContain('无法解析');
+    });
+
+    it('Retry-After 超过重试上限时直接失败，不再重试', async () => {
+        const fetchImpl = jest.fn(async () => jsonResponse({ error: { message: 'rate limited' } }, 429, { 'retry-after': '60' }));
+
+        const outcome = await executeWebSearch({ query: 'rate' }, config, signal(), fetchImpl);
+
+        expect(fetchImpl).toHaveBeenCalledTimes(1);
+        expect(outcome).toMatchObject({ success: false, status: 429 });
+    });
+
+    it('413 映射为请求体过大', async () => {
+        const fetchImpl = jest.fn(async () => jsonResponse({ error: { message: 'body too large' } }, 413));
+
+        const outcome = await executeWebSearch({ query: 'large' }, config, signal(), fetchImpl);
+
+        expect(outcome).toMatchObject({ success: false, code: 'WEB_SEARCH_FAILED', status: 413 });
+        if (outcome.success) throw new Error('expected failure');
+        expect(outcome.error).toContain('请求体过大');
+    });
 });

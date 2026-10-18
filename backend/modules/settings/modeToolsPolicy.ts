@@ -19,6 +19,8 @@ export const DEFAULT_CHAT_MODE_TOOL_NAMES = [
     'browser_tabs',
     'browser_read',
     'browser_action',
+    'web_search',
+    'web_fetch',
     'generate_image',
     'memory_search',
     'memory_read',

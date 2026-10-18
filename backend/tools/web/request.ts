@@ -6,7 +6,8 @@
 
 const REQUEST_TIMEOUT_MS = 30_000;
 const RETRY_DELAY_MS = 1_000;
-const MAX_RETRY_DELAY_MS = 5_000;
+/** 等待超过这个时限就不再重试：整次工具调用会被一次限流拖住，直接返回上游状态更清楚。 */
+const MAX_RETRY_DELAY_MS = 10_000;
 /** 这些状态表示暂时不可用，等待后可以重试；其余 4xx 修改请求前重试没有意义。 */
 const RETRYABLE_STATUS = new Set([408, 429, 500, 502, 503, 504]);
 
@@ -40,8 +41,9 @@ export async function postJson(
             });
             const text = await response.text();
             if (response.ok) return { ok: true, payload: parseJson(text) };
-            if (attempt === 0 && RETRYABLE_STATUS.has(response.status)) {
-                await delay(retryDelay(response), signal);
+            const wait = attempt === 0 && RETRYABLE_STATUS.has(response.status) ? retryDelay(response) : undefined;
+            if (wait !== undefined) {
+                await delay(wait, signal);
                 continue;
             }
             return { ok: false, status: response.status, message: upstreamMessage(text, response.status) };
@@ -75,14 +77,20 @@ export function clampInteger(value: unknown, min: number, max: number, fallback:
     return Math.min(max, Math.max(min, number));
 }
 
-/** 优先采用上游给出的 Retry-After，避免账户级 QPS 限制下连续重试。 */
-function retryDelay(response: Response): number {
+/**
+ * 优先采用上游给出的 Retry-After，避免账户级 QPS 限制下连续重试。
+ * 上游要求的等待超过上限时返回 undefined：按 429 直接失败，比等完上限再被拒更省时间。
+ */
+function retryDelay(response: Response): number | undefined {
     const header = response.headers.get('retry-after');
     if (header) {
         const seconds = Number(header);
-        if (Number.isFinite(seconds) && seconds >= 0) return Math.min(MAX_RETRY_DELAY_MS, seconds * 1000);
+        if (Number.isFinite(seconds) && seconds >= 0) return seconds * 1000 <= MAX_RETRY_DELAY_MS ? seconds * 1000 : undefined;
         const date = Date.parse(header);
-        if (Number.isFinite(date)) return Math.min(MAX_RETRY_DELAY_MS, Math.max(0, date - Date.now()));
+        if (Number.isFinite(date)) {
+            const wait = Math.max(0, date - Date.now());
+            return wait <= MAX_RETRY_DELAY_MS ? wait : undefined;
+        }
     }
     return RETRY_DELAY_MS;
 }

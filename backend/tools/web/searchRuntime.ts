@@ -110,8 +110,12 @@ export async function executeWebSearch(
         };
     }
 
+    // 200 也可能来自网关或错误页；没有 results 数组时不能当成「0 条结果」。
     const raw = (result.payload as { results?: unknown } | null)?.results;
-    const items = Array.isArray(raw) ? raw.map(item => projectItem(item as UpstreamItem, needContent)) : [];
+    if (!result.payload || typeof result.payload !== 'object' || !Array.isArray(raw)) {
+        return { success: false, code: 'WEB_SEARCH_FAILED', error: '搜索服务返回了无法解析的响应。' };
+    }
+    const items = raw.map(item => projectItem(item as UpstreamItem, needContent));
     const results = items.map(item => item.value);
     return {
         success: true,
@@ -156,6 +160,8 @@ function explainFailure(status: number | undefined, message: string | undefined)
         case 402: return `搜索账户余额不足${detail}`;
         case 403: return `搜索请求被拒绝${detail}`;
         case 404: return `搜索接口不可用，请检查接口地址${detail}`;
+        case 408: return `搜索请求超时，请稍后重试${detail}`;
+        case 413: return `搜索请求体过大，请缩短查询或减少结果数${detail}`;
         case 429: return `搜索请求超过频率限制，请稍后重试${detail}`;
         case 500:
         case 502:

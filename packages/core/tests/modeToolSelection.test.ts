@@ -31,12 +31,20 @@ describe('平台模式按配置与会话阶段选择工具', () => {
   beforeEach(async () => {
     f = await fixture(); await f.store.close();
     app = await PlatformApplication.open({ dataDirectory: f.data,
+      secretCodec: {
+        encrypt: async value => Buffer.from(value, 'utf8'),
+        decrypt: async value => Buffer.from(value).toString('utf8'),
+      },
       models: { generate: async input => { tools = input.tools.map(tool => tool.name); return { role: 'model', parts: [{ text: 'ok' }] }; } } });
     app.tools.register({ declaration: { name: mcpTool, description: '模式工具范围验证', parameters: { type: 'object', properties: {} } },
       effects: () => [], execute: async () => ({ success: true }) });
     const draft = app.settings.snapshot();
     draft.settings.workspaces.push({ id: 'project', name: 'Fixture', directory: f.source, deviceId: 'local' });
     await app.settings.save({ settings: draft.settings, expectedRevision: draft.revision });
+    // 网页搜索与抓取只在配置凭据后进入工具目录。
+    const product = await app.product.draft();
+    await product.settings.updateWebSearchConfig({ apiKey: 'sk-test' });
+    await app.product.save(product);
     router = new ApplicationRouter(app);
   });
   afterEach(async () => { await app.close(); await f.cleanup(); });
@@ -72,10 +80,10 @@ describe('平台模式按配置与会话阶段选择工具', () => {
     for (const name of MODE_ONLY_TOOLS) expect(sent).not.toContain(name);
   });
 
-  test('默认对话使用完整的 23 项内置清单，保留 MCP 并追加上下文工具', async () => {
+  test('默认对话使用完整的 25 项内置清单，保留 MCP 并追加上下文工具', async () => {
     const sent = await send([], 'code', { platformMode: 'chat' });
-    expect(DEFAULT_CHAT_MODE_TOOL_NAMES).toHaveLength(23);
-    for (const name of ['read_file', 'write_file', 'ask_user', 'memory_search', mcpTool, 'context_status', 'context_history']) {
+    expect(DEFAULT_CHAT_MODE_TOOL_NAMES).toHaveLength(25);
+    for (const name of ['read_file', 'write_file', 'ask_user', 'memory_search', 'web_search', 'web_fetch', mcpTool, 'context_status', 'context_history']) {
       expect(sent).toContain(name);
     }
     for (const name of ['execute_command', 'search_in_files', 'subagents', ...SYNC_TOOLS, ...MODE_ONLY_TOOLS]) {

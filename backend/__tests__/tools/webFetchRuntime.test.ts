@@ -108,4 +108,59 @@ describe('executeWebFetch', () => {
         await expect(pending).rejects.toThrow();
         expect(fetchImpl).toHaveBeenCalledTimes(1);
     });
+
+    it('按 offset 分页并返回 nextOffset', async () => {
+        const content = 'x'.repeat(2_500);
+        const fetchImpl = jest.fn(async () => jsonResponse({ title: 'Long', content }));
+
+        const outcome = await executeWebFetch({ url: 'https://example.com/long', maxChars: 1_000, offset: 1_000 }, config, signal(), fetchImpl);
+
+        expect(outcome.success).toBe(true);
+        if (!outcome.success) return;
+        expect(outcome.data).toMatchObject({ contentLength: 2_500, offset: 1_000, truncated: true, nextOffset: 2_000 });
+        expect(outcome.data.content).toBe(content.slice(1_000, 2_000));
+    });
+
+    it('最后一页不返回 nextOffset', async () => {
+        const fetchImpl = jest.fn(async () => jsonResponse({ title: 'Short', content: 'x'.repeat(2_000) }));
+
+        const outcome = await executeWebFetch({ url: 'https://example.com/short', maxChars: 1_000, offset: 1_000 }, config, signal(), fetchImpl);
+
+        expect(outcome.success).toBe(true);
+        if (!outcome.success) return;
+        expect(outcome.data.truncated).toBe(false);
+        expect(outcome.data).not.toHaveProperty('nextOffset');
+    });
+
+    it('offset 超出正文长度时返回明确错误', async () => {
+        const fetchImpl = jest.fn(async () => jsonResponse({ title: 'Short', content: 'abc' }));
+
+        const outcome = await executeWebFetch({ url: 'https://example.com/short', offset: 3 }, config, signal(), fetchImpl);
+
+        expect(outcome).toMatchObject({ success: false, code: 'WEB_FETCH_FAILED' });
+        if (outcome.success) throw new Error('expected failure');
+        expect(outcome.error).toContain('offset 超出正文长度');
+    });
+
+    it('200 但响应不是 JSON 时返回解析失败，而不是空正文', async () => {
+        const fetchImpl = jest.fn(async () => new Response('<html>gateway</html>', {
+            status: 200, headers: { 'content-type': 'text/html' }
+        }));
+
+        const outcome = await executeWebFetch({ url: 'https://example.com/bad' }, config, signal(), fetchImpl);
+
+        expect(outcome).toMatchObject({ success: false, code: 'WEB_FETCH_FAILED' });
+        if (outcome.success) throw new Error('expected failure');
+        expect(outcome.error).toContain('无法解析');
+    });
+
+    it('413 映射为请求体过大', async () => {
+        const fetchImpl = jest.fn(async () => jsonResponse({ error: { message: 'body too large' } }, 413));
+
+        const outcome = await executeWebFetch({ url: 'https://example.com/large' }, config, signal(), fetchImpl);
+
+        expect(outcome).toMatchObject({ success: false, code: 'WEB_FETCH_FAILED', status: 413 });
+        if (outcome.success) throw new Error('expected failure');
+        expect(outcome.error).toContain('请求体过大');
+    });
 });

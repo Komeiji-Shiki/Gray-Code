@@ -46,6 +46,11 @@ export function upgradeAgentToolNames(agent: AgentDefinition): AgentDefinition {
 
 type ToolEnablement = Pick<SettingsManager, 'getToolsEnabled' | 'isToolEnabled'>;
 
+/** 搜索与抓取共用同一份 DeepSeek 凭据；未配置时不发送声明，避免模型调用后必然失败。 */
+function hasWebSearchCredential(preferences: SettingsManager): boolean {
+  return preferences.getWebSearchConfig().apiKey.trim().length > 0;
+}
+
 /**
  * 合并工具中某个操作是否启用：用户单独设置过新名称时以新名称为准，否则沿用该操作原工具的启用项。
  * 工具清单、工程日志和终端的 argv / input 操作共用这一条规则。
@@ -63,8 +68,11 @@ export function configuredAgent(app: PlatformApplication, agent: AgentDefinition
   const names = agent.id === 'default' ? app.tools.names().filter(name => !name.startsWith('mcp_')) : agent.toolNames;
   // 审批规则覆盖完整内置目录：环境工具之后由提示词准备追加，执行时仍需要同一套规则。
   const selected = agent.id === 'default' ? names.filter(name => defaultToolName(app, name)) : names;
-  return { ...agent, toolNames: [...new Set([...selected, ...mcpNames])].filter(name => name === 'engineering_log'
-    ? Object.values(ENGINEERING_LOG_LEGACY_NAMES).some(legacy => mergedOperationEnabled(preferences, name, legacy))
-    : preferences.isToolEnabled(name)),
+  const webConfigured = hasWebSearchCredential(preferences);
+  return { ...agent, toolNames: [...new Set([...selected, ...mcpNames])].filter(name =>
+    (webConfigured || name !== 'web_search' && name !== 'web_fetch')
+    && (name === 'engineering_log'
+      ? Object.values(ENGINEERING_LOG_LEGACY_NAMES).some(legacy => mergedOperationEnabled(preferences, name, legacy))
+      : preferences.isToolEnabled(name))),
     toolApproval: { ...toolApprovalRules(preferences, names, mcpNames), ...agent.toolApproval } };
 }

@@ -384,4 +384,15 @@ describe('工具结果信息完整性与紧凑输出', () => {
         expect(result).toContain('"affected":["one"]');
         expect(result).toContain('"success":true');
     });
+
+    test('web_search 的 snippet 只留给界面，模型读取 summary', () => {
+        const response = { success: true, data: {
+            query: 'GrayCode', resultCount: 1, needContent: false,
+            results: [{ title: 'GrayCode', url: 'https://example.com/graycode', snippet: '界面短摘要', summary: '模型长摘要' }],
+        } };
+        const result = serializeToolResultForLLM('web_search', response);
+        expect(result).toContain('模型长摘要');
+        expect(result).not.toContain('界面短摘要');
+        expect(response.data.results[0].snippet).toBe('界面短摘要');
+    });
 });
