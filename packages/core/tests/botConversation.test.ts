@@ -420,4 +420,12 @@ describe('Bot 频道上下文、附件与定时总结', () => {
     expect(JSON.stringify(unavailable)).toContain('未读取，附件失效');
     await expect(downloadBotAttachment({ name: 'x.txt', url: 'http://127.0.0.1/private' }, 'discord')).rejects.toThrow('平台 CDN');
   });
+  test('QQ NT 图片地址可以下载，仿冒后缀的主机仍被拒绝', async () => {
+    const fetch = jest.spyOn(globalThis, 'fetch').mockImplementation(async () => new Response(Buffer.from('png')));
+    try {
+      await expect(downloadBotAttachment({ name: 'a.png', url: 'https://multimedia.nt.qq.com.cn/download?fileid=x' }, 'onebot')).resolves.toHaveLength(3);
+      await expect(downloadBotAttachment({ name: 'a.png', url: 'https://qq.com.cn.example.com/a.png' }, 'onebot')).rejects.toThrow('平台 CDN');
+      expect(fetch).toHaveBeenCalledTimes(1);
+    } finally { fetch.mockRestore(); }
+  });
 });

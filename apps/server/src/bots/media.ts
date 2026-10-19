@@ -15,7 +15,8 @@ function imageMime(bytes: Uint8Array): string | undefined {
 export async function downloadBotAttachment(attachment: BotAttachment, platform: 'discord' | 'onebot'): Promise<Uint8Array> {
   if (!attachment.url) throw new Error('平台没有提供可下载的附件地址');
   const url = new URL(attachment.url);
-  const allowed = platform === 'discord' ? ['cdn.discordapp.com', 'media.discordapp.net'] : ['qq.com', 'qpic.cn', 'gtimg.cn'];
+  // QQ NT 的图片地址在 multimedia.nt.qq.com.cn，不属于 qq.com 后缀。
+  const allowed = platform === 'discord' ? ['cdn.discordapp.com', 'media.discordapp.net'] : ['qq.com', 'qq.com.cn', 'qpic.cn', 'gtimg.cn'];
   if (url.protocol !== 'https:' || url.username || url.password || url.port && url.port !== '443'
     || !allowed.some(domain => url.hostname === domain || platform === 'onebot' && url.hostname.endsWith('.' + domain))) throw new Error('附件地址不是受支持的平台 CDN');
   const limit = /\.(txt|md|markdown)$/i.test(attachment.name) ? 32 * 1024 * 1024 : 12 * 1024 * 1024;
