@@ -59,7 +59,10 @@ export function oneBotContent(value: unknown, botId: string, version: 11 | 12, d
       attachments.push({ name: data.name || data.file_name || fileName || (segment.type === 'image' ? 'image.png' : segment.type),
         url: typeof data.url === 'string' ? data.url : typeof data.file === 'string' && /^https?:\/\//.test(data.file) ? data.file : undefined,
         fileId: String(data.file_id ?? data.file ?? ''), size: Number(data.file_size ?? data.size) || undefined,
-        contentType: segment.type === 'image' ? 'image/*' : undefined });
+        contentType: segment.type === 'image' ? 'image/*' : undefined,
+        // NapCat 把 QQ 表情图片标为 sub_type 1，商城表情带 emoji_id；summary 为“[动画表情]”时不重复显示。
+        ...(segment.type === 'image' && (Number(data.sub_type) === 1 || data.emoji_id) ? { sticker: true,
+          ...(typeof data.summary === 'string' && data.summary && data.summary !== '[动画表情]' ? { summary: data.summary } : {}) } : {}) });
     } else if (segment.type === 'reply' || segment.type === 'forward') {
       segments.push({ type: 'reference', index: references.length });
       references.push({ kind: segment.type, id: String(data.id ?? data.message_id ?? '') });

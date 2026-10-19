@@ -15,6 +15,8 @@ const EXTENSIONS: Record<string, string> = { 'image/png': '.png', 'image/jpeg': 
 const LOOKUP_EXTENSIONS = ['.png', '.jpg', '.jpeg', '.gif', '.webp'];
 const MAX_BYTES = 5 * 1024 * 1024;
 const MAX_PER_REPLY = 3;
+/** 访客触发的任务也能收藏聊天图片，数量上限防止目录被刷满。 */
+const MAX_STICKERS = 1000;
 
 /** 名称只能是表情包目录内的相对路径：逐段拒绝上级目录、保留字符和会截断标记的方括号。 */
 function stickerSegments(input: unknown): string[] {
@@ -39,18 +41,26 @@ async function findSticker(root: string, segments: string[]): Promise<string | u
   }
   return undefined;
 }
-async function listStickers(root: string): Promise<string[]> {
-  const names: string[] = [];
+async function listStickers(root: string): Promise<Array<{ name: string; file: string }>> {
+  const stickers: Array<{ name: string; file: string }> = [];
   const walk = async (directory: string, prefix: string[], depth: number) => {
     const entries = await readdir(directory, { withFileTypes: true }).catch(() => []);
     for (const entry of entries.sort((left, right) => left.name.localeCompare(right.name, 'zh-CN'))) {
-      if (entry.isDirectory() && depth < 3) await walk(path.join(directory, entry.name), [...prefix, entry.name], depth + 1);
+      const file = path.join(directory, entry.name);
+      if (entry.isDirectory() && depth < 3) await walk(file, [...prefix, entry.name], depth + 1);
       else if (entry.isFile() && LOOKUP_EXTENSIONS.includes(path.extname(entry.name).toLowerCase()))
-        names.push([...prefix, entry.name.slice(0, -path.extname(entry.name).length)].join('/'));
+        stickers.push({ name: [...prefix, entry.name.slice(0, -path.extname(entry.name).length)].join('/'), file });
     }
   };
   await walk(root, [], 1);
-  return names;
+  return stickers;
+}
+/** 先按字节数筛选，只对大小相同的文件比较内容，主动收藏时不重复保存同一张图。 */
+async function sameSticker(stickers: Array<{ name: string; file: string }>, data: Buffer): Promise<string | undefined> {
+  for (const sticker of stickers) {
+    if ((await stat(sticker.file)).size === data.byteLength && data.equals(await readFile(sticker.file))) return sticker.name;
+  }
+  return undefined;
 }
 
 /** 只移除完整的表情包标记，供流式预览使用；未闭合的标记等待后续文字。 */
@@ -118,8 +128,9 @@ export function botStickerTool(app: PlatformApplication): RuntimeTool {
         `管理当前 Bot 会话工作区“${BOT_STICKER_DIRECTORY}”文件夹中的图片。`
         + '回复正文写 [表情包:名称] 即发送对应图片，名称是该文件夹内不含扩展名的相对路径，可用子文件夹分类；'
         + `一次回复最多发送 ${MAX_PER_REPLY} 个，找不到的名称会被忽略。`
-        + 'list 查看可用名称；save 把消息里带图片编号的图片（image）或 HTTPS 网页图片（url）存为表情包，先看清画面，再用简短描述命名，例如 猫猫/震惊；'
-        + 'rename 改名或换分类；delete 删除。',
+        + '看到聊天中适合当表情包的图片（表情包、梗图、反应图），不必等人要求，直接用 save 和图片编号收藏，按画面和情绪简短命名，例如 猫猫/震惊；'
+        + '收藏无需在回复里提及，同一张图不会重复保存；私人照片和含个人信息的截图不要收藏。'
+        + 'list 查看可用名称；save 也可下载 HTTPS 网页图片（url）；rename 改名或换分类；delete 删除。',
       parameters: {
         type: 'object',
         properties: {
@@ -134,9 +145,10 @@ export function botStickerTool(app: PlatformApplication): RuntimeTool {
         additionalProperties: false,
       },
     },
-    effects: args => args.action === 'list' ? []
+    // 收藏本会话已出现的图片只写入本频道的表情包目录，不要求发言账号的写入权限；下载、改名和删除仍按工作区写入授权。
+    effects: args => args.action === 'list' || args.action === 'save' && !args.url ? []
       : args.action === 'delete' ? ['workspace_write', 'data_delete']
-        : args.action === 'save' && args.url ? ['workspace_write', 'public_read'] : ['workspace_write'],
+        : args.action === 'save' ? ['workspace_write', 'public_read'] : ['workspace_write'],
     execute: async (args, context) => {
       const conversationId = context.conversationId;
       if (!conversationId) throw new Error('表情包工具缺少当前会话。');
@@ -144,11 +156,11 @@ export function botStickerTool(app: PlatformApplication): RuntimeTool {
       const { root, workspaceId } = await stickerRoot(app, conversationId);
       if (args.action === 'list') {
         const query = String(args.query ?? '').trim().toLocaleLowerCase();
-        const names = (await listStickers(root)).filter(name => !query || name.toLocaleLowerCase().includes(query));
+        const names = (await listStickers(root)).map(sticker => sticker.name).filter(name => !query || name.toLocaleLowerCase().includes(query));
         return { success: true, directory: root, total: names.length, stickers: names.slice(0, 300), ...(names.length > 300 ? { truncated: true } : {}) };
       }
-      // 运行可能没有带工作区（例如账号只有频道目录的部分权限），写入前按会话工作区单独核对。
-      app.workspace(context.actorId, workspaceId, args.action === 'delete' ? ['workspace_write', 'data_delete'] : ['workspace_write']);
+      // 运行可能没有带工作区（例如账号只有频道目录的部分权限），需要授权的写入按会话工作区单独核对。
+      if (args.action !== 'save' || args.url) app.workspace(context.actorId, workspaceId, args.action === 'delete' ? ['workspace_write', 'data_delete'] : ['workspace_write']);
       const segments = stickerSegments(args.name);
       if (args.action === 'save') {
         if (!args.image === !args.url) throw new Error('save 需要且只能提供 image 或 url 之一。');
@@ -157,6 +169,10 @@ export function botStickerTool(app: PlatformApplication): RuntimeTool {
         const data = source?.data ?? await downloadImage(String(args.url), context.signal);
         const mimeType = imageMime(data);
         if (!mimeType || data.byteLength > MAX_BYTES) throw new Error('表情包需要是 5 MiB 以内的 PNG、JPEG、GIF 或 WebP 图片。');
+        const stickers = await listStickers(root);
+        const existing = await sameSticker(stickers, data);
+        if (existing) return { success: true, name: existing, duplicate: true };
+        if (stickers.length >= MAX_STICKERS) throw new Error(`表情包已有 ${MAX_STICKERS} 张，请先整理或删除一些。`);
         if (await findSticker(root, segments)) throw new Error('已有同名表情包，请换一个名称或先改名。');
         const file = path.join(root, ...segments) + EXTENSIONS[mimeType];
         await mkdir(path.dirname(file), { recursive: true });

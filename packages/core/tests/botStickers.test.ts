@@ -5,6 +5,7 @@ import { botImageId, botInboundParts, isPublicAddress } from '../../../apps/serv
 import { BOT_STICKER_DIRECTORY, botStickerReplies, botStickerTool, withoutBotStickerMarkers } from '../../../apps/server/src/bots/stickers';
 import { createOneBotProtocol } from '../../../apps/server/src/bots/onebotProtocol';
 import { captureBotEnvironment } from '../../../apps/server/src/bots/prompt';
+import { oneBotContent } from '../../../apps/server/src/bots/onebotContent';
 import { DEFAULT_BOT_ENVIRONMENT, DEFAULT_QQ_BOT_ENVIRONMENT } from '../../../shared/botConversation';
 import { fixture } from './fixtures';
 
@@ -31,14 +32,22 @@ describe('Bot 表情包', () => {
   test('按图片编号收藏到会话工作区，列出、改名、删除都限定在表情包目录内', async () => {
     const tool = botStickerTool(app);
     expect(tool.effects({ action: 'list' })).toEqual([]);
+    expect(tool.effects({ action: 'save', image: botImageId(png) })).toEqual([]);
     expect(tool.effects({ action: 'save', url: 'https://example.com/a.png' })).toEqual(['workspace_write', 'public_read']);
     expect(tool.effects({ action: 'delete' })).toContain('data_delete');
+    // 名称被另一张图占用时报错；同一张图再次收藏时返回已有名称。
+    await mkdir(root, { recursive: true }); await writeFile(path.join(root, '占用.png'), Buffer.concat([png, Buffer.from([0])]));
+    await expect(tool.execute({ action: 'save', name: '占用', image: botImageId(png) }, context())).rejects.toThrow('同名');
+    await expect(tool.execute({ action: 'delete', name: '占用' }, context())).resolves.toMatchObject({ deleted: '占用' });
     await expect(tool.execute({ action: 'save', name: '猫猫/震惊', image: botImageId(png) }, context())).resolves.toMatchObject({ name: '猫猫/震惊' });
     await access(path.join(root, '猫猫', '震惊.png'));
-    await expect(tool.execute({ action: 'save', name: '猫猫/震惊', image: botImageId(png) }, context())).rejects.toThrow('同名');
+    await expect(tool.execute({ action: 'save', name: '另起一个名字', image: botImageId(png) }, context())).resolves.toMatchObject({ name: '猫猫/震惊', duplicate: true });
     await expect(tool.execute({ action: 'save', name: '../逃逸', image: botImageId(png) }, context())).rejects.toThrow('相对名称');
     await expect(tool.execute({ action: 'save', name: '其他', image: '000000000000' }, context())).rejects.toThrow('图片编号');
-    await expect(tool.execute({ action: 'save', name: '访客', image: botImageId(png) }, context('guest'))).rejects.toThrow('grant');
+    // 访客触发的任务也能收藏聊天中的图片；同一张图返回已有名称，下载和整理仍需要写入权限。
+    await expect(tool.execute({ action: 'save', name: '访客收藏', image: botImageId(png) }, context('guest'))).resolves.toEqual({ success: true, name: '猫猫/震惊', duplicate: true });
+    await expect(tool.execute({ action: 'save', name: '访客下载', url: 'https://93.184.216.34/a.png' }, context('guest'))).rejects.toThrow('grant');
+    await expect(tool.execute({ action: 'rename', name: '猫猫/震惊', to: '访客改名' }, context('guest'))).rejects.toThrow('grant');
     await expect(tool.execute({ action: 'rename', name: '猫猫/震惊', to: '开心/得意' }, context())).resolves.toMatchObject({ name: '开心/得意' });
     await expect(tool.execute({ action: 'list', query: '开心' }, context('guest'))).resolves.toMatchObject({ total: 1, stickers: ['开心/得意'] });
     await expect(tool.execute({ action: 'delete', name: '开心/得意' }, context())).resolves.toMatchObject({ deleted: '开心/得意' });
@@ -74,10 +83,15 @@ describe('Bot 表情包', () => {
     expect(action.params.message).toEqual([{ type: 'image', data: { file: `base64://${png.toString('base64')}`, name: '震惊.png', sub_type: 1, summary: '[动画表情]' } }]);
   });
 
-  test('收到的图片带图片编号，QQ 会话默认使用 QQ 说话习惯的环境条目', async () => {
-    const parts = await botInboundParts({ id: 'm', authorId: '10', channelId: 'group:30', content: '', mentioned: true, direct: false,
-      attachments: [{ name: 'a.png', url: 'https://qpic.cn/a', contentType: 'image/*' }] }, 'onebot', async () => png);
-    expect(JSON.stringify(parts)).toContain(`图片编号 ${botImageId(png)}`);
+  test('收到的图片带图片编号并标出 QQ 表情包，QQ 会话默认使用 QQ 说话习惯的环境条目', async () => {
+    const content = oneBotContent([{ type: 'image', data: { file: 'a.png', url: 'https://qpic.cn/a', sub_type: 1, summary: '[开心]' } },
+      { type: 'image', data: { file: 'b.gif', url: 'https://gxh.vip.qq.com/b', emoji_id: 'x', summary: '[动画表情]' } },
+      { type: 'image', data: { file: 'c.png', url: 'https://qpic.cn/c', sub_type: 0 } }], '900', 11);
+    expect(content.attachments.map(item => [item.sticker, item.summary])).toEqual([[true, '[开心]'], [true, undefined], [undefined, undefined]]);
+    const parts = await botInboundParts({ id: 'm', authorId: '10', channelId: 'group:30', direct: false, ...content }, 'onebot', async () => png);
+    const labels = parts.flatMap(part => typeof part.text === 'string' && part.text.startsWith('[附件') ? [part.text] : []);
+    expect(labels).toEqual([`[附件 "image.png"，QQ 表情包 [开心]，图片编号 ${botImageId(png)}]`, `[附件 "image.png"，QQ 表情包，图片编号 ${botImageId(png)}]`,
+      `[附件 "image.png"，图片编号 ${botImageId(png)}]`]);
     const base = { id: 'm', authorId: '10', channelId: 'group:30', direct: false, botId: '900' };
     expect(captureBotEnvironment({ ...base, platform: 'onebot' }, {}).content).toContain('QQ 不显示 Markdown');
     expect(captureBotEnvironment({ ...base, platform: 'discord' }, {}).content).toBe(DEFAULT_BOT_ENVIRONMENT.content.replace('{{$BOT_CONTEXT}}',

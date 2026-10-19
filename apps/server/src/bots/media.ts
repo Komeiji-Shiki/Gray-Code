@@ -74,7 +74,8 @@ export async function botInboundParts(message: BotInbound, platform: 'discord' |
     const key = JSON.stringify([attachment.url, attachment.fileId, attachment.name]);
     const existing = cached.get(key); if (existing) return existing;
     const work = (async (): Promise<PlatformMessage['parts']> => {
-      const label = `附件 ${JSON.stringify(attachment.name)}`;
+      const sticker = attachment.sticker ? `，QQ 表情包${attachment.summary ? ' ' + attachment.summary : ''}` : '';
+      const label = `附件 ${JSON.stringify(attachment.name)}${sticker}`;
       if (++attachmentsRead > 20) return [{ text: `[${label}：本条消息附件超过 20 个，未读取]` }];
       if (!/\.(txt|md|markdown|png|jpe?g|webp|gif)$/i.test(attachment.name) && !attachment.contentType?.startsWith('image/')) return [{ text: `[${label}：此格式尚不支持自动读取]` }];
       try {
