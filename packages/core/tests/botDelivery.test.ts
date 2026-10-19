@@ -1,9 +1,9 @@
 import type { PlatformApplication } from '../../../apps/server/src/application';
 import type { BotGateway, BotReply } from '../../../apps/server/src/bots/gateway';
 import { BotOutbox } from '../../../apps/server/src/bots/outbox';
-import { BotStreams, botFinalReplies, botMessageText } from '../../../apps/server/src/bots/streaming';
+import { BotStreams, botFinalReplies } from '../../../apps/server/src/bots/streaming';
 import { botStatsFooter, botTotalStats } from '../../../apps/server/src/bots/messageStats';
-import { botRunMessages, botRunReply } from '../../../apps/server/src/bots/rounds';
+import { botRoundText, botRunMessages, botRunReply } from '../../../apps/server/src/bots/rounds';
 import { BotSessions, type BotRoute } from '../../../apps/server/src/bots/sessions';
 import { botProfile, discordProfile } from '../../../apps/server/src/bots/config';
 import { inlineBotArguments, splitBotText } from '../../../apps/server/src/bots/text';
@@ -195,9 +195,10 @@ describe('Bot 回复合并与发送恢复', () => {
       const message = { role: 'model', parts: [{ text: '只在进行中显示的思考', thought: true }, { text: '正式回答' }],
         thinkingDuration: 2500, ttft: 500, responseDuration: 3500, chunkCount: 3, usageMetadata: { candidatesTokenCount: 150, thoughtsTokenCount: 100 } };
       streams.saved('thinking', message);
-      await streams.finish('thinking', thoughtRoute, botFinalReplies(botMessageText(message, thoughtRoute), thoughtRoute, botStatsFooter(message)));
+      await streams.finish('thinking', thoughtRoute, botFinalReplies(botRoundText(message, thoughtRoute, 1), thoughtRoute));
       expect(sent).toHaveLength(1);
-      expect(edits.at(-1)?.reply.content).toBe('**已进行思考 2.5 秒**\n\n正式回答\n\n-# TTFT 0.50s · 耗时 3.50s · TPS 50.0 · 输出 150');
+      expect(edits.at(-1)?.reply.content)
+        .toBe('**已进行思考 2.5 秒**\n\n正式回答\n\n-# 第 1 轮 · TTFT 0.50s · 耗时 3.50s · TPS 50.0 · 输出 150 · 输入 — · 缓存 —');
     } finally { timer.mockRestore(); clock.mockRestore(); await streams.close(); }
   });
 
@@ -206,7 +207,8 @@ describe('Bot 回复合并与发送恢复', () => {
     const message = { role: 'model', parts: [{ thought: true, text: '完整思考不应发送' }, { text: '最终正文' }],
       thinkingDuration: 1200, ttft: 500, responseDuration: 2500, chunkCount: 3,
       usageMetadata: { promptTokenCount: 200, candidatesTokenCount: 100, thoughtsTokenCount: 80, cachedContentTokenCount: 12 } };
-    expect(botMessageText(message, finalRoute)).toBe('**已进行思考 1.2 秒**\n\n最终正文');
+    expect(botRoundText(message, finalRoute, 1))
+      .toBe('**已进行思考 1.2 秒**\n\n最终正文\n\n-# 第 1 轮 · TTFT 0.50s · 耗时 2.50s · TPS 50.0 · 输入 200 · 输出 100 · 缓存 12');
     const footer = botStatsFooter(message);
     expect(footer).toBe('-# TTFT 0.50s · 耗时 2.50s · TPS 50.0 · 输入 200 · 输出 100 · 缓存 12');
     const long = '```ts\n' + 'const 猫 = "😺";\n'.repeat(220);
@@ -218,9 +220,9 @@ describe('Bot 回复合并与发送恢复', () => {
     expect(file.content?.endsWith(footer)).toBe(true);
     expect(Buffer.from(file.files![0].data).toString().endsWith(footer)).toBe(true);
     const missing = { role: 'model', parts: [{ thought: true, text: '思考' }, { text: '回答' }] };
-    expect(botMessageText(missing, finalRoute)).toBe('**思考完成**\n\n回答');
+    expect(botRoundText(missing, finalRoute, 1)).toMatch(/^\*\*思考完成\*\*\n\n回答\n\n-# 第 1 轮 · TTFT — · 耗时 — · TPS —/);
     expect(botStatsFooter(missing)).toBe('-# TTFT — · 耗时 — · TPS —');
-    expect(botMessageText(message, { ...finalRoute, output: { ...finalRoute.output!, showThoughts: false } })).toBe('最终正文');
+    expect(botRoundText(message, { ...finalRoute, output: { ...finalRoute.output!, showThoughts: false } }, 1)).toMatch(/^最终正文\n\n-# 第 1 轮/);
   });
 
   test('跨历史分页读取全部模型轮次，忽略其他任务与工具结果，合计不重复添加缓存和思考', async () => {

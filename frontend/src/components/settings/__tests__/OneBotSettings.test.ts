@@ -79,6 +79,7 @@ describe('OneBot 连接反馈与草稿', () => {
     mock.send.mockImplementation(async (type: string) => type === 'platform.settings.get' ? configured : fallback(type));
     const wrapper = open(); await flushPromises();
     try {
+      await button(wrapper, '默认回复').trigger('click'); await flushPromises();
       const provider = wrapper.findAll('label').find(item => item.text().startsWith('模型渠道'))!;
       await provider.get('select').setValue('p2'); await flushPromises();
       expect((configured as any).onebot.defaultProfile.providerId).toBe('p2');
@@ -89,9 +90,24 @@ describe('OneBot 连接反馈与草稿', () => {
     } finally { wrapper.unmount(); }
   });
 
+  test('旧配置的默认输出迁移到平台默认输出，默认回复不再重复显示输出项', async () => {
+    const fallback = mock.send.getMockImplementation()!;
+    const configured = settings();
+    (configured as any).onebot.defaultProfile = { modelId: 'm1', output: { streaming: false, updateIntervalMs: 1000, showThoughts: true, showToolStatus: true, longReplies: 'forward' } };
+    mock.send.mockImplementation(async (type: string) => type === 'platform.settings.get' ? configured : fallback(type));
+    const wrapper = open(); await flushPromises();
+    try {
+      expect((configured as any).onebot.output).toMatchObject({ showThoughts: true, showToolStatus: true, longReplies: 'forward', streaming: false });
+      expect((configured as any).onebot.defaultProfile).toEqual({ modelId: 'm1' });
+      await button(wrapper, '默认回复').trigger('click'); await flushPromises();
+      expect(wrapper.findAll('label').some(item => item.text().startsWith('单独配置回复显示'))).toBe(false);
+    } finally { wrapper.unmount(); }
+  });
+
   test('QQ 页面继承的默认环境条目使用 QQ 说话习惯', async () => {
     const wrapper = open(); await flushPromises();
     try {
+      await button(wrapper, '默认回复').trigger('click'); await flushPromises();
       const environment = wrapper.findAll('textarea').map(item => (item.element as HTMLTextAreaElement).value).find(value => value.includes('当前交流环境'));
       expect(environment).toContain('QQ 不显示 Markdown');
       expect(environment).toContain('[表情包:名称]');
@@ -101,10 +117,12 @@ describe('OneBot 连接反馈与草稿', () => {
   test('新增绑定聚焦用户 ID，标记未保存且不默认授予主人权限', async () => {
     const wrapper = open(); await flushPromises();
     try {
+      await button(wrapper, '身份绑定').trigger('click'); await flushPromises();
       await button(wrapper, '添加绑定').trigger('click'); await flushPromises();
       expect(mock.markDirty).toHaveBeenCalledOnce();
       expect(document.activeElement).toBe(wrapper.get('[id^=binding-user-]').element);
       expect((wrapper.get('.integration-entry select').element as HTMLSelectElement).value).toBe('');
+      await button(wrapper, '连接').trigger('click'); await flushPromises();
       mock.draft.dirty = true;
       await button(wrapper, '连接 / 重连').trigger('click'); await flushPromises();
       expect(wrapper.get('[role=alert]').text()).toContain('保存全部');

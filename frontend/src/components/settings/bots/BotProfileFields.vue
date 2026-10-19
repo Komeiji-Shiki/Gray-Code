@@ -10,7 +10,7 @@ const { t } = useI18n();
 const props = defineProps<{
   modelValue: DiscordReplyProfile; inherited: DiscordReplyProfile; settings: AppSettings;
   modes: Array<{ id: string; name: string }>; resources: Pick<CharacterResource, 'id' | 'name' | 'kind'>[];
-  output: BotOutputSettings; allowStreaming?: boolean; allowForward?: boolean; defaultEnvironment?: BotEnvironmentEntry;
+  output: BotOutputSettings; allowStreaming?: boolean; allowForward?: boolean; allowOutput?: boolean; defaultEnvironment?: BotEnvironmentEntry;
 }>();
 const emit = defineEmits<{ 'update:modelValue': [value: DiscordReplyProfile] }>();
 const effective = computed(() => ({ ...props.inherited, ...props.modelValue }));
@@ -79,8 +79,10 @@ watch(() => character.value?.characterId, async (id, _previous, onCleanup) => {
             ? undefined : Number(($event.target as HTMLInputElement).value))" />
       </label>
     </div>
-    <label><span>单独配置回复显示</span><input type="checkbox" :checked="!!modelValue.output" @change="set('output', ($event.target as HTMLInputElement).checked ? { ...inheritedOutput } : undefined)" /></label>
-    <BotOutputFields v-if="modelValue.output" :model-value="modelValue.output" :inherited="inheritedOutput" :allow-streaming="allowStreaming" :allow-forward="allowForward" @update:model-value="set('output', $event)" />
+    <template v-if="allowOutput !== false">
+      <label><span>单独配置回复显示</span><input type="checkbox" :checked="!!modelValue.output" @change="set('output', ($event.target as HTMLInputElement).checked ? { ...inheritedOutput } : undefined)" /></label>
+      <BotOutputFields v-if="modelValue.output" :model-value="modelValue.output" :inherited="inheritedOutput" :allow-streaming="allowStreaming" :allow-forward="allowForward" @update:model-value="set('output', $event)" />
+    </template>
     <BotConversationFields :model-value="modelValue" :inherited="inherited" :default-environment="defaultEnvironment" @update:model-value="emit('update:modelValue', $event)" />
   </div>
 </template>

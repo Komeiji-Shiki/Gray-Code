@@ -174,14 +174,3 @@ export class BotStreams {
   async close() { await this.pause(); for (const pending of this.streams.values()) await (await pending)?.rendering?.catch(() => {}); }
 }
 
-export function botMessageText(message: PlatformMessage | undefined, route: BotRoute, platform = route.platform): string {
-  if (!message) return '任务已完成。';
-  const parts = Array.isArray(message.characterDisplayParts) ? message.characterDisplayParts as PlatformMessage['parts'] : message.parts;
-  const body = parts.filter(part => !part.thought && typeof part.text === 'string').map(part => part.text).join('');
-  const thoughts = route.output?.showThoughts ? parts.filter(part => part.thought && typeof part.text === 'string').map(part => part.text).join('') : '';
-  if (platform === 'discord') {
-    const considered = route.output?.showThoughts && (thoughts || milliseconds(message.thinkingDuration) !== undefined);
-    return (considered ? `**${thinkingComplete(message.thinkingDuration)}**\n\n` : '') + (body || '任务已完成。');
-  }
-  return (thoughts ? `**思考内容**\n${thoughts}\n\n` : '') + (body || '任务已完成。');
-}

@@ -7,8 +7,8 @@ import type { BotGateway, BotInbound, BotInteraction, BotReply } from './gateway
 import { discordNeedsMessageContent, discordTriggered, discordTrigger } from './config';
 import { BotSessions, parseBotAction, botRunLabels, type BotContext, type BotPlatform, type BotRoute } from './sessions';
 import { BotOutbox } from './outbox';
-import { BotStreams, botFinalReplies, botMessageText, botGeneratedImages } from './streaming';
-import { botRunMessages, botRunReply } from './rounds';
+import { BotStreams, botFinalReplies, botGeneratedImages } from './streaming';
+import { botRunMessages, botRunPlainReply, botRunReply } from './rounds';
 import { botInboundParts } from './media';
 import { BotSummaries } from './summaries';
 import { publicBotError } from './errorSummary';
@@ -282,7 +282,7 @@ export class BoundBotService {
       const messages = await botRunMessages(this.app, run);
       const conclusion = event.payload.reason === 'document_confirmation' ? '文档已经生成，正在等待确认。请在桌面端审阅并确认设计、评审或计划后继续。' : undefined;
       if (this.platform === 'discord') ({ text, footer } = botRunReply(messages, route, conclusion));
-      else text = conclusion ?? botMessageText(messages.at(-1), route, this.platform);
+      else text = botRunPlainReply(messages, route, conclusion);
       // 表情包标记换成图片，排在正文之后、模型生成的图片之前。
       const stickers = await botStickerReplies(this.app, run, text);
       text = stickers.text;

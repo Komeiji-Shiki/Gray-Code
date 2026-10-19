@@ -36,3 +36,25 @@ export function botRunReply(messages: PlatformMessage[], route: BotRoute, conclu
   if (conclusion) rounds.push(conclusion);
   return { text: rounds.join('\n\n') || '任务已完成。', ...(messages.length > 1 ? { footer: botTotalStats(messages) } : {}) };
 }
+
+/** QQ 文字段不渲染 Markdown：逐轮正文、思考耗时和工具名都按纯文本拼接，不发送工具参数。 */
+export function botPlainRoundText(message: PlatformMessage, route: BotRoute): string {
+  const parts = Array.isArray(message.characterDisplayParts) ? message.characterDisplayParts as PlatformMessage['parts'] : message.parts;
+  const body = parts.filter(part => !part.thought && typeof part.text === 'string').map(part => part.text).join('');
+  const considered = route.output?.showThoughts && (parts.some(part => part.thought) || milliseconds(message.thinkingDuration) !== undefined);
+  const tools = route.output?.showToolStatus ? message.parts.flatMap(part => {
+    const name = (part.functionCall as { name?: unknown } | undefined)?.name;
+    return typeof name === 'string' ? [name.replace(/[\r\n]/g, ' ')] : [];
+  }) : [];
+  return [
+    considered ? thinkingComplete(message.thinkingDuration) : '',
+    tools.length ? `调用工具：${tools.map(name => `「${name}」`).join('、')}` : '',
+    body,
+  ].filter(Boolean).join('\n\n');
+}
+
+export function botRunPlainReply(messages: PlatformMessage[], route: BotRoute, conclusion?: string): string {
+  const rounds = messages.map(message => botPlainRoundText(message, route)).filter(Boolean);
+  if (conclusion) rounds.push(conclusion);
+  return rounds.join('\n\n') || '任务已完成。';
+}
