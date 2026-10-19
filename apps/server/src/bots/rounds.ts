@@ -37,24 +37,30 @@ export function botRunReply(messages: PlatformMessage[], route: BotRoute, conclu
   return { text: rounds.join('\n\n') || '任务已完成。', ...(messages.length > 1 ? { footer: botTotalStats(messages) } : {}) };
 }
 
-/** QQ 文字段不渲染 Markdown：逐轮正文、思考耗时和工具名都按纯文本拼接，不发送工具参数。 */
+/** QQ 文字段不渲染 Markdown：按消息段顺序拼出思考内容、工具名和正文，不发送工具参数。 */
 export function botPlainRoundText(message: PlatformMessage, route: BotRoute): string {
   const parts = Array.isArray(message.characterDisplayParts) ? message.characterDisplayParts as PlatformMessage['parts'] : message.parts;
-  const body = parts.filter(part => !part.thought && typeof part.text === 'string').map(part => part.text).join('');
-  const considered = route.output?.showThoughts && (parts.some(part => part.thought) || milliseconds(message.thinkingDuration) !== undefined);
-  const tools = route.output?.showToolStatus ? message.parts.flatMap(part => {
-    const name = (part.functionCall as { name?: unknown } | undefined)?.name;
-    return typeof name === 'string' ? [name.replace(/[\r\n]/g, ' ')] : [];
-  }) : [];
-  return [
-    considered ? thinkingComplete(message.thinkingDuration) : '',
-    tools.length ? `调用工具：${tools.map(name => `「${name}」`).join('、')}` : '',
-    body,
-  ].filter(Boolean).join('\n\n');
+  const blocks: string[] = [];
+  // QQ 是非流式渠道，直接发送完整的思维链正文，而不是等待耗时。
+  const thoughts = route.output?.showThoughts ? parts.filter(part => part.thought && typeof part.text === 'string').map(part => part.text).join('') : '';
+  if (thoughts) blocks.push(thoughts);
+  let body = '';
+  const flush = () => { if (body) { blocks.push(body); body = ''; } };
+  for (const part of parts) {
+    if (part.thought) continue;
+    if (typeof part.text === 'string' && part.text) { body += part.text; continue; }
+    const name = route.output?.showToolStatus ? (part.functionCall as { name?: unknown } | undefined)?.name : undefined;
+    if (typeof name !== 'string') continue;
+    flush();
+    blocks.push(`调用工具：「${name.replace(/[\r\n]/g, ' ')}」`);
+  }
+  flush();
+  return blocks.join('\n\n');
 }
 
-export function botRunPlainReply(messages: PlatformMessage[], route: BotRoute, conclusion?: string): string {
+/** 每一轮模型输出单独成条：QQ 不能编辑消息，工具调用与正文的前后顺序只能靠多次发送保留。 */
+export function botRunPlainReply(messages: PlatformMessage[], route: BotRoute, conclusion?: string): string[] {
   const rounds = messages.map(message => botPlainRoundText(message, route)).filter(Boolean);
   if (conclusion) rounds.push(conclusion);
-  return rounds.join('\n\n') || '任务已完成。';
+  return rounds.length ? rounds : ['任务已完成。'];
 }

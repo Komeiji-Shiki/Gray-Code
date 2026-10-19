@@ -18,7 +18,7 @@ function set<K extends keyof BotOutputSettings>(key: K, value: BotOutputSettings
       <label v-if="effective.streaming"><span>更新间隔<small>范围 1～60 秒，是逐步更新频道消息的最短等待时间。较小值便于及时查看进展，但消息编辑更频繁；长回复可用较大值减少更新。结束时会补齐全文，模型生成速度不受此值影响。</small></span><input type="number" min="1" max="60" step="0.1" :value="effective.updateIntervalMs / 1000" @change="set('updateIntervalMs', Math.round(Number(($event.target as HTMLInputElement).value) * 1000))" /></label>
     </template>
     <label><span>显示思考内容<small>开启后，模型返回的思考内容也会随回复发送。</small></span><input type="checkbox" :checked="effective.showThoughts" @change="set('showThoughts', ($event.target as HTMLInputElement).checked)" /></label>
-    <label><span>显示工具运行状态<small>{{ allowsStreaming ? '展示正在执行的工具名称，不发送工具参数。' : '在每轮回复后列出本轮调用的工具，不发送工具参数。' }}</small></span><input type="checkbox" :checked="effective.showToolStatus" @change="set('showToolStatus', ($event.target as HTMLInputElement).checked)" /></label>
+    <label><span>显示工具运行状态<small>{{ allowsStreaming ? '展示正在执行的工具名称，不发送工具参数。' : '按消息段顺序标出本轮调用的工具，不发送工具参数。' }}</small></span><input type="checkbox" :checked="effective.showToolStatus" @change="set('showToolStatus', ($event.target as HTMLInputElement).checked)" /></label>
     <label><span>较长回复的发送方式</span><select :value="longReplies" @change="set('longReplies', ($event.target as HTMLSelectElement).value as BotOutputSettings['longReplies'])"><option value="split">拆成多条消息，保持代码块完整</option><option value="file">全文作为 Markdown 附件发送</option><option value="forward" :disabled="!allowForward">合并转发成一条聊天记录</option></select></label>
   </div>
 </template>

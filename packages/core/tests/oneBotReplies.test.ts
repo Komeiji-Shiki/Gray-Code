@@ -184,25 +184,25 @@ test('QQ 回复转成纯文本，文档仍保存 Markdown 原文，处理中提�
   expect(createOneBotProtocol(configuration(12, 'ws://127.0.0.1:1')).processing({ channelId: 'private:a', direct: true, first: true })).toBeUndefined();
 });
 
-test('QQ 逐轮回复保留思考耗时与工具名，按纯文本发送且不泄露工具参数', () => {
+test('QQ 逐轮回复把思维链放在最前，工具行跟随消息段位置并分条发送', () => {
   const route = { platform: 'onebot' as const, botId: '900', channelId: 'group:30', actorId: 'owner', conversationId: 'c',
     output: { streaming: false, updateIntervalMs: 1000, showThoughts: true, showToolStatus: true, longReplies: 'split' as const } };
   const messages = [
-    { role: 'model', thinkingDuration: 1200, parts: [{ thought: true, text: '先查一下' }, { functionCall: { name: 'search', args: { query: '猫' } } }] },
-    { role: 'model', thinkingDuration: 800, parts: [{ thought: true, text: '整理结果' }, { text: '**查到**结果' }] },
+    { role: 'model', thinkingDuration: 1200, parts: [{ thought: true, text: '先查一下' }, { functionCall: { name: 'search', args: { query: '猫' } } }, { text: '第一轮正文' }] },
+    { role: 'model', thinkingDuration: 800, parts: [{ text: '**查到**结果' }, { functionCall: { name: 'read_file' } }] },
   ];
-  const text = botRunPlainReply(messages, route);
-  expect(text).toContain('已进行思考 1.2 秒');
-  expect(text).toContain('已进行思考 0.8 秒');
-  expect(text).toContain('调用工具：「search」');
-  expect(text).toContain('**查到**结果');
-  expect(text).not.toContain('query');
+  const texts = botRunPlainReply(messages, route);
+  expect(texts).toEqual([
+    '先查一下\n\n调用工具：「search」\n\n第一轮正文',
+    '**查到**结果\n\n调用工具：「read_file」',
+  ]);
+  expect(texts.join('\n')).not.toContain('query');
   const hidden = botRunPlainReply(messages, { ...route, output: { ...route.output, showThoughts: false, showToolStatus: false } });
-  expect(hidden).not.toContain('已进行思考'); expect(hidden).not.toContain('search');
+  expect(hidden).toEqual(['第一轮正文', '**查到**结果']);
   // 逐轮正文仍随平台清理去掉模型写出的 Markdown，且不追加 Discord 风格的统计行。
-  const sent = botFinalReplies(text, route)[0].content!;
+  const sent = botFinalReplies(texts[1], route)[0].content!;
   expect(sent).toContain('查到结果'); expect(sent).not.toContain('**');
-  expect(sent).toContain('调用工具：「search」'); expect(sent).not.toContain('第 1 轮');
+  expect(sent).toContain('调用工具：「read_file」'); expect(sent).not.toContain('第 1 轮');
 });
 
 test('QQ 卡片、表情等消息段转成说明，相邻发送至少间隔一秒', async () => {

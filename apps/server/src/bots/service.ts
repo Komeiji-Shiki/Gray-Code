@@ -274,7 +274,8 @@ export class BoundBotService {
       return;
     }
     if (event.type.startsWith('run.') && route.conversationId !== run.conversationId) return;
-    let text: string;
+    let text = '';
+    let texts: string[] | undefined;
     let footer: string | undefined;
     let attachments: BotReply[] = [];
     let stickerOnly = false;
@@ -282,12 +283,19 @@ export class BoundBotService {
       const messages = await botRunMessages(this.app, run);
       const conclusion = event.payload.reason === 'document_confirmation' ? '文档已经生成，正在等待确认。请在桌面端审阅并确认设计、评审或计划后继续。' : undefined;
       if (this.platform === 'discord') ({ text, footer } = botRunReply(messages, route, conclusion));
-      else text = botRunPlainReply(messages, route, conclusion);
-      // 表情包标记换成图片，排在正文之后、模型生成的图片之前。
-      const stickers = await botStickerReplies(this.app, run, text);
-      text = stickers.text;
-      stickerOnly = !text.trim() && stickers.replies.length > 0;
-      attachments = [...stickers.replies, ...botGeneratedImages(messages)];
+      else texts = botRunPlainReply(messages, route, conclusion);
+      // 表情包标记换成图片，排在正文之后、模型生成的图片之前；QQ 的每一轮单独清理标记。
+      const stickerReplies: BotReply[] = [];
+      const cleaned: string[] = [];
+      for (const value of texts ?? [text]) {
+        const stickers = await botStickerReplies(this.app, run, value);
+        cleaned.push(stickers.text);
+        stickerReplies.push(...stickers.replies);
+      }
+      text = cleaned.join('\n\n');
+      texts = texts ? cleaned : undefined;
+      stickerOnly = !cleaned.some(value => value.trim()) && stickerReplies.length > 0;
+      attachments = [...stickerReplies, ...botGeneratedImages(messages)];
     } else if (event.type === 'question.asked') {
       const request = this.app.runtime.pendingQuestions().find(item => item.id === event.payload.id); if (!request) return;
       text = request.questions.map((question, index) => `${index + 1}. ${question.title}`).join('\n')
@@ -304,8 +312,10 @@ export class BoundBotService {
       if (this.platform === 'discord') ({ text, footer } = botRunReply(await botRunMessages(this.app, run), route, text));
     }
     const terminal = event.type.startsWith('run.');
+    const visible = (texts ?? [text]).filter(value => value.trim());
     // 正文只剩表情包时不补“任务已完成”，统计行仍单独保留。
-    const body = stickerOnly ? footer ? [{ content: footer }] : [] : botFinalReplies(text, route, footer);
+    const body = stickerOnly ? footer ? [{ content: footer }] : []
+      : (visible.length ? visible : ['任务已完成。']).flatMap(value => botFinalReplies(value, route, footer));
     const replies = [...body, ...attachments];
     if (terminal && await this.streams.finish(run.id, route, replies)) return;
     await this.outbox.put(`${event.runId}-${event.sequence}`, route, replies);
