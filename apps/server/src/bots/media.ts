@@ -1,10 +1,11 @@
+import { createHash } from 'node:crypto';
 import { BlockList, isIP } from 'node:net';
 import type { PlatformMessage } from '@graycode/contracts';
 import type { BotAttachment, BotInbound, BotReference } from './gateway';
 import type { BotDocument } from './documents';
 import { formatBotSourceHeader } from '../../../../shared/botMessagePresentation';
 
-function imageMime(bytes: Uint8Array): string | undefined {
+export function imageMime(bytes: Uint8Array): string | undefined {
   const buffer = Buffer.from(bytes);
   if (buffer.subarray(0, 8).equals(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]))) return 'image/png';
   if (buffer[0] === 255 && buffer[1] === 216 && buffer[2] === 255) return 'image/jpeg';
@@ -12,15 +13,28 @@ function imageMime(bytes: Uint8Array): string | undefined {
   if (buffer.subarray(0, 4).toString() === 'RIFF' && buffer.subarray(8, 12).toString() === 'WEBP') return 'image/webp';
   return undefined;
 }
+/** 收到的图片按内容散列编号，表情包工具据此从会话历史取回原图。 */
+export function botImageId(bytes: Uint8Array): string {
+  return createHash('sha256').update(bytes).digest('hex').slice(0, 12);
+}
 // QQ NT 的图片地址在 multimedia.nt.qq.com.cn，不属于 qq.com 后缀。
 const attachmentCdn = { discord: ['cdn.discordapp.com', 'media.discordapp.net'], onebot: ['qq.com', 'qq.com.cn', 'qpic.cn', 'gtimg.cn'] };
 const reservedIPv4 = new BlockList();
 for (const [address, prefix] of [['0.0.0.0', 8], ['10.0.0.0', 8], ['100.64.0.0', 10], ['127.0.0.0', 8], ['169.254.0.0', 16],
   ['172.16.0.0', 12], ['192.0.0.0', 24], ['192.168.0.0', 16], ['198.18.0.0', 15], ['224.0.0.0', 3]] as const) reservedIPv4.addSubnet(address, prefix, 'ipv4');
+// BlockList 把 IPv4 与其映射形式视为同一地址，IPv6 规则必须单独成表；映射与 NAT64 地址整段拒绝，避免绕过 IPv4 网段。
+const reservedIPv6 = new BlockList();
+for (const [address, prefix] of [['::', 127], ['::ffff:0:0', 96], ['64:ff9b::', 96], ['fc00::', 7], ['fe80::', 10], ['ff00::', 8]] as const)
+  reservedIPv6.addSubnet(address, prefix, 'ipv6');
+/** 下载目标只允许公网地址：回环、私有、CGNAT、链路本地、组播与保留网段都拒绝。 */
+export function isPublicAddress(address: string): boolean {
+  const family = isIP(address);
+  return family === 4 ? !reservedIPv4.check(address, 'ipv4') : family === 6 && !reservedIPv6.check(address, 'ipv6');
+}
 function trustedAttachmentUrl(url: URL, platform: 'discord' | 'onebot'): boolean {
   if (url.username || url.password) return false;
   // NapCat 给私聊文件的是 QQ 文件服务器的 http://公网 IPv4:端口；内网、回环与保留地址仍拒绝，附件不能用来访问本机或局域网服务。
-  if (platform === 'onebot' && isIP(url.hostname) === 4) return ['http:', 'https:'].includes(url.protocol) && !reservedIPv4.check(url.hostname, 'ipv4');
+  if (platform === 'onebot' && isIP(url.hostname) === 4) return ['http:', 'https:'].includes(url.protocol) && isPublicAddress(url.hostname);
   if (url.protocol !== 'https:' || url.port && url.port !== '443') return false;
   return attachmentCdn[platform].some(domain => url.hostname === domain || platform === 'onebot' && url.hostname.endsWith('.' + domain));
 }
@@ -33,10 +47,21 @@ export async function downloadBotAttachment(attachment: BotAttachment, platform:
   if (attachment.size && attachment.size > limit) throw new Error(`附件超过 ${limit / 1024 / 1024} MiB 读取上限`);
   const response = await fetch(url, { redirect: 'error', signal: AbortSignal.timeout(20000) });
   if (!response.ok || !response.body) throw new Error(`附件下载失败，HTTP ${response.status}`);
-  const reader = response.body.getReader(); const chunks: Uint8Array[] = []; let total = 0;
+  return readLimited(response.body, limit);
+}
+/** 边读边计数，超过上限立即停止，不先把整个响应读进内存。 */
+export async function readLimited(body: ReadableStream<Uint8Array>, limit: number): Promise<Uint8Array> {
+  const reader = body.getReader();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
   try {
-    while (true) { const result = await reader.read(); if (result.done) break; total += result.value.length;
-      if (total > limit) throw new Error('附件实际大小超过读取上限'); chunks.push(result.value); }
+    while (true) {
+      const result = await reader.read();
+      if (result.done) break;
+      total += result.value.length;
+      if (total > limit) throw new Error('附件实际大小超过读取上限');
+      chunks.push(result.value);
+    }
   } finally { await reader.cancel().catch(() => {}); }
   return Buffer.concat(chunks);
 }
@@ -60,7 +85,7 @@ export async function botInboundParts(message: BotInbound, platform: 'discord' |
           return [{ text: `[本地文档 ${JSON.stringify(document)}]\n正文未自动加入上下文。先用 bot_read_attachment 的 stat 查看大小，再用 read 按 offset 和 limit 分段读取；有权限时也可用命令检查这个本地文件。` }];
         }
         const mimeType = imageMime(bytes); if (!mimeType) throw new Error('实际文件不是受支持的图片');
-        return [{ text: `[${label}]` }, { inlineData: { mimeType, data: Buffer.from(bytes).toString('base64') } }];
+        return [{ text: `[${label}，图片编号 ${botImageId(bytes)}]` }, { inlineData: { mimeType, data: Buffer.from(bytes).toString('base64') } }];
       } catch (error) { return [{ text: `[${label}：未读取，${(error as Error).message}]` }]; }
     })(); cached.set(key, work); return work;
   };

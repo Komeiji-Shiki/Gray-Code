@@ -1,12 +1,12 @@
 import type { DiscordReplyProfile, PlatformMessage, ActorIdentity } from '@graycode/contracts';
 import type { BotContext } from './sessions';
-import { DEFAULT_BOT_ENVIRONMENT, LEGACY_BOT_IDENTITY_TEMPLATE, renderBotTemplate } from '../../../../shared/botConversation';
+import { DEFAULT_BOT_ENVIRONMENT, DEFAULT_QQ_BOT_ENVIRONMENT, LEGACY_BOT_IDENTITY_TEMPLATE, renderBotTemplate } from '../../../../shared/botConversation';
 import { deserializePromptContextCache } from '../../../../backend/modules/prompt/promptContextCache';
 
 export interface CapturedBotEnvironment { version: 1; content: string; identityTemplate: string; channel: Record<string, unknown> }
 /** 频道环境不混入当前时间、昵称或当前发言人，只有用户修改配置时才改变固定前缀。 */
 export function captureBotEnvironment(context: BotContext, profile: DiscordReplyProfile): CapturedBotEnvironment {
-  const entry = profile.environmentEntry ?? DEFAULT_BOT_ENVIRONMENT;
+  const entry = profile.environmentEntry ?? (context.platform === 'onebot' ? DEFAULT_QQ_BOT_ENVIRONMENT : DEFAULT_BOT_ENVIRONMENT);
   const channel = { platform: context.platform === 'onebot' ? context.network ?? 'qq' : 'discord', botId: context.botId,
     channelId: context.channelId, direct: context.direct };
   return { version: 1, channel, content: entry.enabled ? renderBotTemplate(entry.content, { BOT_CONTEXT: JSON.stringify(channel) }) : '',

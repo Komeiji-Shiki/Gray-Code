@@ -7,7 +7,7 @@ import BotMessagePolicyFields from './bots/BotMessagePolicyFields.vue';
 import BotTriggerFields from './bots/BotTriggerFields.vue';
 import BotLongReplyFields from './bots/BotLongReplyFields.vue';
 import BotDiagnosticsPanel from './bots/BotDiagnosticsPanel.vue';
-import { DEFAULT_BOT_MESSAGE_POLICY, DEFAULT_ONEBOT_OUTPUT } from '../../../../shared/botConversation';
+import { DEFAULT_BOT_MESSAGE_POLICY, DEFAULT_ONEBOT_OUTPUT, DEFAULT_QQ_BOT_ENVIRONMENT } from '../../../../shared/botConversation';
 import PermissionAccountFields from './PermissionAccountFields.vue';
 import type { AppSettings, PlatformBinding, OneBotSettings } from '../../../../packages/contracts/src/settings';
 import type { ActorIdentity } from '../../../../packages/contracts/src/runtime';
@@ -149,7 +149,7 @@ useDesktopSettingsDraft(save, () => !!settings.value);
         <BotMessagePolicyFields :model-value="bot.messagePolicy" @update:model-value="bot.messagePolicy = $event" />
         <BotLongReplyFields :model-value="bot.defaultProfile?.output" :inherited="onebotOutput" :allow-forward="settings.onebot.protocolVersion !== 12"
           @update:model-value="bot.defaultProfile = { ...bot.defaultProfile, output: $event }" />
-        <BotConversationFields :model-value="bot.defaultProfile ?? {}" @update:model-value="bot.defaultProfile = $event" />
+        <BotConversationFields :model-value="bot.defaultProfile ?? {}" :default-environment="DEFAULT_QQ_BOT_ENVIRONMENT" @update:model-value="bot.defaultProfile = $event" />
         <label>单独配置群聊或私聊<select v-model="botChannel"><option value="">请选择会话</option><option v-for="channel in bot.allowedChannelIds" :key="channel" :value="channel">{{ channel }}</option></select></label>
         <template v-if="botChannel">
           <BotTriggerFields :model-value="selectedOnebotChannel" :inherited="bot.defaultTrigger ?? (bot.mentionOnly ? 'mention' : 'all')" override @update:model-value="changeOnebotChannel($event)" />
@@ -158,6 +158,7 @@ useDesktopSettingsDraft(save, () => !!settings.value);
             @update:model-value="changeOnebotChannel({ profile: { ...selectedOnebotChannel.profile, output: $event } })" />
         </template>
         <BotConversationFields v-if="botChannel" :key="botChannel" :model-value="settings.onebot.channels?.[botChannel]?.profile ?? {}" :inherited="bot.defaultProfile"
+          :default-environment="DEFAULT_QQ_BOT_ENVIRONMENT"
           @update:model-value="settings.onebot.channels = { ...settings.onebot.channels, [botChannel]: { ...settings.onebot.channels?.[botChannel], profile: $event } }" />
       </template>
       <p v-if="section === 'discord'">关闭“只响应提及”时，需要在 Discord 开发者设置中启用 Message Content Intent。只有允许频道内、已绑定账号的消息会进入任务。</p>

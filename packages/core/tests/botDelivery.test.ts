@@ -139,7 +139,7 @@ describe('Bot 回复合并与发送恢复', () => {
     try {
       streams.started('stream'); for (const word of ['第一段', '，', '第二段']) streams.delta('stream', [{ text: word }, { text: '私有思考', thought: true }]);
       await new Promise<void>(resolve => setImmediate(resolve)); expect(timers).toHaveLength(1); expect(sent).toHaveLength(0);
-      timers[0](); await streams.finish('stream', route, '第一段，第二段。完整结束');
+      timers[0](); await streams.finish('stream', route, botFinalReplies('第一段，第二段。完整结束', route));
       expect(sent).toHaveLength(1); expect(sent[0].content).toContain('第一段，第二段'); expect(sent[0].content).not.toContain('私有思考');
       expect(edits.at(-1)?.reply.content).toBe('第一段，第二段。完整结束'); expect(await outbox.list()).toEqual([]);
       streams.started('revoked'); await new Promise<void>(resolve => setImmediate(resolve));
@@ -184,7 +184,7 @@ describe('Bot 回复合并与发送恢复', () => {
       const message = { role: 'model', parts: [{ text: '只在进行中显示的思考', thought: true }, { text: '正式回答' }],
         thinkingDuration: 2500, ttft: 500, responseDuration: 3500, chunkCount: 3, usageMetadata: { candidatesTokenCount: 150, thoughtsTokenCount: 100 } };
       streams.saved('thinking', message);
-      await streams.finish('thinking', thoughtRoute, botMessageText(message, thoughtRoute), botStatsFooter(message));
+      await streams.finish('thinking', thoughtRoute, botFinalReplies(botMessageText(message, thoughtRoute), thoughtRoute, botStatsFooter(message)));
       expect(sent).toHaveLength(1);
       expect(edits.at(-1)?.reply.content).toBe('**已进行思考 2.5 秒**\n\n正式回答\n\n-# TTFT 0.50s · 耗时 3.50s · TPS 50.0 · 输出 150');
     } finally { timer.mockRestore(); clock.mockRestore(); await streams.close(); }
@@ -290,7 +290,7 @@ describe('Bot 回复合并与发送恢复', () => {
       streams.saved('round-stream', { role: 'user', parts: [{ text: '工具响应不应出现在消息里' }] });
       streams.started('round-stream'); streams.delta('round-stream', [{ text: '第二轮正文' }]);
       await new Promise<void>(resolve => setImmediate(resolve)); timers.shift()!();
-      await streams.finish('round-stream', route, '最终回复');
+      await streams.finish('round-stream', route, botFinalReplies('最终回复', route));
       expect(sent[0].content).toContain('第 1 轮 · 调用「read_file」'); expect(sent[0].content).toContain('输入 120');
       expect(sent[0].content).toContain('`{"path":"README.md"}`');
       expect(sent[0].content).toContain('缓存 50'); expect(sent[0].content).toContain('第二轮正文');

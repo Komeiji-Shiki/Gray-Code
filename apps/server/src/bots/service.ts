@@ -13,6 +13,7 @@ import { botInboundParts } from './media';
 import { BotSummaries } from './summaries';
 import { publicBotError } from './errorSummary';
 import { BotDiagnostics } from './diagnostics';
+import { botStickerReplies } from './stickers';
 
 /** 平台适配器负责传输，共享会话服务负责所有文字指令和交互菜单的任务操作。 */
 export class BoundBotService {
@@ -276,12 +277,17 @@ export class BoundBotService {
     let text: string;
     let footer: string | undefined;
     let attachments: BotReply[] = [];
+    let stickerOnly = false;
     if (event.type === 'run.completed') {
       const messages = await botRunMessages(this.app, run);
-      attachments = botGeneratedImages(messages);
       const conclusion = event.payload.reason === 'document_confirmation' ? '文档已经生成，正在等待确认。请在桌面端审阅并确认设计、评审或计划后继续。' : undefined;
       if (this.platform === 'discord') ({ text, footer } = botRunReply(messages, route, conclusion));
       else text = conclusion ?? botMessageText(messages.at(-1), route, this.platform);
+      // 表情包标记换成图片，排在正文之后、模型生成的图片之前。
+      const stickers = await botStickerReplies(this.app, run, text);
+      text = stickers.text;
+      stickerOnly = !text.trim() && stickers.replies.length > 0;
+      attachments = [...stickers.replies, ...botGeneratedImages(messages)];
     } else if (event.type === 'question.asked') {
       const request = this.app.runtime.pendingQuestions().find(item => item.id === event.payload.id); if (!request) return;
       text = request.questions.map((question, index) => `${index + 1}. ${question.title}`).join('\n')
@@ -298,8 +304,11 @@ export class BoundBotService {
       if (this.platform === 'discord') ({ text, footer } = botRunReply(await botRunMessages(this.app, run), route, text));
     }
     const terminal = event.type.startsWith('run.');
-    if (terminal && await this.streams.finish(run.id, route, text, footer, attachments)) return;
-    await this.outbox.put(`${event.runId}-${event.sequence}`, route, [...botFinalReplies(text, route, footer), ...attachments]);
+    // 正文只剩表情包时不补“任务已完成”，统计行仍单独保留。
+    const body = stickerOnly ? footer ? [{ content: footer }] : [] : botFinalReplies(text, route, footer);
+    const replies = [...body, ...attachments];
+    if (terminal && await this.streams.finish(run.id, route, replies)) return;
+    await this.outbox.put(`${event.runId}-${event.sequence}`, route, replies);
   }
   async guilds() { if (!this.gateway?.listGuilds) throw new Error('请先连接 Discord。'); return this.gateway.listGuilds(); }
   async channels(guildId: string) { if (!this.gateway?.listChannels) throw new Error('请先连接 Discord。'); return this.gateway.listChannels(guildId); }

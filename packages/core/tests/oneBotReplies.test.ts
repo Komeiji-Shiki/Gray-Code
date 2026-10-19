@@ -1,3 +1,5 @@
+import path from 'node:path';
+import { mkdir, writeFile } from 'node:fs/promises';
 import { WebSocketServer, WebSocket } from 'ws';
 import type { OneBotSettings } from '@graycode/contracts';
 import { PlatformApplication } from '../../../apps/server/src/application';
@@ -183,4 +185,39 @@ test('QQ 卡片、表情等消息段转成说明，相邻发送至少间隔一�
     expect(await replies).toEqual([{ id: '1' }, { id: '2' }, { id: '3' }]);
     expect(times[1] - times[0]).toBeGreaterThanOrEqual(1000); expect(times[2] - times[1]).toBeGreaterThanOrEqual(1000);
   } finally { jest.useRealTimers(); }
+});
+
+test('OneBot 回复只含表情包标记时，经真实 WebSocket 只发出表情包图片', async () => {
+  const f = await fixture(); await f.store.close();
+  const server = new WebSocketServer({ host: '127.0.0.1', port: 0 });
+  await new Promise<void>(resolve => server.once('listening', resolve));
+  const sent: Array<Record<string, any>> = []; let socket!: WebSocket; let generated = 0;
+  server.on('connection', client => { socket = client; client.on('message', raw => {
+    const action = JSON.parse(raw.toString()); let data: Record<string, unknown> = {};
+    if (action.action === 'get_login_info') data = { user_id: 900, nickname: '表情包验收' };
+    else if (action.action.startsWith('send_')) { sent.push(action); data = { message_id: sent.length }; }
+    client.send(JSON.stringify({ status: 'ok', retcode: 0, data, echo: action.echo }));
+  }); });
+  const app = await PlatformApplication.open({ dataDirectory: f.data, documentsDirectory: f.root,
+    models: { generate: async () => ({ role: 'model' as const, parts: [{ text: ++generated === 1 ? '好的' : '[表情包:猫猫/震惊]' }] }) } });
+  const emit = (index: number) => socket.send(JSON.stringify({ post_type: 'message', message_type: 'group', self_id: 900, user_id: 11, group_id: 30,
+    message_id: index, message: [{ type: 'at', data: { qq: '900' } }, { type: 'text', data: { text: '来个表情包' } }] }));
+  try {
+    const snapshot = app.settings.snapshot();
+    snapshot.settings.bindings = [{ id: 'owner', platform: 'onebot', network: 'qq', platformUserId: '11', accountId: 'owner' }];
+    snapshot.settings.onebot = { ...configuration(11, `ws://127.0.0.1:${(server.address() as { port: number }).port}`), defaultProfile: { toolsEnabled: false } };
+    await app.settings.save({ settings: snapshot.settings, expectedRevision: snapshot.revision }); await app.onebot.start();
+    emit(1); await until(() => sent.length === 1, '第一条回复没有发送');
+    const workspace = (await until(() => app.settings.snapshot().settings.workspaces.find(item => item.managedConversationId), '频道工作区没有创建'))!;
+    const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jRzUAAAAASUVORK5CYII=', 'base64');
+    await mkdir(path.join(workspace.directory, '表情包', '猫猫'), { recursive: true });
+    await writeFile(path.join(workspace.directory, '表情包', '猫猫', '震惊.png'), png);
+    emit(2); await until(() => sent.length === 2, '表情包没有发送');
+    await new Promise(resolve => setTimeout(resolve, 1200));
+    expect(sent).toHaveLength(2);
+    expect(sent[1].params.message).toEqual([{ type: 'image', data: { file: `base64://${png.toString('base64')}`, name: '震惊.png', sub_type: 1, summary: '[动画表情]' } }]);
+  } finally {
+    await app.close(); for (const client of server.clients) client.terminate();
+    await new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve())); await f.cleanup();
+  }
 });

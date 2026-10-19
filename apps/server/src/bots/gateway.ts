@@ -25,7 +25,8 @@ export interface BotSelectOption { label: string; value: string; description?: s
 export type BotPanelRow = { buttons: BotButton[] } | { select: { id: string; placeholder: string; options: BotSelectOption[] } };
 export interface BotPanel { content: string; rows?: BotPanelRow[]; files?: Array<{ name: string; data: Uint8Array }> }
 export interface BotReply {
-  content?: string; files?: Array<{ name: string; data: Uint8Array; contentType?: string }>;
+  /** sticker 让支持的平台按表情包样式显示图片，而不是普通照片。 */
+  content?: string; files?: Array<{ name: string; data: Uint8Array; contentType?: string; sticker?: boolean }>;
   replyToMessageId?: string; forward?: string[];
 }
 export interface BotMessageReceipt { id: string }

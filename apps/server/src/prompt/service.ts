@@ -164,7 +164,7 @@ export class PlatformPromptService {
       planExecution: hasApprovedPlanExecution(input.history), platformMode: platformMode ?? 'chat',
     });
     const toolNames = [...new Set([...filterPlatformModeToolNames(platformMode, profile, promptToolNames),
-      ...contextToolNames, ...(botEnvironment?.version === 1 ? ['bot_read_attachment', ...(input.agent.toolNames.length ? ['bot_send_attachment'] : [])] : [])])];
+      ...contextToolNames, ...(botEnvironment?.version === 1 ? ['bot_read_attachment', 'bot_sticker', ...(input.agent.toolNames.length ? ['bot_send_attachment'] : [])] : [])])];
     const storedCharacterTurn = this.app.characterPipeline.snapshot(characterTurn);
     const companionPetAllowed = toolNames.includes('pet_control')
       && !['ask', 'deny'].includes(input.agent.toolApproval?.pet_control ?? 'auto');

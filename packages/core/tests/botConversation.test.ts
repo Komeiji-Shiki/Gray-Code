@@ -3,7 +3,7 @@ import { stat } from 'node:fs/promises';
 import type { ModelInput, PlatformMessage } from '@graycode/contracts';
 import { PlatformApplication } from '../../../apps/server/src/application';
 import type { BotInbound, BotGateway } from '../../../apps/server/src/bots/gateway';
-import { botInboundParts, downloadBotAttachment } from '../../../apps/server/src/bots/media';
+import { botImageId, botInboundParts, downloadBotAttachment } from '../../../apps/server/src/bots/media';
 import { createOneBotProtocol } from '../../../apps/server/src/bots/onebotProtocol';
 import { DiscordJsGateway } from '../../../apps/server/src/bots/discordGateway';
 import { saveBotDocument, botDocumentTools } from '../../../apps/server/src/bots/documents';
@@ -97,8 +97,10 @@ describe('Bot 频道上下文、附件与定时总结', () => {
       { type: 'text', data: { text: '图片 A' } }, { type: 'image', data: { file: 'a', url: 'https://qpic.cn/a', name: 'a.png' } },
       { type: 'text', data: { text: '图片 B' } }, { type: 'image', data: { file: 'b', url: 'https://qpic.cn/b', name: 'b.png' } },
     ], '900', 11);
-    const parts = await botInboundParts({ ...inbound('ordered'), ...parsed }, 'onebot', async () => Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]));
-    expect(parts.slice(1).map(value => value.inlineData ? 'image' : value.text)).toEqual(['图片 A', '[附件 "a.png"]', 'image', '图片 B', '[附件 "b.png"]', 'image']);
+    const bytes = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]);
+    const parts = await botInboundParts({ ...inbound('ordered'), ...parsed }, 'onebot', async () => bytes);
+    const label = (name: string) => `[附件 "${name}"，图片编号 ${botImageId(bytes)}]`;
+    expect(parts.slice(1).map(value => value.inlineData ? 'image' : value.text)).toEqual(['图片 A', label('a.png'), 'image', '图片 B', label('b.png'), 'image']);
   });
 
   test('后续成员发言和频道模板修改不改写已发送的 Bot 历史前缀', async () => {

@@ -63,11 +63,13 @@ function v11(): OneBotProtocol {
             content: messageSegments(text, index === 0 ? reply.replyToMessageId : undefined, 11) } })) } };
       }
       const document = reply.files?.some(file => !file.contentType?.startsWith('image/') && !/\.(png|jpe?g|webp|gif)$/i.test(file.name));
-      // QQ 普通文件使用独立文件消息，不能混入引用段；图片仍保留原消息引用。
+      const stickers = !reply.content && !!reply.files?.length && reply.files.every(file => file.sticker);
+      // QQ 普通文件使用独立文件消息，不能混入引用段；单独发出的表情包也不引用原消息；图片仍保留原消息引用。
       const messages = (action.params.message as Array<{ type: string; data: Record<string, unknown> }>).filter(segment =>
-        (segment.type !== 'text' || segment.data.text) && (!document || segment.type !== 'reply'));
+        (segment.type !== 'text' || segment.data.text) && (!document && !stickers || segment.type !== 'reply'));
       for (const file of reply.files ?? []) messages.push({ type: file.contentType?.startsWith('image/') || /\.(png|jpe?g|webp|gif)$/i.test(file.name) ? 'image' : 'file',
-        data: { file: `base64://${Buffer.from(file.data).toString('base64')}`, name: file.name } });
+        // NapCat 按 sub_type 1 显示为表情包，通知预览使用 QQ 默认的“[动画表情]”。
+        data: { file: `base64://${Buffer.from(file.data).toString('base64')}`, name: file.name, ...(file.sticker ? { sub_type: 1, summary: '[动画表情]' } : {}) } });
       return { ...action, params: { ...action.params, message: messages } };
     },
     // 两项都是 NapCat 扩展：私聊每轮刷新“正在输入”，群聊只在首轮给原消息贴 QQ 系统表情 124（OK）。

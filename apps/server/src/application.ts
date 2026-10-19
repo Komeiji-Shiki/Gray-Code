@@ -47,6 +47,7 @@ import { randomUUID } from "node:crypto";
 import { conversationTools } from './conversations/tools';
 import { contextTools } from './context/tools';
 import { botDocumentTools } from './bots/documents';
+import { botStickerTool } from './bots/stickers';
 import type {
   ActorIdentity,
   ModelProvider,
@@ -270,7 +271,7 @@ export class PlatformApplication {
     for (const tool of this.artifacts.tools()) this.tools.register(tool);
     for (const tool of conversationTools(this)) this.tools.register(tool);
     for (const tool of contextTools(this)) this.tools.register(tool);
-    for (const tool of botDocumentTools(this)) this.tools.register(tool);
+    for (const tool of [...botDocumentTools(this), botStickerTool(this)]) this.tools.register(tool);
     for (const tool of subagentTools(this)) this.tools.register(tool);
     for (const tool of teamTools(this)) this.tools.register(tool);
     for (const tool of this.media.tools()) this.tools.register(tool);

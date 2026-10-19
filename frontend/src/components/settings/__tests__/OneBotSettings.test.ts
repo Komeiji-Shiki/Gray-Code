@@ -67,6 +67,15 @@ describe('OneBot 连接反馈与草稿', () => {
     try { expect(hint(created).checked).toBe(true); } finally { created.unmount(); }
   });
 
+  test('QQ 页面继承的默认环境条目使用 QQ 说话习惯', async () => {
+    const wrapper = open(); await flushPromises();
+    try {
+      const environment = wrapper.findAll('textarea').map(item => (item.element as HTMLTextAreaElement).value).find(value => value.includes('当前交流环境'));
+      expect(environment).toContain('QQ 不显示 Markdown');
+      expect(environment).toContain('[表情包:名称]');
+    } finally { wrapper.unmount(); }
+  });
+
   test('新增绑定聚焦用户 ID，标记未保存且不默认授予主人权限', async () => {
     const wrapper = open(); await flushPromises();
     try {

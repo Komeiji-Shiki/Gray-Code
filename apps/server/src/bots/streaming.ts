@@ -7,6 +7,7 @@ import { BotOutbox } from './outbox';
 import { clipBotText, plainBotText, splitBotText } from './text';
 import { milliseconds, thinkingComplete } from './messageStats';
 import { botRoundText } from './rounds';
+import { withoutBotStickerMarkers } from './stickers';
 
 interface StreamState {
   route: BotRoute; body: string; thoughts: string; bodyLength: number; thoughtLength: number; status: string;
@@ -128,7 +129,7 @@ export class BotStreams {
     const body = state.bodyLength > 1500 ? `正文正在输出，已收到约 ${state.bodyLength} 字。\n\n${state.body.slice(-500)}` : state.body;
     const current = `${thought}${body || state.status}${state.body && state.route.output?.showToolStatus ? `\n\n_${state.status}_` : ''}`;
     // Discord 按消息长度拆分，已经完成的正文不因下一轮开始而消失。
-    return splitBotText([...state.rounds, current].join('\n\n')).map(content => ({ content }));
+    return splitBotText(withoutBotStickerMarkers([...state.rounds, current].join('\n\n'))).map(content => ({ content }));
   }
   private schedule(runId: string, state: StreamState) {
     if (state.timer || state.rendering || state.done || this.paused) return;
@@ -142,13 +143,13 @@ export class BotStreams {
     }, state.route.output!.updateIntervalMs);
     state.timer.unref();
   }
-  async finish(runId: string, route: BotRoute, text: string, footer?: string, attachments: BotReply[] = []): Promise<boolean> {
+  async finish(runId: string, route: BotRoute, replies: BotReply[]): Promise<boolean> {
     const state = await this.streams.get(runId);
     this.rememberFinished(runId);
     if (!state) { this.streams.delete(runId); return false; }
     state.done = true; if (state.timer) clearTimeout(state.timer);
     await state.rendering?.catch(() => {});
-    await this.outbox.put(`stream-${runId}`, route, [...botFinalReplies(text, route, footer), ...attachments]);
+    await this.outbox.put(`stream-${runId}`, route, replies);
     this.streams.delete(runId);
     return true;
   }
