@@ -1,15 +1,16 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, ref } from 'vue';
 import PlatformWorkspaceSettings from './PlatformWorkspaceSettings.vue';
-import BotConversationFields from './discord/BotConversationFields.vue';
+import BotProfileFields from './bots/BotProfileFields.vue';
+import BotOutputFields from './bots/BotOutputFields.vue';
 import BotOutboxPanel from './bots/BotOutboxPanel.vue';
 import BotMessagePolicyFields from './bots/BotMessagePolicyFields.vue';
 import BotTriggerFields from './bots/BotTriggerFields.vue';
-import BotLongReplyFields from './bots/BotLongReplyFields.vue';
 import BotDiagnosticsPanel from './bots/BotDiagnosticsPanel.vue';
 import { DEFAULT_BOT_MESSAGE_POLICY, DEFAULT_ONEBOT_OUTPUT, DEFAULT_QQ_BOT_ENVIRONMENT } from '../../../../shared/botConversation';
 import PermissionAccountFields from './PermissionAccountFields.vue';
-import type { AppSettings, PlatformBinding, OneBotSettings } from '../../../../packages/contracts/src/settings';
+import type { AppSettings, BotOutputSettings, DiscordReplyProfile, PlatformBinding, OneBotSettings } from '../../../../packages/contracts/src/settings';
+import type { CharacterResource } from '../../../../packages/contracts/src/characters';
 import type { ActorIdentity } from '../../../../packages/contracts/src/runtime';
 import { sendToExtension } from '../../utils/vscode';
 import { useDesktopSettingsDraft, desktopSettingsDraft, markDesktopSettingsDirty } from '../../platform/settingsDraft';
@@ -27,11 +28,22 @@ const id = (prefix: string) => prefix + '_' + crypto.randomUUID().slice(0, 8);
 const pendingDeleteId = ref('');
 const accountBusy = ref('');
 const botChannel = ref('');
-const onebotOutput = computed(() => settings.value?.onebot?.output ?? { ...DEFAULT_ONEBOT_OUTPUT, longReplies: 'split' as const });
+const modes = ref<Array<{ id: string; name: string }>>([]);
+const resources = ref<Pick<CharacterResource, 'id' | 'name' | 'kind'>[]>([]);
+const onebotOutput = computed(() => settings.value?.onebot?.output ?? { ...DEFAULT_ONEBOT_OUTPUT });
 const selectedOnebotChannel = computed(() => settings.value?.onebot?.channels?.[botChannel.value] ?? {});
+const baseOnebotProfile = computed<DiscordReplyProfile>(() => ({
+  agentId: settings.value?.onebot?.agentId, workspaceId: settings.value?.onebot?.workspaceId,
+}));
+const inheritedOnebotProfile = computed<DiscordReplyProfile>(() => ({ ...baseOnebotProfile.value, ...settings.value?.onebot?.defaultProfile }));
 function changeOnebotChannel(value: Partial<NonNullable<OneBotSettings['channels']>[string]>) {
   if (!settings.value?.onebot || !botChannel.value) return;
   settings.value.onebot.channels = { ...settings.value.onebot.channels, [botChannel.value]: { ...selectedOnebotChannel.value, ...value } };
+}
+function changeOnebotOutput(value: Partial<BotOutputSettings>) {
+  if (!settings.value?.onebot) return;
+  // OneBot 不支持编辑流式回复，输出配置始终保留关闭。
+  settings.value.onebot.output = { ...onebotOutput.value, ...value, streaming: false };
 }
 const mcpPermissionTools = ref<Array<{ name: string; description?: string; serverName?: string }>>([]);
 const defaultPermissionAccount = computed(() => settings.value?.accounts.find(account => account.id === settings.value?.botGuestAccountId && account.role !== 'owner'));
@@ -105,6 +117,11 @@ onMounted(async () => {
       settings.value!.onebot ??= { endpoint: '', enabled: false, protocolVersion: 11, self: { platform: 'qq', userId: '' }, allowedChannelIds: [], agentId: settings.value!.agents[0]?.id ?? '', mentionOnly: true,
         processingHint: true, messagePolicy: { ...DEFAULT_BOT_MESSAGE_POLICY }, defaultProfile: { output: { ...DEFAULT_ONEBOT_OUTPUT } } };
       settings.value!.onebot.self ??= { platform: 'qq', userId: '' };
+      const [promptModes, characterResources] = await Promise.all([
+        sendToExtension<{ modes: Array<{ id: string; name: string }> }>('getPromptModes', {}),
+        sendToExtension<typeof resources.value>('characters.list', {}),
+      ]);
+      modes.value = promptModes.modes; resources.value = characterResources;
     }
     if (props.section === 'discord' || props.section === 'onebot') await refreshStatus(); });
 });
@@ -112,24 +129,20 @@ useDesktopSettingsDraft(save, () => !!settings.value);
 </script>
 <template>
   <div v-if="settings" class="platform-integrations" @change="changed">
-    <template v-if="(section === 'discord' || section === 'onebot') && bot">
-      <header class="integration-header"><h4>{{ section === 'onebot' ? 'NapCat / OneBot' : 'Discord Bot' }}</h4><span class="integration-status" role="status" :class="{ connected: status.status === 'connected' }">{{ statusLabel }}</span></header>
+    <template v-if="section === 'onebot' && settings.onebot && bot">
+      <header class="integration-header"><h4>NapCat / OneBot</h4><span class="integration-status" role="status" :class="{ connected: status.status === 'connected' }">{{ statusLabel }}</span></header>
       <p>Bot 与桌面共用会话、模型和权限。设置通过下方“保存全部”生效，连接按钮使用已保存的设置。</p>
-      <template v-if="section === 'onebot' && settings.onebot">
-        <label>协议版本<select v-model.number="settings.onebot.protocolVersion"><option :value="11">OneBot 11（NapCat）</option><option :value="12">OneBot 12</option></select></label>
-        <label>WebSocket 地址<input v-model="settings.onebot.endpoint" placeholder="ws://127.0.0.1:端口/" /></label>
-        <template v-if="settings.onebot.protocolVersion === 12 && settings.onebot.self"><label>机器人平台标识<input v-model="settings.onebot.self.platform" placeholder="例如 qq" /></label><label>机器人用户 ID<input v-model="settings.onebot.self.userId" /></label></template>
-        <p>NapCat 当前使用 OneBot 11。连接它提供的正向 WebSocket 服务；只有对端明确支持 v12 时才选择 OneBot 12。</p>
-      </template>
+      <label>协议版本<select v-model.number="settings.onebot.protocolVersion"><option :value="11">OneBot 11（NapCat）</option><option :value="12">OneBot 12</option></select></label>
+      <label>WebSocket 地址<input v-model="settings.onebot.endpoint" placeholder="ws://127.0.0.1:端口/" /></label>
+      <template v-if="settings.onebot.protocolVersion === 12 && settings.onebot.self"><label>机器人平台标识<input v-model="settings.onebot.self.platform" placeholder="例如 qq" /></label><label>机器人用户 ID<input v-model="settings.onebot.self.userId" /></label></template>
+      <p>NapCat 当前使用 OneBot 11。连接它提供的正向 WebSocket 服务；只有对端明确支持 v12 时才选择 OneBot 12。</p>
       <label>启用 Bot<input v-model="bot.enabled" type="checkbox" /></label>
       <label>启动时自动连接<input type="checkbox" :checked="bot.autoConnect !== false" @change="bot.autoConnect = ($event.target as HTMLInputElement).checked" /></label>
       <p>已启用的 Bot 在下次启动 GrayCode 时连接；关闭此项后可手动连接。</p>
-      <template v-if="section === 'onebot'">
-        <label>开始处理时提示<input v-model="bot.processingHint" type="checkbox" /></label>
-        <p>任务开始时，群聊给触发消息贴 OK 表情，私聊显示“对方正在输入”。两项均为 NapCat 扩展，对端不支持时自动跳过。</p>
-      </template>
-      <label>{{ section === 'onebot' ? '访问令牌' : 'Bot Token' }}<input type="password" autocomplete="new-password" :placeholder="bot.credentialRef ? '已配置；留空保留原值' : '输入访问令牌'" @input="setToken(($event.target as HTMLInputElement).value)" /></label>
-      <button v-if="section === 'onebot' && bot.credentialRef" @click="delete bot.credentialRef; delete credentialChanges.onebot; action(save)">取消使用访问令牌</button>
+      <label>开始处理时提示<input v-model="bot.processingHint" type="checkbox" /></label>
+      <p>任务开始时，群聊给触发消息贴 OK 表情，私聊显示“对方正在输入”。两项均为 NapCat 扩展，对端不支持时自动跳过。</p>
+      <label>访问令牌<input type="password" autocomplete="new-password" :placeholder="bot.credentialRef ? '已配置；留空保留原值' : '输入访问令牌'" @input="setToken(($event.target as HTMLInputElement).value)" /></label>
+      <button v-if="bot.credentialRef" @click="delete bot.credentialRef; delete credentialChanges.onebot; action(save)">取消使用访问令牌</button>
       <div v-if="status.botId" class="integration-identity"><strong>{{ status.name || '机器人账号' }}</strong><span>{{ status.botId }}</span></div>
       <div class="connection-actions"><button :disabled="busy" @click="action(connect)">{{ busy && status.status === 'connecting' ? '正在连接…' : '连接 / 重连' }}</button><button :disabled="busy || status.status === 'stopped'" @click="action(disconnect)">断开</button><button :disabled="busy" @click="action(refreshStatus)">刷新状态</button></div>
       <p v-if="status.error || status.warning" class="integration-error" role="alert">{{ status.error || status.warning }}</p>
@@ -137,34 +150,36 @@ useDesktopSettingsDraft(save, () => !!settings.value);
       <button class="outbox-toggle" :aria-expanded="showOutbox" @click="showOutbox = !showOutbox">{{ showOutbox ? '收起待发送消息' : '查看待发送消息' }}{{ status.pendingMessages ? `（${status.pendingMessages}）` : '' }}</button>
       <BotOutboxPanel v-if="showOutbox" :platform="platform" :connected="status.status === 'connected'" @refresh-status="action(refreshStatus)" />
       <BotDiagnosticsPanel :platform="platform" />
-      <h3>响应范围与会话</h3>
-      <label>允许响应的会话<textarea :value="bot.allowedChannelIds.join('\n')" rows="3" :placeholder="section === 'onebot' ? '每行一个：group:群号 或 private:用户ID' : '每行一个频道 ID'" @input="bot.allowedChannelIds = ($event.target as HTMLTextAreaElement).value.split(/[\n,，]/).map(id => id.trim()).filter(Boolean)"></textarea></label>
-      <p v-if="section === 'onebot' && settings.onebot?.protocolVersion === 12">v12 还支持 channel:群组ID:频道ID；ID 中的冒号等分隔符须作 URL 编码。</p>
-      <label>智能体<select v-model="bot.agentId"><option v-for="agent in settings.agents" :key="agent.id" :value="agent.id">{{ agent.name }}</option></select></label>
-      <label>工作区<select v-model="bot.workspaceId"><option :value="undefined">各会话使用文档目录中的独立工作区</option><option v-for="workspace in settings.workspaces" :key="workspace.id" :value="workspace.id">{{ workspace.name }}</option></select></label>
-      <label v-if="section === 'discord'">只响应提及 Bot 的消息<input v-model="bot.mentionOnly" type="checkbox" /></label>
+      <h3>默认回复配置</h3>
+      <p>群聊与私聊继承这些设置，可以在下方按会话分别覆盖。会话中主动选择的模型会保留，直到切回默认配置。</p>
+      <BotTriggerFields :model-value="{ trigger: bot.defaultTrigger }" :inherited="bot.mentionOnly ? 'mention' : 'all'" @update:model-value="bot.defaultTrigger = $event.trigger" />
       <p>已允许会话中的未触发消息同样记录上下文。只合并相邻同一人、间隔不超过五分钟的未 @ 消息。</p>
-      <template v-if="section === 'onebot' && settings.onebot">
-        <BotTriggerFields :model-value="{ trigger: bot.defaultTrigger }" :inherited="bot.mentionOnly ? 'mention' : 'all'" @update:model-value="bot.defaultTrigger = $event.trigger" />
-        <BotMessagePolicyFields :model-value="bot.messagePolicy" @update:model-value="bot.messagePolicy = $event" />
-        <BotLongReplyFields :model-value="bot.defaultProfile?.output" :inherited="onebotOutput" :allow-forward="settings.onebot.protocolVersion !== 12"
-          @update:model-value="bot.defaultProfile = { ...bot.defaultProfile, output: $event }" />
-        <BotConversationFields :model-value="bot.defaultProfile ?? {}" :default-environment="DEFAULT_QQ_BOT_ENVIRONMENT" @update:model-value="bot.defaultProfile = $event" />
-        <label>单独配置群聊或私聊<select v-model="botChannel"><option value="">请选择会话</option><option v-for="channel in bot.allowedChannelIds" :key="channel" :value="channel">{{ channel }}</option></select></label>
-        <template v-if="botChannel">
-          <BotTriggerFields :model-value="selectedOnebotChannel" :inherited="bot.defaultTrigger ?? (bot.mentionOnly ? 'mention' : 'all')" override @update:model-value="changeOnebotChannel($event)" />
-          <BotMessagePolicyFields v-if="!botChannel.startsWith('private:')" :model-value="selectedOnebotChannel.messagePolicy" :inherited="bot.messagePolicy" override @update:model-value="changeOnebotChannel({ messagePolicy: $event })" />
-          <BotLongReplyFields :model-value="selectedOnebotChannel.profile?.output" :inherited="{ ...onebotOutput, ...bot.defaultProfile?.output }" :allow-forward="settings.onebot.protocolVersion !== 12" override
-            @update:model-value="changeOnebotChannel({ profile: { ...selectedOnebotChannel.profile, output: $event } })" />
-        </template>
-        <BotConversationFields v-if="botChannel" :key="botChannel" :model-value="settings.onebot.channels?.[botChannel]?.profile ?? {}" :inherited="bot.defaultProfile"
-          :default-environment="DEFAULT_QQ_BOT_ENVIRONMENT"
-          @update:model-value="settings.onebot.channels = { ...settings.onebot.channels, [botChannel]: { ...settings.onebot.channels?.[botChannel], profile: $event } }" />
-      </template>
-      <p v-if="section === 'discord'">关闭“只响应提及”时，需要在 Discord 开发者设置中启用 Message Content Intent。只有允许频道内、已绑定账号的消息会进入任务。</p>
+      <BotMessagePolicyFields :model-value="bot.messagePolicy" @update:model-value="bot.messagePolicy = $event" />
+      <BotProfileFields :model-value="bot.defaultProfile ?? {}" :inherited="baseOnebotProfile" :settings="settings" :modes="modes" :resources="resources"
+        :output="onebotOutput" :allow-streaming="false" :allow-forward="settings.onebot.protocolVersion !== 12" :default-environment="DEFAULT_QQ_BOT_ENVIRONMENT"
+        @update:model-value="bot.defaultProfile = $event" />
+      <h5>默认输出方式</h5>
+      <BotOutputFields :model-value="onebotOutput" :inherited="DEFAULT_ONEBOT_OUTPUT" :allow-streaming="false" :allow-forward="settings.onebot.protocolVersion !== 12" @update:model-value="changeOnebotOutput" />
+      <h5>私聊默认配置</h5>
+      <p>没有单独配置的私聊会话继承这里。私聊仍需把 private:用户ID 加入下面允许响应的会话；单独配置的私聊优先于这里。</p>
+      <BotProfileFields :model-value="bot.directMessages?.profile ?? {}" :inherited="inheritedOnebotProfile" :settings="settings" :modes="modes" :resources="resources"
+        :output="onebotOutput" :allow-streaming="false" :allow-forward="settings.onebot.protocolVersion !== 12" :default-environment="DEFAULT_QQ_BOT_ENVIRONMENT"
+        @update:model-value="bot.directMessages = { profile: $event }" />
+      <h3>允许响应的会话</h3>
+      <label>允许响应的会话<textarea :value="bot.allowedChannelIds.join('\n')" rows="3" placeholder="每行一个：group:群号 或 private:用户ID" @input="bot.allowedChannelIds = ($event.target as HTMLTextAreaElement).value.split(/[\n,，]/).map(id => id.trim()).filter(Boolean)"></textarea></label>
+      <p v-if="settings.onebot.protocolVersion === 12">v12 还支持 channel:群组ID:频道ID；ID 中的冒号等分隔符须作 URL 编码。</p>
+      <label>单独配置群聊或私聊<select v-model="botChannel"><option value="">请选择会话</option><option v-for="channel in bot.allowedChannelIds" :key="channel" :value="channel">{{ channel }}</option></select></label>
+      <div v-if="botChannel" class="integration-entry">
+        <h5>{{ botChannel }}</h5>
+        <BotTriggerFields v-if="!botChannel.startsWith('private:')" :model-value="selectedOnebotChannel" :inherited="bot.defaultTrigger ?? (bot.mentionOnly ? 'mention' : 'all')" override @update:model-value="changeOnebotChannel($event)" />
+        <BotMessagePolicyFields v-if="!botChannel.startsWith('private:')" :model-value="selectedOnebotChannel.messagePolicy" :inherited="bot.messagePolicy" override @update:model-value="changeOnebotChannel({ messagePolicy: $event })" />
+        <BotProfileFields :key="botChannel" :model-value="selectedOnebotChannel.profile ?? {}" :inherited="inheritedOnebotProfile" :settings="settings" :modes="modes" :resources="resources"
+          :output="onebotOutput" :allow-streaming="false" :allow-forward="settings.onebot.protocolVersion !== 12" :default-environment="DEFAULT_QQ_BOT_ENVIRONMENT"
+          @update:model-value="changeOnebotChannel({ profile: $event })" />
+      </div>
       <h3>平台身份绑定</h3>
       <div v-for="binding in settings.bindings.filter(item => item.platform === platform)" :key="binding.id" class="integration-entry">
-        <label v-if="section === 'onebot'">平台标识<input v-model="binding.network" placeholder="qq" /></label>
+        <label>平台标识<input v-model="binding.network" placeholder="qq" /></label>
         <label>平台用户 ID<input :id="`binding-user-${binding.id}`" v-model="binding.platformUserId" /></label>
         <label>权限账号<select v-model="binding.accountId"><option value="">使用未绑定用户的默认权限</option><option v-for="account in settings.accounts" :key="account.id" :value="account.id">{{ account.displayName }} · {{ account.role }}</option></select></label>
         <label>拉黑此用户<input v-model="binding.blocked" type="checkbox" /></label>
@@ -218,7 +233,7 @@ useDesktopSettingsDraft(save, () => !!settings.value);
   <p v-if="error" class="integration-error" role="alert">{{ error }}</p>
 </template>
 <style scoped>
-h4 { font-size: 24px; margin: 0 0 12px; } p { color: var(--gc-text-muted); line-height: 1.7; margin: 12px 0 20px; }
+h4 { font-size: 24px; margin: 0 0 12px; } h5 { font-size: 17px; margin: 24px 0 14px; } p { color: var(--gc-text-muted); line-height: 1.7; margin: 12px 0 20px; }
 label { display: flex; justify-content: space-between; align-items: center; gap: 30px; padding: 16px 0; }
 input,select,textarea { width: 58%; color: var(--gc-text-primary); background: var(--gc-surface-input); border: 1px solid var(--gc-border-control); padding: 8px 10px; font: inherit; border-radius: var(--gc-radius-sm); }
 input[type=checkbox] { width: auto; } select[multiple] { height: 120px; }

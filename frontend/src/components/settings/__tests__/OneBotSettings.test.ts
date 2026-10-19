@@ -17,6 +17,8 @@ beforeEach(() => {
     if (type === 'platform.onebot.status') return { status: 'stopped' };
     if (type === 'ui.settings.status') return { dirty: false };
     if (type === 'platform.onebot.start') return { status: 'connected', name: '验证机器人', botId: '900' };
+    if (type === 'getPromptModes') return { modes: [] };
+    if (type === 'characters.list') return [];
     return { success: true };
   });
 });
@@ -65,6 +67,26 @@ describe('OneBot 连接反馈与草稿', () => {
     mock.send.mockImplementation(async (type: string) => type === 'platform.settings.get' ? { ...settings(), onebot: undefined } : fallback(type));
     const created = open(); await flushPromises();
     try { expect(hint(created).checked).toBe(true); } finally { created.unmount(); }
+  });
+
+  test('默认回复可以选择模型渠道与模型', async () => {
+    const fallback = mock.send.getMockImplementation()!;
+    const configured = settings();
+    (configured as any).providers = [
+      { id: 'p1', name: '渠道一', models: [{ id: 'm1', name: '模型一' }] },
+      { id: 'p2', name: '渠道二', models: [{ id: 'm2', name: '模型二' }] },
+    ];
+    mock.send.mockImplementation(async (type: string) => type === 'platform.settings.get' ? configured : fallback(type));
+    const wrapper = open(); await flushPromises();
+    try {
+      const provider = wrapper.findAll('label').find(item => item.text().startsWith('模型渠道'))!;
+      await provider.get('select').setValue('p2'); await flushPromises();
+      expect((configured as any).onebot.defaultProfile.providerId).toBe('p2');
+      expect((configured as any).onebot.defaultProfile.modelId).toBeUndefined();
+      const model = wrapper.findAll('label').find(item => item.findAll('option').some(option => option.attributes('value') === 'm2'))!;
+      await model.get('select').setValue('m2'); await flushPromises();
+      expect((configured as any).onebot.defaultProfile.modelId).toBe('m2');
+    } finally { wrapper.unmount(); }
   });
 
   test('QQ 页面继承的默认环境条目使用 QQ 说话习惯', async () => {

@@ -1,13 +1,13 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue';
-import type { AppSettings, DiscordChannelSettings, DiscordOutputSettings, DiscordReplyProfile, DiscordTrigger } from '../../../../packages/contracts/src/settings';
+import type { AppSettings, BotOutputSettings, DiscordChannelSettings, DiscordOutputSettings, DiscordReplyProfile, DiscordTrigger } from '../../../../packages/contracts/src/settings';
 import type { CharacterResource } from '../../../../packages/contracts/src/characters';
 import type { BotChannel, BotGuild, BotUser } from '../../../../packages/contracts/src/bots';
 import { sendToExtension } from '../../utils/vscode';
 import { useBotConnectionStatus } from '../../composables/useBotConnectionStatus';
 import { useDesktopSettingsDraft, desktopSettingsDraft, markDesktopSettingsDirty } from '../../platform/settingsDraft';
-import DiscordProfileFields from './discord/DiscordProfileFields.vue';
-import DiscordOutputFields from './discord/DiscordOutputFields.vue';
+import BotProfileFields from './bots/BotProfileFields.vue';
+import BotOutputFields from './bots/BotOutputFields.vue';
 import BotOutboxPanel from './bots/BotOutboxPanel.vue';
 import BotMessagePolicyFields from './bots/BotMessagePolicyFields.vue';
 import BotDiagnosticsPanel from './bots/BotDiagnosticsPanel.vue';
@@ -88,6 +88,10 @@ function addManualChannel() {
   toggleChannel({ id, name: bot.value?.channels?.[id]?.name ?? id, available: true, direct: false, type: 'manual' }, true); manualChannelId.value = '';
 }
 function changeDefaultProfile(value: DiscordReplyProfile) { bot.value!.defaultProfile = value; }
+function changeOutput(value: Partial<BotOutputSettings>) {
+  // Discord 只支持分段或文件，合并转发留给 OneBot。
+  bot.value!.output = { ...output.value, ...value, longReplies: value.longReplies === 'file' ? 'file' : 'split' };
+}
 function changeDirectProfile(value: DiscordReplyProfile) { bot.value!.directMessages = { enabled: bot.value!.directMessages?.enabled !== false, profile: value }; }
 function setToken(value: string) {
   if (value.trim()) {
@@ -143,8 +147,8 @@ useDesktopSettingsDraft(stage, () => !!settings.value);
       <section v-else-if="section === 'defaults'">
         <h5>默认回复配置</h5><p>频道与私聊继承这些设置，可以分别覆盖。当前会话在 Discord 中主动选择的模型会保留，直到切回默认配置。</p>
         <BotMessagePolicyFields :model-value="bot.messagePolicy" @update:model-value="bot.messagePolicy = $event" />
-        <DiscordProfileFields :model-value="bot.defaultProfile ?? {}" :inherited="baseProfile" :settings="settings" :modes="modes" :resources="resources" :output="output" @update:model-value="changeDefaultProfile" />
-        <h5>默认输出方式</h5><DiscordOutputFields :model-value="output" :inherited="legacyOutput" @update:model-value="bot.output = { ...output, ...$event }" />
+        <BotProfileFields :model-value="bot.defaultProfile ?? {}" :inherited="baseProfile" :settings="settings" :modes="modes" :resources="resources" :output="output" @update:model-value="changeDefaultProfile" />
+        <h5>默认输出方式</h5><BotOutputFields :model-value="output" :inherited="legacyOutput" @update:model-value="changeOutput" />
       </section>
       <section v-else-if="section === 'channels'">
         <h5>允许响应的频道</h5><p>可以连接 Bot 后按名称选择，也可以手动填写频道 ID。帖子与子频道需要单独选择；未选择的频道不会触发任务。</p>
@@ -158,14 +162,14 @@ useDesktopSettingsDraft(stage, () => !!settings.value);
           <div class="discord-heading"><h5># {{ selectedChannel?.name || selectedChannelId }}</h5><button @click="bot.allowedChannelIds = bot.allowedChannelIds.filter(id => id !== selectedChannelId); selectedChannelId = ''; changedByButton()">停止响应此频道</button></div>
           <div class="discord-fields"><label><span>回复触发方式</span><select :value="selectedChannel?.trigger ?? ''" @change="updateChannel(selectedChannelId, { trigger: (($event.target as HTMLSelectElement).value || undefined) as DiscordTrigger | undefined })"><option value="">继承默认触发方式</option><option v-for="item in triggers" :key="item.id" :value="item.id">{{ item.label }}</option></select></label><label v-if="(selectedChannel?.trigger ?? defaultTrigger) === 'keyword'"><span>触发关键词<small>每行一个，命中任意一项即可。</small></span><textarea rows="3" :value="selectedChannel?.keywords?.join('\n') ?? ''" @input="updateChannel(selectedChannelId, { keywords: ($event.target as HTMLTextAreaElement).value.split('\n').map(value => value.trim()).filter(Boolean) })" /></label></div>
           <BotMessagePolicyFields :model-value="selectedChannel?.messagePolicy" :inherited="bot.messagePolicy" override @update:model-value="updateChannel(selectedChannelId, { messagePolicy: $event })" />
-          <DiscordProfileFields :key="selectedChannelId" :model-value="selectedChannel?.profile ?? {}" :inherited="inheritedProfile" :settings="settings" :modes="modes" :resources="resources" :output="output" @update:model-value="updateChannel(selectedChannelId, { profile: $event })" />
+          <BotProfileFields :key="selectedChannelId" :model-value="selectedChannel?.profile ?? {}" :inherited="inheritedProfile" :settings="settings" :modes="modes" :resources="resources" :output="output" @update:model-value="updateChannel(selectedChannelId, { profile: $event })" />
         </div>
       </section>
       <section v-else-if="section === 'direct'">
         <h5>主人私聊</h5><p>私聊只对绑定到主人身份的 Discord 账号开放，其他已授权账号也不能使用。私聊不需要填写频道 ID。</p>
         <div class="discord-fields"><label><span>允许主人私聊 Bot</span><input type="checkbox" :checked="bot.directMessages?.enabled !== false" @change="bot.directMessages = { ...bot.directMessages, enabled: ($event.target as HTMLInputElement).checked }" /></label></div>
         <p v-if="!hasOwnerBinding" class="discord-notice">还没有绑定主人的 Discord 账号，请先在“身份绑定”中添加。</p>
-        <DiscordProfileFields v-if="bot.directMessages?.enabled !== false" :model-value="bot.directMessages?.profile ?? {}" :inherited="inheritedProfile" :settings="settings" :modes="modes" :resources="resources" :output="output" @update:model-value="changeDirectProfile" />
+        <BotProfileFields v-if="bot.directMessages?.enabled !== false" :model-value="bot.directMessages?.profile ?? {}" :inherited="inheritedProfile" :settings="settings" :modes="modes" :resources="resources" :output="output" @update:model-value="changeDirectProfile" />
       </section>
       <section v-else-if="section === 'bindings'">
         <h5>Discord 身份绑定</h5><p>Discord 用户 ID 是一串数字。先在 Discord“用户设置 → 高级”打开开发者模式，再右键用户头像，选择“复制用户 ID”。用户名与昵称不能代替 ID。</p><p>未绑定用户的默认权限、每个账号的 MCP 工具权限，以及独立用户授权，可在“账号与授权”中配置。</p>

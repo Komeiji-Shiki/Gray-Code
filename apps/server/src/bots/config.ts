@@ -40,7 +40,8 @@ export function botProfile(settings: Pick<AppSettings, 'discord' | 'onebot'>, pl
   if (platform === 'discord') return discordProfile(settings.discord, source);
   const config = settings.onebot!;
   const defaults = config.defaultProfile;
-  const override = source.direct ? config.directMessages?.profile : config.channels?.[source.channelId]?.profile;
+  // 私聊也允许按会话覆盖；directMessages 只作为未单独配置时的私聊默认值。
+  const override = config.channels?.[source.channelId]?.profile ?? (source.direct ? config.directMessages?.profile : undefined);
   const merged = { agentId: config.agentId, workspaceId: config.workspaceId, ...defaults, ...override };
   if (defaults?.output || override?.output) merged.output = { ...defaults?.output, ...override?.output };
   if (override?.providerId && override.providerId !== defaults?.providerId && !override.modelId) delete merged.modelId;

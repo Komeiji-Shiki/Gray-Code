@@ -50,7 +50,7 @@ describe('结构分割线', () => {
     ['DebugAdapterSettings.vue', '.debug-adapter-settings'], ['DebugAdapterSettings.vue', '.debug-service-list'],
     ['DependencySettings.vue', '.panel-content'], ['TokenCountSettings.vue', '.panel-content'],
     ['DesktopEditorSettings.vue', '.editor-registration'], ['ExternalAgentSettings.vue', '.external-agents'],
-    ['discord/BotConversationFields.vue', '.bot-conversation-fields'], ['discord/discordSettings.css', '.discord-note'],
+    ['bots/BotConversationFields.vue', '.bot-conversation-fields'], ['discord/discordSettings.css', '.discord-note'],
     ['ModelManager.vue', '.filter-input-container'], ['panel/DesktopUpdateSettings.vue', '.update-overview'],
     ['panel/UsageSummaryCard.vue', '.usage-summary-footer'], ['PlatformAppearanceSettings.vue', '.appearance-row'],
     ['PlatformDevelopmentSettings.vue', '.service-list'], ['PlatformDevelopmentSettings.vue', '.service-row'],
@@ -61,9 +61,9 @@ describe('结构分割线', () => {
     ['prompt/ModulesReference.vue', '.modules-reference'], ['prompt/ToolPolicySection.vue', '.tool-item'],
     ['subAgentsSettings/SubAgentGlobalConfigSection.vue', '.global-config'],
     ['subAgentsSettings/SubAgentToolsSection.vue', '.category-header'],
-    ['discord/discordSettings.css', ':deep(.discord-fields>label)'], ['discord/discordSettings.css', ':deep(.discord-resource-row)'],
-    ['discord/discordSettings.css', ':deep(.discord-inset)'], ['discord/discordSettings.css', '.discord-channel-config'],
-    ['discord/discordSettings.css', '.discord-binding'], ['discord/BotConversationFields.vue', 'label'],
+    ['discord/discordSettings.css', ':deep(.discord-fields>label)'], ['bots/BotProfileFields.vue', '.bot-resource-row'],
+    ['bots/BotProfileFields.vue', '.bot-inset'], ['discord/discordSettings.css', '.discord-channel-config'],
+    ['discord/discordSettings.css', '.discord-binding'], ['bots/BotConversationFields.vue', 'label'],
     ['PlatformIntegrationSettings.vue', 'label'],
   ])('设置 %s %s 不画分割线', (file, subject) => {
     expect(sideBorders(read(path.join('frontend/src/components/settings', file)), subject)).toEqual([])

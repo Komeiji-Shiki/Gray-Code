@@ -5,7 +5,7 @@ import { BotStreams, botFinalReplies, botMessageText } from '../../../apps/serve
 import { botStatsFooter, botTotalStats } from '../../../apps/server/src/bots/messageStats';
 import { botRunMessages, botRunReply } from '../../../apps/server/src/bots/rounds';
 import { BotSessions, type BotRoute } from '../../../apps/server/src/bots/sessions';
-import { discordProfile } from '../../../apps/server/src/bots/config';
+import { botProfile, discordProfile } from '../../../apps/server/src/bots/config';
 import { inlineBotArguments, splitBotText } from '../../../apps/server/src/bots/text';
 import { fixture, metadata } from './fixtures';
 import { cleanBotPresentationReferences, stripDiscordPresentation } from '../../../apps/server/src/bots/presentation';
@@ -159,6 +159,17 @@ describe('Bot 回复合并与发送恢复', () => {
     expect(parts.every(part => part.length <= 1900 && (part.match(/```/g)?.length ?? 0) % 2 === 0)).toBe(true);
     expect(parts.join('').match(/const 猫 = "😺";/g)).toHaveLength(220);
     expect(parts.join('').includes('结束')).toBe(true);
+  });
+
+  test('OneBot 私聊按会话覆盖配置，未单独配置时使用私聊默认值', () => {
+    const onebot = { enabled: true, endpoint: 'ws://127.0.0.1:3001', agentId: 'default', allowedChannelIds: ['private:10001', 'private:10002'], mentionOnly: true,
+      defaultProfile: { providerId: 'first', modelId: 'first-model' },
+      directMessages: { profile: { modelId: 'private-model' } },
+      channels: { 'private:10001': { profile: { providerId: 'second', modelId: 'custom-model' } } } };
+    expect(botProfile({ discord: { enabled: false, agentId: '', allowedChannelIds: [], mentionOnly: true }, onebot }, 'onebot', { direct: true, channelId: 'private:10001' }).modelId)
+      .toBe('custom-model');
+    expect(botProfile({ discord: { enabled: false, agentId: '', allowedChannelIds: [], mentionOnly: true }, onebot }, 'onebot', { direct: true, channelId: 'private:10002' }).modelId)
+      .toBe('private-model');
   });
 
   test('思考结束时编辑原消息收起内容，最后保留耗时与统计', async () => {

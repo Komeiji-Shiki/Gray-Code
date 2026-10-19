@@ -1,5 +1,5 @@
 import { mount } from '@vue/test-utils'
-import BotConversationFields from '../../components/settings/discord/BotConversationFields.vue'
+import BotConversationFields from '../../components/settings/bots/BotConversationFields.vue'
 
 describe('Bot 总结设置', () => {
   test('旧时间设置显示两种方式与时间开关，修改旧参数后仍保留旧配置', async () => {
