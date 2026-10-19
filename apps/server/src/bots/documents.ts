@@ -6,6 +6,7 @@ import type { RuntimeTool } from '@graycode/core';
 import type { PlatformApplication } from '../application';
 import type { BotAttachment } from './gateway';
 import { FileReadAccess } from '../workspace/readAccess';
+import { BOT_IMAGE_DIRECTORY } from '../../../../shared/botConversation';
 
 export interface BotDocument {
   id: string;
@@ -59,6 +60,46 @@ export async function saveBotDocument(app: PlatformApplication, conversationId: 
   });
   await app.storage.putRecord({ namespace: 'bot-documents', id: key, ownerId: conversationId, value: document });
   return document;
+}
+
+export interface BotImageFile {
+  id: string;
+  name: string;
+  path: string;
+  /** 工作区相对路径，消息标签和模型工具使用正斜杠。 */
+  relativePath: string;
+  sizeBytes: number;
+  mimeType: string;
+}
+const imageExtension = { 'image/png': 'png', 'image/jpeg': 'jpg', 'image/webp': 'webp', 'image/gif': 'gif' } as const;
+
+/**
+ * 收到的图片按内容散列复制到会话工作区。图片编号和文件散列一致，
+ * 同一张图重复出现时复用已有文件；名称只用于阅读，路径始终限制在图片目录内。
+ */
+export async function saveBotImage(app: PlatformApplication, conversationId: string,
+  attachment: BotAttachment, bytes: Uint8Array, mimeType: string): Promise<BotImageFile | undefined> {
+  const extension = imageExtension[mimeType as keyof typeof imageExtension];
+  if (!extension) throw new Error('工作区图片格式不受支持');
+  const conversation = await app.storage.getConversation(conversationId);
+  const workspaceId = typeof conversation?.workspaceId === 'string' ? conversation.workspaceId : undefined;
+  const workspace = workspaceId ? app.settings.find('workspaces', workspaceId) : undefined;
+  // 没有绑定工作区时只把图片留在历史和模型输入里，不伪造一个模型无法访问的路径。
+  if (!workspace?.directory) return undefined;
+  const id = createHash('sha256').update(bytes).digest('hex').slice(0, 12);
+  const base = attachment.name
+    .replace(/\.[^./\\]*$/, '')
+    .replace(/[<>:"/\\|?*\u0000-\u001f]/g, '_')
+    .replace(/^[. ]+|[. ]+$/g, '')
+    .slice(0, 80) || 'image';
+  const filename = `${id}-${base}.${extension}`;
+  const directory = path.join(workspace.directory, BOT_IMAGE_DIRECTORY);
+  const file = path.join(directory, filename);
+  await mkdir(directory, { recursive: true });
+  await writeFile(file, bytes, { flag: 'wx' }).catch(error => {
+    if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error;
+  });
+  return { id, name: attachment.name, path: file, relativePath: `${BOT_IMAGE_DIRECTORY}/${filename}`, sizeBytes: bytes.byteLength, mimeType };
 }
 
 export function botDocumentTools(app: PlatformApplication): RuntimeTool[] {

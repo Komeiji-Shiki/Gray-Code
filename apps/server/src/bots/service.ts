@@ -1,7 +1,7 @@
 import type { BotStatus, RunEvent, PlatformMessage, BotPermissionDiagnostic } from '@graycode/contracts';
 export type { BotStatus } from '@graycode/contracts';
 import type { PlatformApplication } from '../application';
-import { saveBotDocument } from './documents';
+import { saveBotDocument, saveBotImage } from './documents';
 import { cleanBotPresentationReferences } from './presentation';
 import type { BotGateway, BotInbound, BotInteraction, BotReply } from './gateway';
 import { discordNeedsMessageContent, discordTriggered, discordTrigger } from './config';
@@ -232,10 +232,13 @@ export class BoundBotService {
       const resolved = control ? { ...message, attachments: [], references: [], segments: undefined } : await this.gateway?.hydrate?.(message) ?? message;
       const hydrated = this.platform === 'discord' ? await cleanBotPresentationReferences(this.app, resolved, context.botId) : resolved;
       triggered = !!actorId && !message.automated && discordTriggered(config, hydrated, text);
-      let documentConversation: Promise<string> | undefined;
+      let attachmentConversation: Promise<string> | undefined;
+      const attachmentConversationId = () => attachmentConversation ??=
+        this.sessions.serial(context, async () => (await this.sessions.recordingConversation(context)).conversation.id);
       const parts = await botInboundParts({ ...hydrated, content: text }, this.platform, undefined, async (attachment, bytes) => {
-        const id = await (documentConversation ??= this.sessions.serial(context, async () => (await this.sessions.recordingConversation(context)).conversation.id));
-        return saveBotDocument(this.app, id, attachment, bytes);
+        return saveBotDocument(this.app, await attachmentConversationId(), attachment, bytes);
+      }, async (attachment, bytes, mimeType) => {
+        return saveBotImage(this.app, await attachmentConversationId(), attachment, bytes, mimeType);
       });
       const result = control && triggered && actorId ? await this.sessions.perform(context, action) : undefined;
       await this.sessions.inbox.receive(context, hydrated, parts, triggered && !control, !message.mentioned && !triggered, receivedAt, control);

@@ -2,6 +2,8 @@ import path from 'node:path';
 import { access, mkdir, writeFile } from 'node:fs/promises';
 import type { PlatformApplication } from '../../../apps/server/src/application';
 import { botImageId, botInboundParts, isPublicAddress } from '../../../apps/server/src/bots/media';
+import { saveBotImage } from '../../../apps/server/src/bots/documents';
+import { BOT_IMAGE_DIRECTORY } from '../../../shared/botConversation';
 import { BOT_STICKER_DIRECTORY, botStickerReplies, botStickerTool, withoutBotStickerMarkers } from '../../../apps/server/src/bots/stickers';
 import { createOneBotProtocol } from '../../../apps/server/src/bots/onebotProtocol';
 import { captureBotEnvironment } from '../../../apps/server/src/bots/prompt';
@@ -52,6 +54,26 @@ describe('Bot 表情包', () => {
     await expect(tool.execute({ action: 'list', query: '开心' }, context('guest'))).resolves.toMatchObject({ total: 1, stickers: ['开心/得意'] });
     await expect(tool.execute({ action: 'delete', name: '开心/得意' }, context())).resolves.toMatchObject({ deleted: '开心/得意' });
     await expect(tool.execute({ action: 'list' }, context())).resolves.toMatchObject({ total: 0 });
+  });
+
+  test('收到的图片保存到会话工作区，消息标签带相对路径且重复图片复用文件', async () => {
+    const saved = await saveBotImage(app, 'conversation', { name: '猫 图.png', url: 'https://cdn.discordapp.com/a' }, png, 'image/png');
+    expect(saved).toMatchObject({ id: botImageId(png), mimeType: 'image/png' });
+    expect(saved!.relativePath).toBe(`${BOT_IMAGE_DIRECTORY}/${botImageId(png)}-猫 图.png`);
+    await access(path.join(f.root, saved!.relativePath));
+    const again = await saveBotImage(app, 'conversation', { name: '另一张.png', url: 'https://cdn.discordapp.com/b' }, png, 'image/png');
+    expect(again!.path).not.toBe(saved!.path);
+    expect(await saveBotImage(app, 'conversation', { name: '猫 图.png', url: 'https://cdn.discordapp.com/c' }, png, 'image/png'))
+      .toMatchObject({ path: saved!.path });
+    expect(await saveBotImage({ ...app, storage: { getConversation: async () => undefined } } as unknown as PlatformApplication,
+      'conversation', { name: '无工作区.png', url: '' }, png, 'image/png')).toBeUndefined();
+    const inbound = { id: 'm', authorId: '10', channelId: '30', direct: false, mentioned: false, content: '',
+      attachments: [{ name: '猫 图.png', url: 'https://cdn.discordapp.com/a', contentType: 'image/png' }] };
+    const parts = await botInboundParts(inbound, 'discord', async () => png, undefined,
+      async () => ({ relativePath: saved!.relativePath } as any));
+    const label = parts.map(part => part.text).find(text => typeof text === 'string' && text.startsWith('[附件'));
+    expect(label).toContain(`工作区路径 "${saved!.relativePath}"`);
+    expect(parts.some(part => part.inlineData)).toBe(true);
   });
 
   test('网页图片只下载公网 HTTPS，重定向到内网会被拒绝', async () => {

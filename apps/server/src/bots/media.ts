@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto';
 import { BlockList, isIP } from 'node:net';
 import type { PlatformMessage } from '@graycode/contracts';
 import type { BotAttachment, BotInbound, BotReference } from './gateway';
-import type { BotDocument } from './documents';
+import type { BotDocument, BotImageFile } from './documents';
 import { formatBotMention, formatBotSourceHeader } from '../../../../shared/botMessagePresentation';
 
 export function imageMime(bytes: Uint8Array): string | undefined {
@@ -67,7 +67,8 @@ export async function readLimited(body: ReadableStream<Uint8Array>, limit: numbe
 }
 export async function botInboundParts(message: BotInbound, platform: 'discord' | 'onebot',
   download: (attachment: BotAttachment, platform: 'discord' | 'onebot') => Promise<Uint8Array> = downloadBotAttachment,
-  saveDocument?: (attachment: BotAttachment, bytes: Uint8Array) => Promise<BotDocument>): Promise<PlatformMessage['parts']> {
+  saveDocument?: (attachment: BotAttachment, bytes: Uint8Array) => Promise<BotDocument>,
+  saveImage?: (attachment: BotAttachment, bytes: Uint8Array, mimeType: string) => Promise<BotImageFile | undefined>): Promise<PlatformMessage['parts']> {
   const parts: PlatformMessage['parts'] = [];
   const cached = new Map<string, Promise<PlatformMessage['parts']>>(); let attachmentsRead = 0;
   const attachmentParts = (attachment: BotAttachment) => {
@@ -86,7 +87,16 @@ export async function botInboundParts(message: BotInbound, platform: 'discord' |
           return [{ text: `[本地文档 ${JSON.stringify(document)}]\n正文未自动加入上下文。先用 bot_read_attachment 的 stat 查看大小，再用 read 按 offset 和 limit 分段读取；有权限时也可用命令检查这个本地文件。` }];
         }
         const mimeType = imageMime(bytes); if (!mimeType) throw new Error('实际文件不是受支持的图片');
-        return [{ text: `[${label}，图片编号 ${botImageId(bytes)}]` }, { inlineData: { mimeType, data: Buffer.from(bytes).toString('base64') } }];
+        const id = botImageId(bytes);
+        // 工作区保存失败不影响图片进入本轮上下文；标签会说明未能保存，方便之后排查权限或磁盘问题。
+        let location = '';
+        if (saveImage) {
+          try {
+            const saved = await saveImage(attachment, bytes, mimeType);
+            if (saved) location = `，工作区路径 ${JSON.stringify(saved.relativePath)}`;
+          } catch { location = '，未能保存到工作区'; }
+        }
+        return [{ text: `[${label}，图片编号 ${id}${location}]` }, { inlineData: { mimeType, data: Buffer.from(bytes).toString('base64') } }];
       } catch (error) { return [{ text: `[${label}：未读取，${(error as Error).message}]` }]; }
     })(); cached.set(key, work); return work;
   };
