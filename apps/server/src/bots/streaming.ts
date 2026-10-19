@@ -4,7 +4,7 @@ import type { BotReply } from './gateway';
 import type { BotPlatform, BotRoute } from './sessions';
 import { BotSessions } from './sessions';
 import { BotOutbox } from './outbox';
-import { clipBotText, splitBotText } from './text';
+import { clipBotText, plainBotText, splitBotText } from './text';
 import { milliseconds, thinkingComplete } from './messageStats';
 import { botRoundText } from './rounds';
 
@@ -17,15 +17,17 @@ interface StreamState {
 export function botFinalReplies(text: string, route: BotRoute, footer?: string): BotReply[] {
   // 逐轮统计和总计连续显示，正文或代码与统计之间仍保留原来的段落间距。
   const suffix = footer ? `${text.trimEnd().split('\n').at(-1)?.startsWith('-# ') ? '\n' : '\n\n'}${footer}` : '';
-  if (route.platform === 'onebot' && route.output?.longReplies === 'forward' && text.length > 1900)
-    return [{ forward: splitBotText(text + suffix) }];
+  // OneBot 文字段按纯文本显示；文档输出仍保存 Markdown 原文。
+  const shown = route.platform === 'onebot' ? plainBotText(text) : text;
+  if (route.platform === 'onebot' && route.output?.longReplies === 'forward' && shown.length > 1900)
+    return [{ forward: splitBotText(shown + suffix) }];
   if (route.output?.longReplies === 'file' && text.length > 1900) {
     const file = { name: 'GrayCode 回复.md', data: Buffer.from(text + suffix) };
     return route.platform === 'onebot' ? [{ content: '回复较长，全文保存在附件中。' }, { files: [file] }]
       : [{ content: `回复较长，全文保存在附件中。${suffix}`, files: [file] }];
   }
   // 在分段和代码围栏闭合之后追加统计，保证 -# 位于最后一条消息的普通文本行。
-  const replies = splitBotText(text, 1900 - suffix.length).map(content => ({ content }));
+  const replies = splitBotText(shown, 1900 - suffix.length).map(content => ({ content }));
   replies[replies.length - 1].content += suffix;
   return replies;
 }

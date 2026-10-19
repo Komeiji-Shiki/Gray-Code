@@ -56,6 +56,17 @@ describe('OneBot 连接反馈与草稿', () => {
     expect(mock.unsubscribe).toHaveBeenCalledOnce();
   });
 
+  test('处理中提示只对新建配置默认开启，已有配置缺少字段时保持关闭', async () => {
+    const hint = (wrapper: ReturnType<typeof open>) => wrapper.findAll('label').find(item => item.text().startsWith('开始处理时提示'))!
+      .get('input').element as HTMLInputElement;
+    const existing = open(); await flushPromises();
+    try { expect(hint(existing).checked).toBe(false); } finally { existing.unmount(); }
+    const fallback = mock.send.getMockImplementation()!;
+    mock.send.mockImplementation(async (type: string) => type === 'platform.settings.get' ? { ...settings(), onebot: undefined } : fallback(type));
+    const created = open(); await flushPromises();
+    try { expect(hint(created).checked).toBe(true); } finally { created.unmount(); }
+  });
+
   test('新增绑定聚焦用户 ID，标记未保存且不默认授予主人权限', async () => {
     const wrapper = open(); await flushPromises();
     try {

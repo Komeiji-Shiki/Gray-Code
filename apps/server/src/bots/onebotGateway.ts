@@ -1,9 +1,11 @@
 import { randomUUID } from 'node:crypto';
-import type { BotGateway, BotInbound, BotReply } from './gateway';
+import type { BotGateway, BotInbound, BotProcessingTarget, BotReply } from './gateway';
 import type { OneBotProtocol, OneBotAction } from './onebotProtocol';
 import { BotDeliveryError } from './deliveryError';
 
 interface PendingCall { resolve(value: Record<string, any>): void; reject(error: Error): void; timer: ReturnType<typeof setTimeout> }
+/** QQ 风控对同一账号的短时间连发敏感，所有会话的发消息动作共用这个最小间隔。 */
+const SEND_INTERVAL_MS = 1000;
 /** OneBot 正向 WebSocket 共用传输：同一连接承载事件和带 echo 的 API 响应。 */
 export class OneBotGateway implements BotGateway {
   private socket?: WebSocket;
@@ -12,6 +14,9 @@ export class OneBotGateway implements BotGateway {
   private state?: (status: string) => void;
   private token = '';
   private botId?: string;
+  private botName = '';
+  private sending: Promise<unknown> = Promise.resolve();
+  private lastSentAt = 0;
   private desired = false;
   private reconnect?: ReturnType<typeof setTimeout>;
   private reconnectDelay = 3000;
@@ -57,7 +62,8 @@ export class OneBotGateway implements BotGateway {
       if (!this.desired || this.socket !== socket || socket.readyState !== WebSocket.OPEN) throw new Error('OneBot 连接不可用。');
       const id = login.id;
       if (this.botId && this.botId !== id) { this.desired = false; throw new Error('OneBot 登录账号已变化，请手动重新连接。'); }
-      this.botId = id; this.reconnectDelay = 3000; this.state?.(this.online === false ? 'offline' : 'connected');
+      this.botId = id; this.botName = login.name;
+      this.reconnectDelay = 3000; this.state?.(this.online === false ? 'offline' : 'connected');
       return login;
     } catch (error) {
       if (this.socket === socket) { this.socket = undefined; this.failPending(); }
@@ -111,18 +117,33 @@ export class OneBotGateway implements BotGateway {
       catch { clearTimeout(timer); this.pending.delete(echo); reject(new BotDeliveryError('OneBot 请求尚未发送。', 'retryable')); }
     });
   }
-  async send(channelId: string, content: string): Promise<void> { await this.call(this.protocol.send(channelId, content)); }
+  /** 发消息动作串行执行；等待期间断线时 call 会以“尚未发送”拒绝，发件箱可以安全重试。 */
+  private paced(action: OneBotAction): Promise<Record<string, any>> {
+    const turn = this.sending.then(async () => {
+      const wait = this.lastSentAt + SEND_INTERVAL_MS - Date.now();
+      if (wait > 0) await new Promise(resolve => setTimeout(resolve, wait));
+      try { return await this.call(action); } finally { this.lastSentAt = Date.now(); }
+    });
+    this.sending = turn.catch(() => {});
+    return turn;
+  }
+  async send(channelId: string, content: string): Promise<void> { await this.paced(this.protocol.send(channelId, content)); }
   async sendReply(channelId: string, reply: BotReply) {
     let action: OneBotAction;
     try {
-      action = await this.protocol.prepareReply(this.protocol.send(channelId, reply.content ?? '', reply.replyToMessageId), reply, this.botId!, value => this.call(value));
+      const bot = { id: this.botId!, name: this.botName };
+      action = await this.protocol.prepareReply(this.protocol.send(channelId, reply.content ?? '', reply.replyToMessageId), reply, bot, value => this.call(value));
     } catch (error) {
       if (error instanceof BotDeliveryError && error.kind === 'rejected') throw error;
       // 文件上传只准备资源，此时尚未向聊天发送消息，可以重新准备。
       throw new BotDeliveryError('消息资源准备失败，尚未发送，将稍后重试。', 'retryable');
     }
-    const data = await this.call(action);
+    const data = await this.paced(action);
     return this.protocol.receipt(data);
+  }
+  async indicateProcessing(target: BotProcessingTarget): Promise<void> {
+    const action = this.protocol.processing(target);
+    if (action) await this.call(action);
   }
   async hydrate(message: BotInbound) { return this.protocol.hydrate(message, action => this.call(action), this.botId); }
   async disconnect(): Promise<void> {

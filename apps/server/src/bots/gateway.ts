@@ -29,6 +29,8 @@ export interface BotReply {
   replyToMessageId?: string; forward?: string[];
 }
 export interface BotMessageReceipt { id: string }
+/** first 区分任务首轮与后续工具轮次：一次性的提示只在首轮发出，可续期的输入状态每轮刷新。 */
+export interface BotProcessingTarget { channelId: string; direct: boolean; messageId?: string; first: boolean }
 export interface BotModal { id: string; title: string; fields: Array<{ id: string; label: string; value?: string; placeholder?: string; required?: boolean }> }
 export interface BotInteraction {
   id: string; authorId: string; channelId: string; direct: boolean; guildId?: string;
@@ -53,4 +55,6 @@ export interface BotGateway {
   deleteReply?(channelId: string, messageId: string): Promise<void>;
   hydrate?(message: BotInbound): Promise<BotInbound>;
   health?(): Pick<BotStatus, 'lastHeartbeatAt' | 'online'>;
+  /** 平台扩展接口可能不存在，调用方忽略失败，不影响任务本身。 */
+  indicateProcessing?(target: BotProcessingTarget): Promise<void>;
 }

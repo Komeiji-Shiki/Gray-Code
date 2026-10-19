@@ -1,8 +1,9 @@
 import type { OneBotSettings } from '@graycode/contracts';
-import type { BotInbound, BotAttachment, BotReference, BotMessageReceipt, BotReply } from './gateway';
+import type { BotInbound, BotAttachment, BotReference, BotMessageReceipt, BotProcessingTarget, BotReply } from './gateway';
 import { oneBotContent } from './onebotContent';
 import { BotDeliveryError } from './deliveryError';
 export interface OneBotAction { action: string; params: Record<string, unknown>; self?: { platform: string; user_id: string } }
+export interface OneBotSelf { id: string; name: string }
 export interface OneBotProtocol {
   login(): OneBotAction;
   identity(data: Record<string, any>): { id: string; name: string };
@@ -11,7 +12,8 @@ export interface OneBotProtocol {
   receipt(data: Record<string, any>): BotMessageReceipt;
   hydrate(message: BotInbound, call: (action: OneBotAction) => Promise<Record<string, any>>, botId?: string): Promise<BotInbound>;
   health(value: Record<string, any>, botId?: string): { interval?: number; online?: boolean } | undefined;
-  prepareReply(action: OneBotAction, reply: BotReply, botId: string, call: (action: OneBotAction) => Promise<Record<string, any>>): Promise<OneBotAction>;
+  prepareReply(action: OneBotAction, reply: BotReply, bot: OneBotSelf, call: (action: OneBotAction) => Promise<Record<string, any>>): Promise<OneBotAction>;
+  processing(target: BotProcessingTarget): OneBotAction | undefined;
 }
 const numericId = (value: unknown): string | undefined => typeof value === 'string' && /^\d+$/.test(value) ? value
   : typeof value === 'number' && Number.isSafeInteger(value) && value >= 0 ? String(value) : undefined;
@@ -53,11 +55,11 @@ function v11(): OneBotProtocol {
       return { id };
     },
     hydrate: (message, call, botId) => hydrateOneBot(message, 11, call, botId),
-    prepareReply: async (action, reply, botId) => {
+    prepareReply: async (action, reply, bot) => {
       if (reply.forward) {
         const { message: _message, ...target } = action.params;
         return { action: action.action === 'send_group_msg' ? 'send_group_forward_msg' : 'send_private_forward_msg', params: { ...target,
-          messages: reply.forward.map((text, index) => ({ type: 'node', data: { user_id: botId, nickname: 'GrayCode',
+          messages: reply.forward.map((text, index) => ({ type: 'node', data: { user_id: bot.id, nickname: bot.name,
             content: messageSegments(text, index === 0 ? reply.replyToMessageId : undefined, 11) } })) } };
       }
       const document = reply.files?.some(file => !file.contentType?.startsWith('image/') && !/\.(png|jpe?g|webp|gif)$/i.test(file.name));
@@ -67,6 +69,13 @@ function v11(): OneBotProtocol {
       for (const file of reply.files ?? []) messages.push({ type: file.contentType?.startsWith('image/') || /\.(png|jpe?g|webp|gif)$/i.test(file.name) ? 'image' : 'file',
         data: { file: `base64://${Buffer.from(file.data).toString('base64')}`, name: file.name } });
       return { ...action, params: { ...action.params, message: messages } };
+    },
+    // 两项都是 NapCat 扩展：私聊每轮刷新“正在输入”，群聊只在首轮给原消息贴 QQ 系统表情 124（OK）。
+    processing: ({ channelId, direct, messageId, first }) => {
+      const id = channelId.slice(channelId.indexOf(':') + 1);
+      if (direct) return { action: 'set_input_status', params: { user_id: id, event_type: 1 } };
+      if (!first || messageId === undefined) return undefined;
+      return { action: 'set_msg_emoji_like', params: { message_id: Number(messageId), emoji_id: 124 } };
     },
     health: (value, botId) => value.post_type === 'meta_event' && value.meta_event_type === 'heartbeat'
       && (!botId || numericId(value.self_id) === botId)
@@ -118,6 +127,8 @@ function v12(identity: NonNullable<OneBotSettings['self']>): OneBotProtocol {
       }
       return { ...action, params: { ...action.params, message: messages } };
     },
+    // v12 标准没有表情回应或输入状态动作，不猜测各实现的私有扩展。
+    processing: () => undefined,
     health: value => {
       if (value.type !== 'meta') return;
       if (value.detail_type === 'heartbeat') return { interval: value.interval };

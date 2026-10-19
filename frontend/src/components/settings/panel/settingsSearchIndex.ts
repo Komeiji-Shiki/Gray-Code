@@ -692,7 +692,7 @@ export function settingsSearchIndex(isDesktopHost: boolean, supportsFileAssociat
     { key: 'discord', tab: 'discord' as const, labelKey: 'desktop.settingsSearch.discord',
       keywords: ['Discord', 'Bot', '机器人', '频道', '提及', '私聊', '群聊'] },
     { key: 'onebot', tab: 'onebot' as const, labelKey: 'desktop.settingsSearch.onebot',
-      keywords: ['QQ', 'NapCat', 'OneBot', '机器人', '群聊', '私聊', 'WebSocket'] },
+      keywords: ['QQ', 'NapCat', 'OneBot', '机器人', '群聊', '私聊', 'WebSocket', '表情回应', '正在输入'] },
     { key: 'accounts', tab: 'accounts' as const, labelKey: 'desktop.settingsSearch.accounts',
       keywords: ['账号', '授权', '权限', '绑定', '主人', '成员', '访客', '白名单', '黑名单', 'account', 'permission', 'owner', 'member'] },
     { key: 'workspaces', tab: 'workspaces' as const, labelKey: 'desktop.settingsSearch.workspaces',

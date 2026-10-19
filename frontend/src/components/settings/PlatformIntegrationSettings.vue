@@ -103,7 +103,7 @@ onMounted(async () => {
     if (props.section === 'accounts') mcpPermissionTools.value = (await sendToExtension<{ tools: typeof mcpPermissionTools.value }>('tools.getMcpTools', {})).tools ?? [];
     if (props.section === 'onebot') {
       settings.value!.onebot ??= { endpoint: '', enabled: false, protocolVersion: 11, self: { platform: 'qq', userId: '' }, allowedChannelIds: [], agentId: settings.value!.agents[0]?.id ?? '', mentionOnly: true,
-        messagePolicy: { ...DEFAULT_BOT_MESSAGE_POLICY }, defaultProfile: { output: { ...DEFAULT_ONEBOT_OUTPUT } } };
+        processingHint: true, messagePolicy: { ...DEFAULT_BOT_MESSAGE_POLICY }, defaultProfile: { output: { ...DEFAULT_ONEBOT_OUTPUT } } };
       settings.value!.onebot.self ??= { platform: 'qq', userId: '' };
     }
     if (props.section === 'discord' || props.section === 'onebot') await refreshStatus(); });
@@ -124,6 +124,10 @@ useDesktopSettingsDraft(save, () => !!settings.value);
       <label>启用 Bot<input v-model="bot.enabled" type="checkbox" /></label>
       <label>启动时自动连接<input type="checkbox" :checked="bot.autoConnect !== false" @change="bot.autoConnect = ($event.target as HTMLInputElement).checked" /></label>
       <p>已启用的 Bot 在下次启动 GrayCode 时连接；关闭此项后可手动连接。</p>
+      <template v-if="section === 'onebot'">
+        <label>开始处理时提示<input v-model="bot.processingHint" type="checkbox" /></label>
+        <p>任务开始时，群聊给触发消息贴 OK 表情，私聊显示“对方正在输入”。两项均为 NapCat 扩展，对端不支持时自动跳过。</p>
+      </template>
       <label>{{ section === 'onebot' ? '访问令牌' : 'Bot Token' }}<input type="password" autocomplete="new-password" :placeholder="bot.credentialRef ? '已配置；留空保留原值' : '输入访问令牌'" @input="setToken(($event.target as HTMLInputElement).value)" /></label>
       <button v-if="section === 'onebot' && bot.credentialRef" @click="delete bot.credentialRef; delete credentialChanges.onebot; action(save)">取消使用访问令牌</button>
       <div v-if="status.botId" class="integration-identity"><strong>{{ status.name || '机器人账号' }}</strong><span>{{ status.botId }}</span></div>

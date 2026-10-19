@@ -14,6 +14,33 @@ export function oneBotSegments(value: unknown): Array<{ type: string; data: Reco
   if (cursor < value.length) segments.push({ type: 'text', data: { text: decode(value.slice(cursor)) } });
   return segments;
 }
+const joined = (values: unknown[]) => [...new Set(values.filter((item): item is string => typeof item === 'string' && !!item.trim())
+  .map(item => item.trim().slice(0, 200)))].join('｜');
+/** 小程序与链接卡片只保留提示、标题、简介和跳转地址，原始 JSON 不进入模型输入。 */
+function cardNote(raw: unknown): string {
+  try {
+    const card = typeof raw === 'string' ? JSON.parse(raw) : raw;
+    const detail = Object.values(card?.meta ?? {})[0] as Record<string, unknown> | undefined;
+    const text = joined([card?.prompt, detail?.title, detail?.desc, detail?.qqdocurl ?? detail?.jumpUrl ?? detail?.url]);
+    return text ? `[卡片：${text}]` : '[卡片消息]';
+  } catch { return '[卡片消息]'; }
+}
+/** 非正文消息段转成简短说明，让模型知道对方发了什么；未列出的类型仍然忽略。 */
+function segmentNote(type: string, data: Record<string, any>): string | undefined {
+  switch (type) {
+    case 'face': return typeof data.raw?.faceText === 'string' && data.raw.faceText ? `[表情${data.raw.faceText}]` : '[表情]';
+    case 'dice': return data.result ? `[骰子：${data.result} 点]` : '[骰子]';
+    case 'rps': return '[猜拳]';
+    case 'poke': case 'shake': return '[戳一戳]';
+    case 'json': return cardNote(data.data);
+    case 'markdown': return typeof data.content === 'string' ? data.content : undefined;
+    case 'share': return `[分享：${joined([data.title, data.content, data.url]) || '链接'}]`;
+    case 'music': return `[音乐分享${data.title ? `：${data.title}` : ''}]`;
+    case 'location': return `[位置：${joined([data.title, data.content]) || `${data.lat},${data.lon}`}]`;
+    case 'contact': return `[推荐${data.type === 'group' ? '群' : '好友'}：${data.id ?? ''}]`;
+    case 'onlinefile': return `[在线文件 ${JSON.stringify(String(data.fileName ?? ''))}：暂不支持读取]`;
+  }
+}
 export function oneBotContent(value: unknown, botId: string, version: 11 | 12, depth = 0) {
   let content = ''; let mentioned = false;
   const attachments: BotAttachment[] = []; const references: BotReference[] = [];
@@ -41,6 +68,9 @@ export function oneBotContent(value: unknown, botId: string, version: 11 | 12, d
       const parsed = depth < 4 && data.content ? oneBotContent(data.content, botId, version, depth + 1) : undefined;
       references.push({ kind: 'forward', id, authorId: String(data.uin ?? data.user_id ?? ''), authorName: data.name ?? data.nickname,
         ...(parsed ? parsed : { unavailable: '转发节点内容未提供或嵌套超过 4 层' }) });
+    } else {
+      const note = segmentNote(segment.type, data);
+      if (note) text(note);
     }
   }
   return { content: content.trim(), mentioned, attachments, references, segments };

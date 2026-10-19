@@ -429,6 +429,7 @@ export class SettingsService<T = never> {
     }
     for (const bot of [settings.discord, settings.onebot]) {
       if (bot?.autoConnect !== undefined && typeof bot.autoConnect !== 'boolean') throw new Error('Bot 自动连接选项必须是布尔值。');
+      if (bot?.processingHint !== undefined && typeof bot.processingHint !== 'boolean') throw new Error('Bot 处理中提示选项必须是布尔值。');
     }
     if (settings.onebot) {
       const onebot = settings.onebot;

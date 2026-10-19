@@ -38,6 +38,8 @@ export interface BotConnectionSettings {
   enabled: boolean;
   /** 已启用的 Bot 默认随应用启动连接，可单独关闭。 */
   autoConnect?: boolean;
+  /** 不能流式编辑的平台在任务开始时提示正在处理；缺省关闭，旧配置保持原样。 */
+  processingHint?: boolean;
   credentialRef?: string;
   allowedChannelIds: string[];
   agentId: string;

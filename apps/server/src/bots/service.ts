@@ -30,6 +30,7 @@ export class BoundBotService {
   private events: Promise<unknown> = Promise.resolve();
   private readonly inbound = new Map<string, Promise<unknown>>();
   private readonly receiving = new Map<string, Promise<void>>();
+  private readonly processingHinted = new Set<string>();
   readonly diagnostics = new BotDiagnostics();
   readonly sessions: BotSessions;
   readonly outbox: BotOutbox;
@@ -52,7 +53,10 @@ export class BoundBotService {
       if (notification.type === 'message.persisted') { this.streams.saved(String(notification.runId), notification.content as PlatformMessage); return; }
       if (notification.type !== 'event') return;
       const event = notification.event as RunEvent;
-      if (event.type === 'model.started') this.streams.started(event.runId);
+      if (event.type === 'model.started') {
+        this.streams.started(event.runId);
+        void this.indicateProcessing(event.runId).catch(() => {});
+      }
       if (event.type === 'tool.started') this.streams.status(event.runId, `正在调用 ${event.payload.toolName}`);
       if (event.type === 'approval.requested') this.streams.status(event.runId, '等待主人确认操作');
       this.events = this.events.then(() => this.onEvent(event)).catch(() => { this.current.error = '任务通知准备失败，完整记录仍可在桌面查看。'; });
@@ -167,6 +171,20 @@ export class BoundBotService {
     this.sessions.inbox.pause();
     this.clearInteractions(); await this.summaries.stop(); await this.streams.pause(); await gateway?.disconnect();
     if (epoch === this.connectionEpoch) { this.current = { status: 'stopped' }; this.notifyConnectionChange(); }
+  }
+  /** 子任务的模型轮次不重复提示；路线和准入沿用回复投递的检查。 */
+  private async indicateProcessing(runId: string): Promise<void> {
+    const gateway = this.gateway;
+    if (!gateway?.indicateProcessing || !this.app.settings.read(this.platform)[this.platform]?.processingHint) return;
+    const run = await this.app.storage.getRun(runId);
+    const route = run && await this.sessions.routeForRun(this.platform, run);
+    if (!route || route.conversationId !== run.conversationId || !await this.admitted(route)) return;
+    const first = !this.processingHinted.has(runId);
+    if (first) {
+      if (this.processingHinted.size >= 1000) this.processingHinted.delete(this.processingHinted.values().next().value!);
+      this.processingHinted.add(runId);
+    }
+    await gateway.indicateProcessing({ channelId: route.channelId, direct: route.direct === true, messageId: route.replyToMessageId, first });
   }
   private async admitted(route: BotRoute): Promise<boolean> {
     route.platform ??= this.platform;

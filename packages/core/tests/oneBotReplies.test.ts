@@ -4,6 +4,9 @@ import { PlatformApplication } from '../../../apps/server/src/application';
 import { createOneBotProtocol } from '../../../apps/server/src/bots/onebotProtocol';
 import { fixture } from './fixtures';
 import { OneBotGateway } from '../../../apps/server/src/bots/onebotGateway';
+import { oneBotContent } from '../../../apps/server/src/bots/onebotContent';
+import { botFinalReplies } from '../../../apps/server/src/bots/streaming';
+import { plainBotText } from '../../../apps/server/src/bots/text';
 
 const deferred = () => { let resolve!: () => void; const promise = new Promise<void>(done => { resolve = done; }); return { promise, resolve }; };
 async function until<T>(read: () => Promise<T> | T, label: string): Promise<T> {
@@ -12,7 +15,7 @@ async function until<T>(read: () => Promise<T> | T, label: string): Promise<T> {
   throw new Error(label);
 }
 function configuration(version: 11 | 12, endpoint: string): OneBotSettings {
-  return { enabled: true, endpoint, protocolVersion: version, autoConnect: false, mentionOnly: true, agentId: 'default',
+  return { enabled: true, endpoint, protocolVersion: version, autoConnect: false, processingHint: true, mentionOnly: true, agentId: 'default',
     allowedChannelIds: [version === 11 ? 'group:30' : 'group:team%3Aone'],
     ...(version === 12 ? { self: { platform: 'fixture', userId: 'robot:0' } } : {}),
     defaultProfile: { workspaceId: null, toolsEnabled: false } };
@@ -22,18 +25,21 @@ test('OneBot 11 和 12 的附件、合并转发与心跳使用各自协议', asy
   const v11 = createOneBotProtocol(configuration(11, 'ws://127.0.0.1:1'));
   const action = v11.send('group:30', '', '-101');
   const reply = { files: [{ name: 'image.png', data: Buffer.from('image') }] };
-  const rich = await v11.prepareReply(action, reply, '900', async () => ({}));
+  const bot = { id: '900', name: '灰魂' };
+  const rich = await v11.prepareReply(action, reply, bot, async () => ({}));
   expect(rich.params.message).toEqual([{ type: 'reply', data: { id: '-101' } }, { type: 'image', data: { file: 'base64://aW1hZ2U=', name: 'image.png' } }]);
-  const document = await v11.prepareReply(action, { files: [{ name: 'result.txt', data: Buffer.from('text') }] }, '900', async () => ({}));
+  const document = await v11.prepareReply(action, { files: [{ name: 'result.txt', data: Buffer.from('text') }] }, bot, async () => ({}));
   expect(document.params.message).toEqual([{ type: 'file', data: { file: 'base64://dGV4dA==', name: 'result.txt' } }]);
-  const forward = await v11.prepareReply(action, { forward: ['第一段', '第二段'] }, '900', async () => ({}));
+  const forward = await v11.prepareReply(action, { forward: ['第一段', '第二段'] }, bot, async () => ({}));
   expect(forward.action).toBe('send_group_forward_msg'); expect((forward.params.messages as unknown[]).length).toBe(2);
+  expect((forward.params.messages as Array<{ data: Record<string, unknown> }>)[0].data).toMatchObject({ user_id: '900', nickname: '灰魂' });
   const v12 = createOneBotProtocol(configuration(12, 'ws://127.0.0.1:1'));
   const calls: unknown[] = [];
-  const file = await v12.prepareReply(v12.send('group:team%3Aone', ''), reply, '', async value => { calls.push(value); return { file_id: 'uploaded' }; });
+  const self = { id: '', name: '' };
+  const file = await v12.prepareReply(v12.send('group:team%3Aone', ''), reply, self, async value => { calls.push(value); return { file_id: 'uploaded' }; });
   expect(calls[0]).toMatchObject({ action: 'upload_file', params: { type: 'data', data: 'aW1hZ2U=' } });
   expect(file.params.message).toEqual([{ type: 'image', data: { file_id: 'uploaded' } }]);
-  await expect(v12.prepareReply(v12.send('group:team%3Aone', ''), { forward: ['不支持'] }, '', async () => ({}))).rejects.toThrow('不支持合并转发');
+  await expect(v12.prepareReply(v12.send('group:team%3Aone', ''), { forward: ['不支持'] }, self, async () => ({}))).rejects.toThrow('不支持合并转发');
   const gateway = new OneBotGateway('ws://127.0.0.1:1', v11), close = jest.fn();
   (gateway as any).socket = { close }; (gateway as any).botId = '900';
   jest.useFakeTimers();
@@ -70,12 +76,14 @@ test.each([11, 12] as const)('OneBot %s 经真实 WebSocket 保存排队原消�
   const server = new WebSocketServer({ host: '127.0.0.1', port: 0 });
   await new Promise<void>(resolve => server.once('listening', resolve));
   const endpoint = `ws://127.0.0.1:${(server.address() as { port: number }).port}`;
-  const sent: Array<Record<string, any>> = []; let socket!: WebSocket; let dropNext = false, generated = 0;
+  const sent: Array<Record<string, any>> = []; const hints: Array<Record<string, any>> = [];
+  let socket!: WebSocket; let dropNext = false, generated = 0;
   const release = deferred();
   server.on('connection', client => { socket = client; client.on('message', raw => {
     const action = JSON.parse(raw.toString()); let data: Record<string, unknown> = {};
     if (action.action === 'get_login_info') data = { user_id: 900, nickname: 'OneBot 验收' };
     else if (action.action === 'get_self_info') data = { user_id: 'robot:0', user_name: 'OneBot 验收' };
+    else if (action.action.startsWith('set_')) hints.push(action);
     else if (action.action.startsWith('send_')) {
       sent.push(action);
       if (dropNext) { dropNext = false; client.close(1012, '验收：回执丢失'); return; }
@@ -108,6 +116,10 @@ test.each([11, 12] as const)('OneBot %s 经真实 WebSocket 保存排队原消�
     expect(pending.context.sourceMessageId).toBe(nativeId(2)); release.resolve();
     await until(() => sent.length === 2, '两条回复未完成');
     expect(sent.map(replyId)).toEqual([nativeId(1), nativeId(2)]);
+    // 群聊每个任务只贴一次表情；v12 标准没有对应动作。
+    if (version === 11) await until(() => hints.length === 2, '群聊没有提示处理中');
+    expect(hints.map(hint => [hint.action, hint.params.message_id, hint.params.emoji_id]))
+      .toEqual(version === 11 ? [['set_msg_emoji_like', -101, 124], ['set_msg_emoji_like', -102, 124]] : []);
     const runs = await app.storage.listRuns(); expect(runs.map(run => run.actorId).sort()).toEqual(['member', 'owner']);
     for (const run of runs) expect((await app.onebot.sessions.routeForRun('onebot', run))?.replyToMessageId).toBe(nativeId(run.actorId === 'owner' ? 1 : 2));
     dropNext = true; emit(3, true);
@@ -126,4 +138,49 @@ test.each([11, 12] as const)('OneBot %s 经真实 WebSocket 保存排队原消�
     release.resolve(); await app.close(); for (const client of server.clients) client.terminate();
     await new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve())); await f.cleanup();
   }
+});
+
+test('QQ 回复转成纯文本，文档仍保存 Markdown 原文，处理中提示按会话类型选择 NapCat 扩展', () => {
+  const markdown = [
+    '# 标题', '**加粗** 与 *斜体*，`snake_case` 和 2 * 3 * 4 保持原样', '- [x] 已完成', '* 列表项', '> 引用',
+    '| 名称 | 值 |', '| --- | :-: |', '| a | b |', '[文档](https://example.com) \\*转义\\*', '```ts', '  const value = **raw**;', '```',
+  ].join('\n');
+  expect(plainBotText(markdown)).toBe([
+    '【标题】', '加粗 与 斜体，snake_case 和 2 * 3 * 4 保持原样', '☑ 已完成', '• 列表项', '｜引用',
+    '名称 | 值', 'a | b', '文档（https://example.com） *转义*', '  const value = **raw**;',
+  ].join('\n'));
+  const route = { platform: 'onebot' as const, botId: '900', channelId: 'group:30', actorId: 'owner', conversationId: 'c',
+    output: { streaming: false, updateIntervalMs: 1000, showThoughts: false, showToolStatus: false, longReplies: 'file' as const } };
+  expect(botFinalReplies('**短回复**', route)).toEqual([{ content: '短回复' }]);
+  const long = `## 长文\n${'内容'.repeat(1000)}`;
+  const document = botFinalReplies(long, route);
+  expect(Buffer.from(document[1].files![0].data).toString()).toBe(long);
+  expect(botFinalReplies(long, { ...route, output: { ...route.output, longReplies: 'forward' } })[0].forward![0]).toMatch(/^【长文】\n内容/);
+
+  const v11 = createOneBotProtocol(configuration(11, 'ws://127.0.0.1:1'));
+  expect(v11.processing({ channelId: 'private:11', direct: true, first: false }))
+    .toEqual({ action: 'set_input_status', params: { user_id: '11', event_type: 1 } });
+  expect(v11.processing({ channelId: 'group:30', direct: false, messageId: '-101', first: true }))
+    .toEqual({ action: 'set_msg_emoji_like', params: { message_id: -101, emoji_id: 124 } });
+  expect(v11.processing({ channelId: 'group:30', direct: false, messageId: '-101', first: false })).toBeUndefined();
+  expect(createOneBotProtocol(configuration(12, 'ws://127.0.0.1:1')).processing({ channelId: 'private:a', direct: true, first: true })).toBeUndefined();
+});
+
+test('QQ 卡片、表情等消息段转成说明，相邻发送至少间隔一秒', async () => {
+  const card = JSON.stringify({ prompt: '[QQ小程序]哔哩哔哩', meta: { detail_1: { title: '哔哩哔哩', desc: '视频标题', qqdocurl: 'https://b23.tv/abc' } } });
+  const content = oneBotContent([{ type: 'json', data: { data: card } }, { type: 'face', data: { id: '14' } }, { type: 'dice', data: { result: '6' } },
+    { type: 'json', data: { data: '{broken' } }], '900', 11);
+  expect(content.content).toBe('[卡片：[QQ小程序]哔哩哔哩｜哔哩哔哩｜视频标题｜https://b23.tv/abc][表情][骰子：6 点][卡片消息]');
+
+  const gateway = new OneBotGateway('ws://127.0.0.1:1', createOneBotProtocol(configuration(11, 'ws://127.0.0.1:1')));
+  const times: number[] = [];
+  (gateway as any).botId = '900';
+  (gateway as any).call = async () => { times.push(Date.now()); return { message_id: times.length }; };
+  jest.useFakeTimers();
+  try {
+    const replies = Promise.all([1, 2, 3].map(index => gateway.sendReply('group:30', { content: `第 ${index} 条` })));
+    await jest.advanceTimersByTimeAsync(2500);
+    expect(await replies).toEqual([{ id: '1' }, { id: '2' }, { id: '3' }]);
+    expect(times[1] - times[0]).toBeGreaterThanOrEqual(1000); expect(times[2] - times[1]).toBeGreaterThanOrEqual(1000);
+  } finally { jest.useRealTimers(); }
 });
