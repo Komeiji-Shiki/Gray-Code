@@ -1,5 +1,6 @@
 import type { OneBotSettings } from '@graycode/contracts';
-import type { BotInbound, BotAttachment, BotReference, BotMessageReceipt, BotProcessingTarget, BotReply } from './gateway';
+import type { BotInbound, BotAttachment, BotReference, BotMessageSegment, BotMessageReceipt, BotProcessingTarget, BotReply } from './gateway';
+import { formatBotMention } from '../../../../shared/botMessagePresentation';
 import { oneBotContent } from './onebotContent';
 import { BotDeliveryError } from './deliveryError';
 export interface OneBotAction { action: string; params: Record<string, unknown>; self?: { platform: string; user_id: string } }
@@ -142,7 +143,45 @@ function v12(identity: NonNullable<OneBotSettings['self']>): OneBotProtocol {
 }
 export function createOneBotProtocol(settings: OneBotSettings): OneBotProtocol { return settings.protocolVersion === 12 ? v12(settings.self!) : v11(); }
 
+/** 昵称按群缓存十分钟，避免每条提及消息都向 OneBot 查询同一个人。 */
+const mentionNames = new Map<string, { expires: number; name: Promise<string | undefined> }>();
 async function hydrateOneBot(message: BotInbound, version: 11 | 12, call: (action: OneBotAction) => Promise<Record<string, any>>, botUserId?: string): Promise<BotInbound> {
+  const groupOf = (channelId: string): string | undefined => {
+    const match = /^group:(.+)$/.exec(channelId); if (!match) return undefined;
+    try { return decodeURIComponent(match[1]); } catch { return match[1]; }
+  };
+  /** at 段通常只有号码；群成员信息能补上群名片或 QQ 昵称，失败时保留号码。 */
+  const mentionName = (channelId: string, id: string): Promise<string | undefined> => {
+    if (!/^\d+$/.test(id)) return Promise.resolve(undefined);
+    const group = groupOf(channelId); const key = `${version}:${group ?? ''}:${id}`;
+    const existing = mentionNames.get(key); if (existing && existing.expires > Date.now()) return existing.name;
+    const work = (async (): Promise<string | undefined> => {
+      try {
+        const action = group
+          ? { action: 'get_group_member_info',
+            params: version === 11 ? { group_id: Number(group), user_id: Number(id) } : { group_id: group, user_id: id } }
+          : version === 11 ? { action: 'get_stranger_info', params: { user_id: Number(id) } }
+            : { action: 'get_user_info', params: { user_id: id } };
+        const value = await call(action);
+        return [value.card, value.nickname, value.user_displayname, value.user_name]
+          .find((name): name is string => typeof name === 'string' && !!name.trim())?.trim();
+      } catch { return undefined; }
+    })();
+    if (mentionNames.size >= 1000) mentionNames.delete(mentionNames.keys().next().value!);
+    mentionNames.set(key, { expires: Date.now() + 10 * 60_000, name: work }); return work;
+  };
+  /** 昵称只影响展示，补进消息段后同步重建 content，两条读取路径保持一致。 */
+  const withMentionNames = async <T extends { segments?: BotMessageSegment[]; content?: string }>(source: T): Promise<T> => {
+    if (!source.segments?.some(segment => segment.type === 'mention' && !segment.name)) return source;
+    const segments = await Promise.all(source.segments.map(async segment => {
+      if (segment.type !== 'mention' || segment.name) return segment;
+      const name = await mentionName(message.channelId, segment.id);
+      return name ? { ...segment, name } : segment;
+    }));
+    const content = segments.map(segment => segment.type === 'text' ? segment.text
+      : segment.type === 'mention' ? ` ${formatBotMention(segment.id, segment.name)} ` : '').join('').trim();
+    return { ...source, segments, content };
+  };
   const attachment = async (item: BotAttachment): Promise<BotAttachment> => {
     if (item.url || !item.fileId) return item;
     try {
@@ -172,6 +211,7 @@ async function hydrateOneBot(message: BotInbound, version: 11 | 12, call: (actio
             ...oneBotContent(value.message, '', version) };
         } catch (error) { resolved = { ...item, unavailable: `原消息无法读取：${(error as Error).message}` }; }
       }
+      resolved = await withMentionNames(resolved);
       result.push({ ...resolved, attachments: await Promise.all((resolved.attachments ?? []).map(attachment)),
         references: await refs(resolved.references ?? [], depth + 1) });
     }
@@ -179,6 +219,6 @@ async function hydrateOneBot(message: BotInbound, version: 11 | 12, call: (actio
     return result;
   };
   const references = await refs(message.references ?? [], 0);
-  return { ...message, attachments: await Promise.all((message.attachments ?? []).map(attachment)), references,
-    repliedToBot: !!botUserId && references.some(reference => reference.kind === 'reply' && reference.authorId === botUserId) };
+  return withMentionNames({ ...message, attachments: await Promise.all((message.attachments ?? []).map(attachment)), references,
+    repliedToBot: !!botUserId && references.some(reference => reference.kind === 'reply' && reference.authorId === botUserId) });
 }

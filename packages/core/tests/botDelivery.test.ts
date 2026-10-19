@@ -247,6 +247,8 @@ describe('Bot 回复合并与发送恢复', () => {
     await discord.sendReply('channel', sent[0], 'nonce');
     expect(payloads[0]).toMatchObject({ content: '最终内容', reply: { messageReference: 'original-message', failIfNotExists: false },
       allowedMentions: { parse: [], repliedUser: false }, nonce: 'nonce', enforceNonce: true });
+    await discord.sendReply('channel', { content: '<@123456789> 你好，<@!987654321>；不要 @everyone 或 <@&42>' });
+    expect(payloads[1].allowedMentions).toEqual({ parse: [], repliedUser: false, users: ['123456789', '987654321'] });
   });
 
   test('思考与工具统计紧凑显示，参数使用行内代码，单轮不重复总计', () => {

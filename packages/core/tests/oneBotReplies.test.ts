@@ -52,6 +52,21 @@ test('OneBot 11 和 12 的附件、合并转发与心跳使用各自协议', asy
   } finally { await gateway.disconnect(); jest.useRealTimers(); }
 });
 
+test('QQ 入站 @ 段保留号码并补齐群昵称', async () => {
+  const v11 = createOneBotProtocol(configuration(11, 'ws://127.0.0.1:1'));
+  const parsed = oneBotContent([{ type: 'at', data: { qq: '22' } }, { type: 'text', data: { text: ' 在吗' } }], '900', 11);
+  expect(parsed.content).toBe('@22  在吗');
+  expect(parsed.segments).toEqual([{ type: 'mention', id: '22' }, { type: 'text', text: ' 在吗' }]);
+  const calls: unknown[] = [];
+  const hydrated = await v11.hydrate({ id: 'mention', authorId: '11', channelId: 'group:30', direct: false, ...parsed },
+    async action => { calls.push(action); return { card: '阿猫', nickname: '猫猫' }; });
+  expect(calls).toEqual([{ action: 'get_group_member_info', params: { group_id: 30, user_id: 22 } }]);
+  expect(hydrated.segments).toEqual([{ type: 'mention', id: '22', name: '阿猫' }, { type: 'text', text: ' 在吗' }]);
+  expect(hydrated.content).toBe('@22（阿猫）  在吗');
+  const self = oneBotContent([{ type: 'at', data: { qq: '900' } }], '900', 11);
+  expect(self).toMatchObject({ mentioned: true, segments: [], content: '' });
+});
+
 test('OneBot 消息编号与事件编号分离，回复和回执按各版本使用真实编号', () => {
   const v11 = createOneBotProtocol(configuration(11, 'ws://127.0.0.1:1'));
   const received = v11.inbound({ post_type: 'message', message_type: 'group', self_id: 900, user_id: 11, group_id: 30, message_id: -101, message: [] }, '900');

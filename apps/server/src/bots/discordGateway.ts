@@ -7,6 +7,12 @@ import type { BotChannel, BotGateway, BotInbound, BotInteraction, BotReply, BotR
 export type DiscordInbound = BotInbound;
 export type DiscordGateway = BotGateway;
 
+/** 只放行正文里显式写出的用户 ID；@everyone、@here 与角色提及保持关闭。 */
+function allowedMentions(content?: string) {
+  const users = [...new Set(Array.from(content?.matchAll(/<@!?(\d{1,20})>/g) ?? [], match => match[1]))].slice(0, 100);
+  return { parse: [] as const, repliedUser: false, ...(users.length ? { users } : {}) };
+}
+
 /** Only authenticated Gateway events reach the application identity resolver. */
 export class DiscordJsGateway implements DiscordGateway {
   private client?: Client;
@@ -117,14 +123,14 @@ export class DiscordJsGateway implements DiscordGateway {
     if (!channel?.isSendable()) throw new BotDeliveryError('这个 Discord 频道目前无法接收消息。', 'rejected');
     const message = await channel.send({ content: reply.content, files: reply.files?.map(file => ({ name: file.name, attachment: Buffer.from(file.data) })),
       ...(reply.replyToMessageId ? { reply: { messageReference: reply.replyToMessageId, failIfNotExists: false } } : {}),
-      ...(nonce ? { nonce, enforceNonce: true } : {}), allowedMentions: { parse: [], repliedUser: false } });
+      ...(nonce ? { nonce, enforceNonce: true } : {}), allowedMentions: allowedMentions(reply.content) });
     return { id: message.id };
   }
   async editReply(channelId: string, messageId: string, reply: BotReply) {
     const channel = await this.ready().channels.fetch(channelId);
     if (!channel?.isSendable()) throw new Error('这个 Discord 频道目前无法编辑消息。');
     await channel.messages.edit(messageId, { content: reply.content, attachments: [],
-      files: reply.files?.map(file => ({ name: file.name, attachment: Buffer.from(file.data) })), allowedMentions: { parse: [], repliedUser: false } });
+      files: reply.files?.map(file => ({ name: file.name, attachment: Buffer.from(file.data) })), allowedMentions: allowedMentions(reply.content) });
   }
   async deleteReply(channelId: string, messageId: string) {
     const channel = await this.ready().channels.fetch(channelId);

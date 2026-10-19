@@ -3,7 +3,7 @@ import { BlockList, isIP } from 'node:net';
 import type { PlatformMessage } from '@graycode/contracts';
 import type { BotAttachment, BotInbound, BotReference } from './gateway';
 import type { BotDocument } from './documents';
-import { formatBotSourceHeader } from '../../../../shared/botMessagePresentation';
+import { formatBotMention, formatBotSourceHeader } from '../../../../shared/botMessagePresentation';
 
 export function imageMime(bytes: Uint8Array): string | undefined {
   const buffer = Buffer.from(bytes);
@@ -106,6 +106,7 @@ export async function botInboundParts(message: BotInbound, platform: 'discord' |
     if (source.segments) {
       for (const segment of source.segments) {
         if (segment.type === 'text') parts.push({ text: segment.text });
+        else if (segment.type === 'mention') parts.push({ text: formatBotMention(segment.id, segment.name) });
         else if (segment.type === 'attachment') {
           const attachment = source.attachments?.[segment.index];
           if (attachment) parts.push(...await attachmentParts(attachment));

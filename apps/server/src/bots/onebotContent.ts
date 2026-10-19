@@ -1,4 +1,5 @@
 import type { BotAttachment, BotReference, BotMessageSegment } from './gateway';
+import { formatBotMention } from '../../../../shared/botMessagePresentation';
 
 const decode = (text: string) => text.replace(/&#44;/g, ',').replace(/&#91;/g, '[').replace(/&#93;/g, ']').replace(/&amp;/g, '&');
 export function oneBotSegments(value: unknown): Array<{ type: string; data: Record<string, any> }> {
@@ -51,7 +52,13 @@ export function oneBotContent(value: unknown, botId: string, version: 11 | 12, d
     if (segment.type === 'text' && typeof data.text === 'string') text(data.text);
     else if (segment.type === 'at' || segment.type === 'mention') {
       const id = String(version === 11 ? data.qq : data.user_id);
-      if (id === botId) mentioned = true; else text(` @${id} `);
+      if (id === botId) mentioned = true;
+      else {
+        // 部分实现会在 at 段附带 name；没有时由 hydrate 用群成员接口补齐。
+        const name = [data.name, data.card, data.nickname].find((value): value is string => typeof value === 'string' && !!value.trim())?.trim();
+        segments.push({ type: 'mention', id, ...(name ? { name } : {}) });
+        content += ` ${formatBotMention(id, name)} `;
+      }
     } else if (['image', 'record', 'voice', 'audio', 'video', 'file'].includes(segment.type)) {
       segments.push({ type: 'attachment', index: attachments.length });
       // NapCat 的文件、语音和视频段把原文件名放在 file 字段；图片仍按内容识别格式。

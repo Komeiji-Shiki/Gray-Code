@@ -8,6 +8,12 @@ export function formatBotTimestamp(value: unknown): string | undefined {
   return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())} UTC${offset < 0 ? '-' : '+'}${pad(Math.floor(Math.abs(offset) / 60))}:${pad(Math.abs(offset) % 60)}`;
 }
 
+/** QQ 号在前、昵称在后：号码能稳定区分同名用户，昵称让模型知道在说谁。 */
+export function formatBotMention(id: string, name?: string): string {
+  if (id === 'all') return '@全体成员';
+  return name ? `@${id}（${name}）` : `@${id}`;
+}
+
 export function formatBotSourceHeader(label: string, source: { displayName?: unknown; timestamp?: unknown }): string {
   const fields = [label];
   if (typeof source.displayName === 'string' && source.displayName.trim()) fields.push(JSON.stringify(source.displayName));

@@ -6,7 +6,8 @@ export const DEFAULT_ONEBOT_OUTPUT: BotOutputSettings = { streaming: false, upda
 
 export const DEFAULT_BOT_ENVIRONMENT: BotEnvironmentEntry = {
   enabled: true,
-  content: '当前交流环境：{{$BOT_CONTEXT}}\n请按当前消息平台的习惯组织回复。需要长期保留的资料，可以在本会话工作区维护 MEMORY.md 等文件，或使用已经提供的记忆工具。',
+  content: '当前交流环境：{{$BOT_CONTEXT}}\n请按当前消息平台的习惯组织回复。需要长期保留的资料，可以在本会话工作区维护 MEMORY.md 等文件，或使用已经提供的记忆工具。'
+    + '\n在 Discord 里需要 @ 某人时，直接写 <@用户ID>（例如 <@123456789012345678>）。ID 只能取自消息正文里已有的提及，不要编造，也不要尝试 @everyone、@here 或角色。',
   identityTemplate: '[本轮发言身份：{{$TASK_CONTEXT}}]',
 };
 /** QQ 不渲染 Markdown、群聊节奏快，OneBot 会话未单独设置环境条目时使用这份说明。 */
