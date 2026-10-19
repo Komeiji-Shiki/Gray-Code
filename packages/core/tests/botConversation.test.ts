@@ -420,12 +420,18 @@ describe('Bot 频道上下文、附件与定时总结', () => {
     expect(JSON.stringify(unavailable)).toContain('未读取，附件失效');
     await expect(downloadBotAttachment({ name: 'x.txt', url: 'http://127.0.0.1/private' }, 'discord')).rejects.toThrow('平台 CDN');
   });
-  test('QQ NT 图片地址可以下载，仿冒后缀的主机仍被拒绝', async () => {
+  test('QQ NT 图片与私聊文件的公网 HTTP 地址可以下载，仿冒后缀、内网和回环地址仍被拒绝', async () => {
     const fetch = jest.spyOn(globalThis, 'fetch').mockImplementation(async () => new Response(Buffer.from('png')));
     try {
       await expect(downloadBotAttachment({ name: 'a.png', url: 'https://multimedia.nt.qq.com.cn/download?fileid=x' }, 'onebot')).resolves.toHaveLength(3);
-      await expect(downloadBotAttachment({ name: 'a.png', url: 'https://qq.com.cn.example.com/a.png' }, 'onebot')).rejects.toThrow('平台 CDN');
-      expect(fetch).toHaveBeenCalledTimes(1);
+      await expect(downloadBotAttachment({ name: 'a.txt', url: 'http://183.47.102.7:80/ftn_handler/ab?fname=a.txt' }, 'onebot')).resolves.toHaveLength(3);
+      for (const url of ['https://qq.com.cn.example.com/a.png', 'http://127.0.0.1:3001/a.txt', 'http://2130706433/a.txt', 'http://192.168.1.2/a.txt',
+        'http://100.64.0.1/a.txt', 'http://qq.com/a.txt', 'http://user:pass@183.47.102.7/a.txt'])
+        await expect(downloadBotAttachment({ name: 'a.txt', url }, 'onebot')).rejects.toThrow('平台 CDN');
+      await expect(downloadBotAttachment({ name: 'a.txt', url: 'http://183.47.102.7/a.txt' }, 'discord')).rejects.toThrow('平台 CDN');
+      expect(fetch).toHaveBeenCalledTimes(2);
     } finally { fetch.mockRestore(); }
+    const file = oneBotContent([{ type: 'file', data: { file: '需求说明.md', file_id: 'uuid', file_size: '12', url: 'http://183.47.102.7/x' } }], '900', 11);
+    expect(file.attachments[0]).toMatchObject({ name: '需求说明.md', fileId: 'uuid', size: 12 });
   });
 });

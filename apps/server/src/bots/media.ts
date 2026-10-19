@@ -1,3 +1,4 @@
+import { BlockList, isIP } from 'node:net';
 import type { PlatformMessage } from '@graycode/contracts';
 import type { BotAttachment, BotInbound, BotReference } from './gateway';
 import type { BotDocument } from './documents';
@@ -11,14 +12,23 @@ function imageMime(bytes: Uint8Array): string | undefined {
   if (buffer.subarray(0, 4).toString() === 'RIFF' && buffer.subarray(8, 12).toString() === 'WEBP') return 'image/webp';
   return undefined;
 }
-/** 仅接受消息平台提供的附件 CDN，不携带账号凭据，不读取任意 URL 或本地路径。 */
+// QQ NT 的图片地址在 multimedia.nt.qq.com.cn，不属于 qq.com 后缀。
+const attachmentCdn = { discord: ['cdn.discordapp.com', 'media.discordapp.net'], onebot: ['qq.com', 'qq.com.cn', 'qpic.cn', 'gtimg.cn'] };
+const reservedIPv4 = new BlockList();
+for (const [address, prefix] of [['0.0.0.0', 8], ['10.0.0.0', 8], ['100.64.0.0', 10], ['127.0.0.0', 8], ['169.254.0.0', 16],
+  ['172.16.0.0', 12], ['192.0.0.0', 24], ['192.168.0.0', 16], ['198.18.0.0', 15], ['224.0.0.0', 3]] as const) reservedIPv4.addSubnet(address, prefix, 'ipv4');
+function trustedAttachmentUrl(url: URL, platform: 'discord' | 'onebot'): boolean {
+  if (url.username || url.password) return false;
+  // NapCat 给私聊文件的是 QQ 文件服务器的 http://公网 IPv4:端口；内网、回环与保留地址仍拒绝，附件不能用来访问本机或局域网服务。
+  if (platform === 'onebot' && isIP(url.hostname) === 4) return ['http:', 'https:'].includes(url.protocol) && !reservedIPv4.check(url.hostname, 'ipv4');
+  if (url.protocol !== 'https:' || url.port && url.port !== '443') return false;
+  return attachmentCdn[platform].some(domain => url.hostname === domain || platform === 'onebot' && url.hostname.endsWith('.' + domain));
+}
+/** 仅接受消息平台提供的附件地址，不携带账号凭据，不读取任意 URL 或本地路径。 */
 export async function downloadBotAttachment(attachment: BotAttachment, platform: 'discord' | 'onebot'): Promise<Uint8Array> {
   if (!attachment.url) throw new Error('平台没有提供可下载的附件地址');
   const url = new URL(attachment.url);
-  // QQ NT 的图片地址在 multimedia.nt.qq.com.cn，不属于 qq.com 后缀。
-  const allowed = platform === 'discord' ? ['cdn.discordapp.com', 'media.discordapp.net'] : ['qq.com', 'qq.com.cn', 'qpic.cn', 'gtimg.cn'];
-  if (url.protocol !== 'https:' || url.username || url.password || url.port && url.port !== '443'
-    || !allowed.some(domain => url.hostname === domain || platform === 'onebot' && url.hostname.endsWith('.' + domain))) throw new Error('附件地址不是受支持的平台 CDN');
+  if (!trustedAttachmentUrl(url, platform)) throw new Error('附件地址不是受支持的平台 CDN');
   const limit = /\.(txt|md|markdown)$/i.test(attachment.name) ? 32 * 1024 * 1024 : 12 * 1024 * 1024;
   if (attachment.size && attachment.size > limit) throw new Error(`附件超过 ${limit / 1024 / 1024} MiB 读取上限`);
   const response = await fetch(url, { redirect: 'error', signal: AbortSignal.timeout(20000) });

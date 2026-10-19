@@ -54,7 +54,9 @@ export function oneBotContent(value: unknown, botId: string, version: 11 | 12, d
       if (id === botId) mentioned = true; else text(` @${id} `);
     } else if (['image', 'record', 'voice', 'audio', 'video', 'file'].includes(segment.type)) {
       segments.push({ type: 'attachment', index: attachments.length });
-      attachments.push({ name: data.name || data.file_name || (segment.type === 'image' ? 'image.png' : segment.type),
+      // NapCat 的文件、语音和视频段把原文件名放在 file 字段；图片仍按内容识别格式。
+      const fileName = segment.type !== 'image' && typeof data.file === 'string' && !data.file.includes('://') ? data.file.split(/[\\/]/).pop() : undefined;
+      attachments.push({ name: data.name || data.file_name || fileName || (segment.type === 'image' ? 'image.png' : segment.type),
         url: typeof data.url === 'string' ? data.url : typeof data.file === 'string' && /^https?:\/\//.test(data.file) ? data.file : undefined,
         fileId: String(data.file_id ?? data.file ?? ''), size: Number(data.file_size ?? data.size) || undefined,
         contentType: segment.type === 'image' ? 'image/*' : undefined });
