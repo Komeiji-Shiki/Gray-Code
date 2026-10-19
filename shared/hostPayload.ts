@@ -16,7 +16,8 @@ export function prepareHostPayload<T>(value: T, toRaw: (value: object) => object
     if (input === null || typeof input !== 'object') return input;
     const raw = toRaw(input);
     const prototype = Object.getPrototypeOf(raw);
-    if (!Array.isArray(raw) && prototype !== Object.prototype && prototype !== null) {
+    // 桌面设置由外层页面经隔离桥返回，原型是另一个窗口的 Object.prototype；按原型链判断普通对象，才能继续解开其中嵌套的代理。
+    if (!Array.isArray(raw) && prototype !== null && Object.getPrototypeOf(prototype) !== null) {
       if (parent && raw !== input) copyNode(parent);
       return raw;
     }
