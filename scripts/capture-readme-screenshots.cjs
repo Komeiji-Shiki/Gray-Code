@@ -417,7 +417,7 @@ function createOneBotServer(sent) {
   server.on('connection', client => client.on('message', raw => {
     const action = JSON.parse(raw.toString());
     let data = {};
-    if (action.action === 'get_login_info') data = { user_id: 10001, nickname: '灰魂' };
+    if (action.action === 'get_login_info') data = { user_id: 10001, nickname: 'Gray' };
     else if (action.action === 'get_group_info') data = { group_id: 70001, group_name: 'GrayCode 用户群', member_count: 233 };
     else if (action.action === 'get_group_member_info') data = { user_id: 20002, nickname: '竹林', card: '竹林' };
     else if (action.action.startsWith('send_')) {
@@ -531,7 +531,7 @@ async function main() {
   };
   const clickText = (selector, text) => evaluate(`Array.from(document.querySelectorAll(${JSON.stringify(selector)}))
     .find(node => node.textContent.trim() === ${JSON.stringify(text)}).click()`);
-  const capture = async name => {
+  const capture = async (name, directory = assets) => {
     await evaluate(maskPathsSource);
     await chat(maskPathsSource);
     await evaluate('new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))');
@@ -558,7 +558,7 @@ async function main() {
       for (const overlay of ${JSON.stringify(overlays)}) context.drawImage(await load(overlay.url), overlay.x, overlay.y, overlay.width, overlay.height);
       return canvas.toDataURL('image/png');
     })()`);
-    fs.writeFileSync(path.join(assets, name), Buffer.from(png.split(',')[1], 'base64'));
+    fs.writeFileSync(path.join(directory, name), Buffer.from(png.split(',')[1], 'base64'));
     process.stdout.write(`captured ${name}\n`);
   };
   const record = name => (recording ? startRecording(window, name) : () => {});
@@ -682,6 +682,25 @@ async function main() {
   stop();
   await capture('bot.png');
 
+  // 演示预设：按条目拼装的「编程搭档」，含聊天历史插入点、伪造思考和一条关闭的条目；在全部任务之后设为默认，不影响前面的请求截图。
+  await ui('ui.settings.begin');
+  const { modes, currentModeId } = await ui('getPromptModes');
+  const presetId = 'coding-partner';
+  const promptEntries = [
+    { name: '角色设定', role: 'system', content: '你是一位冷静可靠的软件工程师。回答简洁直接，结论要有证据。' },
+    { name: '运行环境', role: 'system', content: '{{$ENVIRONMENT}}\n\n{{$WORKSPACE_FILES}}' },
+    { name: '工作方式', role: 'system', content: '改代码前先搜索并读取相关文件；改完运行测试；不确定的地方说明依据。' },
+    { name: '长期记忆', role: 'system', content: '{{$MEMORY}}', enabled: false },
+    { name: 'Chat History', type: 'chat_history', role: 'system', content: '' },
+    { name: '开场示范', role: 'assistant', content: '收到，我先看看项目结构。', fakeThought: '用户要改登录接口，先定位路由和测试，再决定改法。' },
+    { name: '回合提醒', role: 'user', content: '回答前确认：本轮改动有没有测试覆盖？' },
+  ].map((entry, order) => ({ id: `demo-entry-${order}`, enabled: true, ...entry, order }));
+  const baseMode = modes.find(mode => mode.id === currentModeId) ?? modes[0];
+  await ui('savePromptMode', { mode: { ...baseMode, id: presetId, name: '编程搭档', promptAssemblyMode: 'entries', promptEntries } });
+  await ui('setCurrentPromptMode', { modeId: presetId });
+  await ui('ui.settings.save');
+  await ui('ui.settings.end');
+
   // 设置页：OneBot 的真实连接状态，以及 Discord 的默认回复配置。
   await rpc('ui.command', { command: 'showSettings' });
   await until(() => chat('!!document.querySelector(".settings-panel")'), 'settings panel');
@@ -695,6 +714,34 @@ async function main() {
   await chat(`Array.from(document.querySelectorAll('[role=tab], .settings-panel button')).find(node => node.textContent.trim() === '默认回复').click()`);
   await sleep(900);
   await capture('discord-settings.png');
+
+  // 提示词：演示预设的条目编辑器。条目卡片较高，宣传素材另拍一张拉高窗口的完整列表（只放 .tmp）；
+  // 手册截图停在「关闭的条目 → Chat History → 带伪造思考的 assistant 条目」这一段；录制时演示打开一条、调整顺序。
+  await openSettings('提示词');
+  await until(() => chat('document.querySelectorAll(".prompt-entries-editor .entry-card").length > 5'), 'prompt entries');
+  const card = name => `Array.from(document.querySelectorAll('.prompt-entries-editor .entry-card'))
+    .find(node => node.querySelector('.entry-name-input')?.value === ${JSON.stringify(name)})`;
+  window.setContentSize(1600, 2500);
+  await sleep(900);
+  await chat('document.querySelector("[data-search-anchor=prompt-mode-selector]").scrollIntoView({ block: "start" })');
+  await capture('prompt-entries-full.png', output);
+  window.setContentSize(1600, 1000);
+  await sleep(900);
+  await chat(`${card('长期记忆')}.scrollIntoView({ block: 'start' })`);
+  await sleep(600);
+  stop = record('prompt');
+  await capture('prompt-entries.png');
+  if (recording) {
+    await sleep(800);
+    await chat(`${card('长期记忆')}.querySelector('.entry-enabled input').click()`);
+    await sleep(1200);
+    await chat(`${card('开场示范')}.querySelectorAll('.entry-buttons .icon-btn')[0].click()`);
+    await sleep(1200);
+  }
+  stop();
+  // 退出前像用户一样收尾：撤销演示改动的设置草稿、断开 OneBot，否则退出时会弹出确认框卡住脚本。
+  await chat('document.querySelector(".platform-settings-footer > button:not(.primary):not(:disabled)")?.click()');
+  await rpc('onebot.stop');
 
   modelServer.closeAllConnections();
   modelServer.close();

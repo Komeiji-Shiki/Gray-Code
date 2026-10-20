@@ -119,7 +119,7 @@ build:desktop:trial 与各 package-only 参数用于快速编译，不是完整�
 
 ## 文档与发行
 
-README 介绍当前产品入口，wiki/ 保存可随源码审阅的详细手册，PROJECT_STRUCTURE 描述真实依赖边界。可复现截图使用合成内容并放在 wiki/assets：桌面构建后运行 `npx electron scripts/capture-readme-screenshots.cjs`，脚本在隔离数据目录中用脚本化模型端点、假 DeepSeek 搜索端和假 NapCat 端重放编码、网页操控与 QQ Bot 任务并重新生成这些截图，界面中的本机路径会替换成虚构目录。加 `--record` 时同时把各场景录成 `.tmp/readme-shots/*.mp4`（需要 ffmpeg），供宣传素材剪辑。新协议依赖同步保存原始许可，见[来源记录](resources/licenses/README.md)。
+README 介绍当前产品入口，wiki/ 保存可随源码审阅的详细手册，PROJECT_STRUCTURE 描述真实依赖边界。可复现截图使用合成内容并放在 wiki/assets：桌面构建后运行 `npx electron scripts/capture-readme-screenshots.cjs`，脚本在隔离数据目录中用脚本化模型端点、假 DeepSeek 搜索端和假 NapCat 端重放编码、网页操控与 QQ Bot 任务、建立演示用的预设提示词条目，并重新生成这些截图，界面中的本机路径会替换成虚构目录。加 `--record` 时同时把各场景录成 `.tmp/readme-shots/*.mp4`（需要 ffmpeg），供宣传素材剪辑。新协议依赖同步保存原始许可，见[来源记录](resources/licenses/README.md)。
 
 `Nightly Build` 工作流从 2026-10-01 起，每隔两天在北京时间 10:17 打包默认分支的最新 Windows x64 桌面版，跨月仍按连续两天计算。Actions 每天进行一次日期判断，仅在构建日安装依赖和打包；维护者也可通过 `Run workflow` 随时手动构建。
 
