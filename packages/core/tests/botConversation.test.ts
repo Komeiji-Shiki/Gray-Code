@@ -177,17 +177,22 @@ describe('Bot 频道上下文、附件与定时总结', () => {
   test('未 @ 背景、五分钟分组、忙时排队和实际身份共同保留，重连不换会话', async () => {
     const time = Date.now();
     await app.discord.receive(inbound('a', 'unbound', false, time));
-    const read = app.conversations.read.bind(app.conversations);
-    let captured: Awaited<ReturnType<typeof read>> | undefined;
-    const reading = jest.spyOn(app.conversations, 'read').mockImplementationOnce(async (...args) => {
-      captured = await read(...args);
-      Object.freeze(captured.history.messages[0].parts); Object.freeze(captured.history.messages[0].botMessageIds);
-      return captured;
+    const read = app.storage.readHistory.bind(app.storage);
+    let tail: PlatformMessage | undefined;
+    const reading = jest.spyOn(app.storage, 'readHistory').mockImplementationOnce(async (...args) => {
+      const page = await read(...args);
+      tail = page.messages.at(-1)!;
+      Object.freeze(tail.parts); Object.freeze(tail.botMessageIds);
+      return page;
     });
+    const committing = jest.spyOn(app.storage, 'commitConversation');
     try {
       await app.discord.receive(inbound('b', 'unbound', false, time + 300000));
-      expect(captured!.history.messages[0].botMessageIds).toEqual(['a']);
-    } finally { reading.mockRestore(); }
+      expect(tail!.botMessageIds).toEqual(['a']);
+      // 背景消息并入尾部时只按位置更新这一条，不读取或替换整段历史。
+      expect(committing.mock.calls.map(([commit]) => [commit.messages, commit.messageUpdates?.map(update => update.index), commit.appendMessages]))
+        .toEqual([[undefined, [0], undefined]]);
+    } finally { reading.mockRestore(); committing.mockRestore(); }
     await app.discord.receive(inbound('c', 'unbound', false, time + 600001));
     await app.discord.receive(inbound('d', '10', false, time + 600002));
     const snapshot = await app.discord.sessions.snapshot(context()); const id = snapshot.conversation!.id;

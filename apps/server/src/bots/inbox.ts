@@ -3,9 +3,6 @@ import type { PlatformApplication } from '../application';
 import type { BotInbound } from './gateway';
 import { botKey, type BotContext, type BotSessions } from './sessions';
 import { BOT_MESSAGE_MERGE_GAP_MS } from '../../../../shared/botConversation';
-import { branchMutation, groupMessages, readBranches } from '../conversations/branches';
-import { rebaseActivePathFromHistory } from '../../../../backend/modules/conversation/branch/BranchGraph';
-import type { Content } from '../../../../backend/modules/conversation/types';
 import { botMessagePolicy } from './config';
 
 export interface BotInboxItem {
@@ -99,32 +96,37 @@ export class BotInbox {
     }
     if (count) {
       const batch = items.slice(0, count);
-      const state = await this.app.conversations.read(this.sessions.owner().id, conversationId);
-      const messages = state.history.messages.map(message => ({ ...message }));
+      // 背景消息只会并入最后一条或追加到末尾，只读尾消息并按位置增量提交，群聊历史再长也不复制整段。
+      // 分支记录不必随之改写：读取分支时按主历史重建当前路径，与运行时追加回复相同。
+      const page = await this.app.storage.readHistory(conversationId, { limit: 1 });
+      const tail = page.messages[0] && { ...page.messages[0] };
+      const appended: PlatformMessage[] = [];
       let mergedTail: PlatformMessage | undefined;
+      let tailMerged = false;
       for (const item of batch) {
-        const last = messages.at(-1);
+        const last = appended.at(-1) ?? tail;
         const delta = Number(item.message.timestamp) - Number(last?.botLastTimestamp);
         if (item.mergeable && last?.botPassive === true && last.botMergeable === true && last.botAuthorId === item.context.authorId
           && delta >= 0 && delta <= BOT_MESSAGE_MERGE_GAP_MS && !last.isSummarized) {
           // 只为本批实际合并的尾部取得可写数组，旧正文和附件继续按只读数据复用。
           if (last !== mergedTail) {
             last.parts = [...last.parts]; last.botMessageIds = [...last.botMessageIds as string[]]; mergedTail = last;
+            tailMerged ||= last === tail;
           }
           last.parts.push(...item.message.parts);
           (last.botMessageIds as string[]).push(item.context.id);
           last.botLastTimestamp = item.message.timestamp;
-        } else messages.push({ ...item.message, botPassive: true, botMergeable: item.mergeable });
+        } else appended.push({ ...item.message, index: page.total + appended.length, parentId: last?.id ?? null,
+          botPassive: true, botMergeable: item.mergeable });
       }
-      messages.forEach((message, index) => { message.index = index; message.parentId = messages[index - 1]?.id ?? null; });
-      const branches = readBranches(state);
-      branches.graph = rebaseActivePathFromHistory(branches.graph, messages as Content[], { allowRootChange: true });
-      Object.assign(branches.groups, groupMessages(messages));
       const inboxState = await this.app.storage.getVersionedRecord(botInboxStateNamespace, conversationId);
-      await this.app.conversations.commit({ state, commit: { messages,
-        records: [...batch.flatMap(item => this.consumed(item)), branchMutation(state, branches, messages), {
+      const result = await this.app.storage.commitConversation({ conversationId, expectedRevision: page.revision,
+        ...(tailMerged ? { messageUpdates: [{ index: page.total - 1, message: tail! }] } : {}),
+        ...(appended.length ? { appendMessages: appended } : {}),
+        records: [...batch.flatMap(item => this.consumed(item)), {
           namespace: botInboxStateNamespace, id: conversationId, expectedRevision: inboxState.revision,
-          value: { ...inboxState.value as BotInboxState, pendingTriggers: items.slice(count).filter(item => item.trigger).length } }] } });
+          value: { ...inboxState.value as BotInboxState, pendingTriggers: items.slice(count).filter(item => item.trigger).length } }] });
+      this.app.publish({ type: 'conversation.changed', conversationId, revision: result.revision });
     }
     const next = items[count];
     if (next) {
