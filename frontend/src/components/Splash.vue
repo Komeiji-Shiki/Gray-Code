@@ -312,22 +312,23 @@ onBeforeUnmount(() => {
   animation: ink-in 0.5s ease-out both;
 }
 
-.fill-body {
+/* 延迟写在比 .fills path 更具体的选择器里，否则上面的 animation 简写会把延迟重置为 0，色块在描线开始时就出现。 */
+.fills .fill-body {
   fill: var(--ink-body);
   animation-delay: 1.6s;
 }
 
-.fill-hair {
+.fills .fill-hair {
   fill: var(--ink-hair);
   animation-delay: 1.6s;
 }
 
-.fill-face {
+.fills .fill-face {
   fill: var(--paper);
   animation-delay: 1.6s;
 }
 
-.fill-cap {
+.fills .fill-cap {
   fill: var(--ink-cap);
   animation-delay: 1.75s;
 }
@@ -539,9 +540,11 @@ onBeforeUnmount(() => {
   87.5%, 100% { opacity: 0.12; }
 }
 
-/* ready：三位归一，合并为蓝色实线（一次性闪光，覆盖 fade-up 入场动画） */
+/* ready：三位归一，合并为蓝色实线（一次性闪光，覆盖 fade-up 入场动画）。
+   换掉 fade-up 后它保持的透明度随之失效，基础值是 0，需要显式写出可见。 */
 .gray-line.is-ready {
   gap: 0;
+  opacity: 1;
   animation: line-flash 0.45s ease;
 }
 
