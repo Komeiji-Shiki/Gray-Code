@@ -11,6 +11,8 @@
 | [apps/desktop/src/requests.ts](apps/desktop/src/requests.ts) | 桌面请求处理、兼容入口、权限与退出阶段声明 |
 | [apps/server/src/application.ts](apps/server/src/application.ts) | 平台服务组合根与生命周期 |
 | [apps/server/src/main.ts](apps/server/src/main.ts) | 独立 CLI、Web 服务与存储命令 |
+| [apps/server/src/control/server.ts](apps/server/src/control/server.ts) | 外部应用控制接口：令牌认证、REST、SSE 与 RPC 透传 |
+| [apps/server/src/speech/service.ts](apps/server/src/speech/service.ts) | 语音合成：Fish Audio、Qwen、OpenAI 兼容接口与 Windows 本机语音 |
 | [packages/core/src/runtime/runtime.ts](packages/core/src/runtime/runtime.ts) | 模型/工具循环、运行状态、确认、取消与结果保存 |
 | [packages/core/src/storage/database.ts](packages/core/src/storage/database.ts) | 数据库、事务、历史与记录操作 |
 | [apps/client/src/App.vue](apps/client/src/App.vue) | 工作台外壳、当前项目/会话与面板 |
@@ -52,7 +54,7 @@ packages/core 不导入 Electron、VS Code、frontend 或 backend。构建脚本
 | --- | --- |
 | packages/contracts | 会话、运行、配置、电脑、浏览器、节点、ACP 和首批 RPC 类型与字段校验 |
 | packages/core | 运行核心、内容存储、备份、历史、角色工作线程与记忆索引 |
-| apps/server | 模型适配、提示词、工作区、Git、终端、MCP、ACP、Bot、节点和自动任务 |
+| apps/server | 模型适配、提示词、工作区、Git、终端、MCP、ACP、Bot、节点、自动任务、外部控制接口与语音合成 |
 | apps/desktop | Electron 窗口、内置浏览器、电脑捕获、预加载、安装更新与数据位置 |
 | apps/client | 桌面/Web 外壳、文件树、编辑器、面板与远程控制界面 |
 | frontend | 聊天、设置、角色与工具结果界面 |

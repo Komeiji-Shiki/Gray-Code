@@ -130,6 +130,31 @@ export class ProductUi {
       this.app.requireOwner(client.actorId);
       return type === 'platform.clawd.check' ? this.app.clawd.check() : this.app.clawd.status();
     }
+    if (type.startsWith('platform.controlApi.')) {
+      this.app.requireOwner(client.actorId);
+      if (!this.app.controlApi) throw new Error('当前启动方式未提供外部控制接口。');
+      if (type === 'platform.controlApi.status') return this.app.controlApi.status();
+      if (type === 'platform.controlApi.token') {
+        return { token: await this.app.controlApi.accessToken() };
+      }
+      if (type === 'platform.controlApi.start') return this.app.controlApi.start();
+      if (type === 'platform.controlApi.stop') { this.app.controlApi.stop(); return { success: true }; }
+      throw new Error('未知外部控制接口操作。');
+    }
+    if (type.startsWith('speech.')) {
+      this.app.requireOwner(client.actorId);
+      if (type === 'speech.status') return this.app.speech.status();
+      if (type === 'speech.credential') {
+        const provider = String(data.provider ?? '');
+        if (!['fish', 'openai', 'qwen'].includes(provider)) return { token: '' };
+        const saved = this.app.settings.read('speech').speech;
+        const reference = saved?.provider === provider && saved.credentialRef ? saved.credentialRef : `speech_${provider}_key`;
+        return { token: await this.app.settings.credential(reference) ?? '' };
+      }
+      if (type === 'speech.synthesize') return this.app.speech.synthesize(data as { text: string; voice?: string; speed?: number; format?: 'mp3' | 'wav' | 'opus' }, client.actorId);
+      if (type === 'speech.clone') return this.app.speech.clone(data as import('@graycode/contracts').SpeechCloneInput, client.actorId);
+      throw new Error('未知语音操作。');
+    }
     if (type.startsWith('platform.remote.')) {
       this.app.requireOwner(client.actorId);
       if (!this.app.remoteAccess) throw new Error('当前启动方式未提供远程连接管理。');

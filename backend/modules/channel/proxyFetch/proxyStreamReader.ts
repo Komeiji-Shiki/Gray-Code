@@ -29,7 +29,7 @@ export async function* readProxyStreamBody(
 ): AsyncGenerator<string> {
     // 发送请求
     const body = init.body || '';
-    const bodyBuffer = Buffer.from(body, 'utf8');
+    const bodyBuffer = typeof body === 'string' ? Buffer.from(body, 'utf8') : Buffer.from(body);
 
     const requestLine = `${init.method} ${targetUrl.pathname}${targetUrl.search} HTTP/1.1\r\n`;
 

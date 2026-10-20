@@ -355,6 +355,17 @@ describe('createProxyFetch（无代理）', () => {
         expect(headers.get('authorization')).toBe('Bearer test-key');
     });
 
+    test('二进制 body 原样传给原生 fetch', async () => {
+        const fetchMock = makeFetchMock();
+        global.fetch = fetchMock as any;
+        const body = new Uint8Array([0, 1, 127, 255]);
+
+        await createProxyFetch()('https://api.example.com/upload', { method: 'POST', body });
+
+        const [, init] = fetchMock.mock.calls[0];
+        expect(init?.body).toBe(body);
+    });
+
     test('调用方显式传入的 User-Agent 优先生效', async () => {
         const fetchMock = makeFetchMock();
         global.fetch = fetchMock as any;

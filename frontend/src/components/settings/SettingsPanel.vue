@@ -60,6 +60,8 @@ const PlatformIntegrationSettings = defineAsyncComponent(() => import('./Platfor
 const PlatformMigrationSettings = defineAsyncComponent(() => import('./PlatformMigrationSettings.vue'))
 const DiscordSettings = defineAsyncComponent(() => import('./DiscordSettings.vue'))
 const PlatformRemoteSettings = defineAsyncComponent(() => import('./PlatformRemoteSettings.vue'))
+const ControlApiSettings = defineAsyncComponent(() => import('./ControlApiSettings.vue'))
+const SpeechSettings = defineAsyncComponent(() => import('./SpeechSettings.vue'))
 const AppearanceSettings = defineAsyncComponent(() => import('./AppearanceSettings.vue'))
 const CompanionSettings = defineAsyncComponent(() => import('./CompanionSettings.vue'))
 const ClawdSettings = defineAsyncComponent(() => import('./ClawdSettings.vue'))
@@ -113,6 +115,7 @@ const tabGroups = computed<TabGroup[]>(() => [
   ...(isDesktopHost ? [{ id: 'connections', label: t('components.settings.settingsPanel.groups.connections'), tabs: [
     { id: 'workspaces' as const, label: t('desktop.settingsSearch.workspaces'), icon: 'codicon-folder' },
     { id: 'remote' as const, label: t('desktop.settingsSearch.remote'), icon: 'codicon-remote' },
+    { id: 'controlApi' as const, label: t('components.settings.tabs.controlApi'), icon: 'codicon-plug' },
     { id: 'discord' as const, label: 'Discord Bot', icon: 'codicon-comment-discussion' },
     { id: 'onebot' as const, label: 'NapCat / OneBot', icon: 'codicon-radio-tower' },
     { id: 'accounts' as const, label: t('desktop.settingsSearch.accounts'), icon: 'codicon-account' },
@@ -122,6 +125,7 @@ const tabGroups = computed<TabGroup[]>(() => [
     { id: 'general', label: t('components.settings.tabs.general'), icon: 'codicon-settings-gear' },
     { id: 'appearance', label: t('components.settings.tabs.appearance'), icon: 'codicon-paintcan' },
     ...(isDesktopHost ? [{ id: 'companion' as const, label: t('components.settings.companionSettings.title'), icon: 'codicon-heart' }] : []),
+    { id: 'speech', label: t('components.settings.tabs.speech'), icon: 'codicon-unmute' },
     { id: 'sound', label: t('components.settings.tabs.sound'), icon: 'codicon-bell' },
     { id: 'usage', label: t('components.settings.tabs.usage'), icon: 'codicon-graph' },
   ] },
@@ -397,6 +401,7 @@ useDesktopSettingsDraft(saveProxySettings, () => settingsStore.activeTab === 'ge
         <div :key="desktopSettingsDraft.generation" class="settings-main" role="region" :aria-label="tabs.find(tab => tab.id === settingsStore.activeTab)?.label" @input.capture="markDesktopSettingsDirty" @change.capture="markDesktopSettingsDirty">
           <DiscordSettings v-if="isDesktopHost && settingsStore.activeTab === 'discord'" />
           <PlatformRemoteSettings v-if="isDesktopHost && settingsStore.activeTab === 'remote'" />
+          <ControlApiSettings v-if="isDesktopHost && settingsStore.activeTab === 'controlApi'" />
           <PlatformIntegrationSettings v-if="isDesktopHost && ['onebot', 'accounts', 'workspaces'].includes(settingsStore.activeTab)" :key="settingsStore.activeTab" :section="settingsStore.activeTab as 'onebot' | 'accounts' | 'workspaces'" />
           <!-- 渠道设置 -->
           <div v-if="settingsStore.activeTab === 'channel'" class="settings-section">
@@ -481,6 +486,14 @@ useDesktopSettingsDraft(saveProxySettings, () => settingsStore.activeTab === 'ge
             <p class="settings-description">{{ t('components.settings.settingsPanel.sections.subagents.description') }}</p>
             
             <SubAgentsSettings />
+          </div>
+
+          <!-- 语音合成 -->
+          <div v-if="settingsStore.activeTab === 'speech'" class="settings-section">
+            <h4>{{ t('components.settings.settingsPanel.sections.speech.title') }}</h4>
+            <p class="settings-description">{{ t('components.settings.settingsPanel.sections.speech.description') }}</p>
+
+            <SpeechSettings />
           </div>
 
           <!-- 通知系统 -->

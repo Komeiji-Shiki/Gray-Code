@@ -18,6 +18,8 @@ import { computerTools } from './computer/tools';
 import type { ComputerScreenPort, ComputerNativePort } from './computer/port';
 import type { ProcessTreePort } from '../../../backend/tools/terminal/processTree';
 import type { RemoteAccessHost } from './transport/remotePort';
+import type { ControlApiHost } from './control/port';
+import { SpeechService } from './speech/service';
 import { ExecutionNodes } from './nodes/service';
 import { PlatformNotifications } from './notifications';
 import { CompanionService } from './companions/service';
@@ -126,6 +128,7 @@ export interface ApplicationOptions {
   computerNative?: ComputerNativePort;
   terminalProcessTree?: ProcessTreePort;
   remoteAccess?: (application: PlatformApplication) => RemoteAccessHost;
+  controlApi?: (application: PlatformApplication) => ControlApiHost;
 }
 export class PlatformApplication {
   private configurationReady = false;
@@ -137,6 +140,8 @@ export class PlatformApplication {
   readonly browser?: BrowserHost;
   readonly computer: ComputerService;
   readonly remoteAccess?: RemoteAccessHost;
+  readonly controlApi?: ControlApiHost;
+  readonly speech: SpeechService;
   readonly nodes: ExecutionNodes;
   readonly characterPipeline: CharacterPipeline;
   readonly characters: CharacterResources;
@@ -289,6 +294,8 @@ export class PlatformApplication {
     this.terminals = new PlatformTerminals(this, options.terminalProcessTree);
     this.interactiveTerminals = new InteractiveTerminals(this);
     this.remoteAccess = options.remoteAccess?.(this);
+    this.controlApi = options.controlApi?.(this);
+    this.speech = new SpeechService(this);
     this.nodes = new ExecutionNodes(this, options.secretCodec);
     this.tools.register(this.terminals.tool());
     this.tools.register(terminalTaskTool(this.terminals));
@@ -654,6 +661,7 @@ export class PlatformApplication {
       ['工作区搜索', () => this.workspaceSearch?.close()],
       ['自动任务', () => this.automations?.close()],
       ['远程入口', () => this.remoteAccess?.close()],
+      ['外部控制接口', () => this.controlApi?.close()],
       ['Discord 总结', () => this.discord?.summaries.stop()],
       ['OneBot 总结', () => this.onebot?.summaries.stop()],
       ['任务接续', () => this.subagents?.feedback.continuation.close()],

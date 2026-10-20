@@ -1,6 +1,8 @@
 import type { DevelopmentSettings } from './development';
 import type { ExternalAgentProfile } from './externalAgents';
 import type { RemoteAccessSettings } from './remote';
+import type { ControlApiSettings } from './controlApi';
+import type { SpeechSettings } from './speech';
 import type { CharacterChatConfig } from './characters';
 import type {
   ActorIdentity,
@@ -134,6 +136,8 @@ export interface ClawdStatus {
 export interface AppSettings {
   clawd?: ClawdSettings;
   remoteAccess?: RemoteAccessSettings;
+  controlApi?: ControlApiSettings;
+  speech?: SpeechSettings;
   externalAgents?: ExternalAgentProfile[];
   development?: DevelopmentSettings;
   modeProfiles?: Partial<Record<'chat' | 'code' | 'character', { promptModeId?: string; toolNames?: string[] }>>;

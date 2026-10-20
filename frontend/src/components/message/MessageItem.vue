@@ -20,6 +20,7 @@ import { buildResponseViewerData } from './responseViewer/buildResponseViewerDat
 import type { ResponseViewerData } from './responseViewer/buildResponseViewerData'
 import type { Message, CheckpointRecord, Attachment } from '../../types'
 import { useChatStore } from '../../stores/chatStore'
+import { speakMessage, speechEnabled, speechMessageId, speechPlaying, stopSpeech } from '../../composables/useSpeechPlayback'
 import { useI18n } from '../../i18n'
 import { formatTime } from '../../utils/format'
 import type { MessageInputGroupPosition } from './messageListUtils'
@@ -224,6 +225,16 @@ watch(showResponseDialog, (open) => {
   })
 })
 
+const speakableText = computed(() => (agentCardContent.value || props.message.content || '').trim())
+const speaking = computed(() => speechMessageId.value === props.message.id && speechPlaying.value)
+const canSpeak = computed(() => speechEnabled.value && !isUser.value && !isTool.value && !isSummary.value && !isBackgroundTask.value
+  && !isStreaming.value && !!speakableText.value)
+
+function handleSpeak() {
+  if (speaking.value) { stopSpeech(); return }
+  void speakMessage(speakableText.value, props.message.id).catch(error => console.warn('[Speech] 朗读失败：', error))
+}
+
 function handleRetry() {
   emit('retry', props.message.id)
 }
@@ -260,7 +271,10 @@ function handleRestoreAndRetry(checkpointId: string) {
         :can-delete="allowDelete !== false"
         :can-branch="allowBranch !== false && typeof message.backendIndex === 'number' && !isStreaming"
         :can-view-response="!isUser"
+        :can-speak="canSpeak"
+        :speaking="speaking"
         @edit="startEdit"
+        @speak="handleSpeak"
         @copy="handleCopy"
         @delete="handleDelete"
         @retry="handleRetryClick"

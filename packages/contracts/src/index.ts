@@ -8,6 +8,8 @@ export * from './navigation';
 export * from './browser';
 export * from './terminal';
 export * from './remote';
+export * from './controlApi';
+export * from './speech';
 export * from './teams';
 export * from './files';
 export * from './search';

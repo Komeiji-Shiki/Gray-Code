@@ -181,6 +181,7 @@ function receiveDesktopEvent(event: Record<string, any>) {
   if (event.type === 'transport.resumed' && (event.snapshotRequired || event.authenticatedAgain))
     dispatch({ type: 'platformTransportResumed', data: { authenticatedAgain: event.authenticatedAgain === true } });
   if (event.type === 'remote.changed') dispatch({ type: 'command', command: 'platform.remote.changed' });
+  if (event.type === 'control.changed') dispatch({ type: 'command', command: 'platform.controlApi.changed' });
   if (event.type === 'migration.progress' || event.type === 'migration.completed')
     dispatch({ type: 'command', command: event.type, data: event });
   if (event.type === 'conversation.changed') dispatch({ type: 'platformConversationChanged', data: { conversationId: event.conversationId, deleted: event.deleted, metadataOnly: event.metadataOnly, preserveWindow: event.preserveWindow } });

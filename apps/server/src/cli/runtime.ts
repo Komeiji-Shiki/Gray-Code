@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { createInterface } from "node:readline";
 import { PlatformApplication } from "../application";
 import { RemoteAccessService } from '../transport/remoteAccess';
+import { ControlApiService } from '../control/service';
 import { backfillPlaceholderTitles } from '../conversations/autoTitles';
 import path from 'node:path';
 import { environmentSecretCodec } from '../settings/environmentSecrets';
@@ -13,7 +14,10 @@ export async function runApplicationCommand(
 ): Promise<void> {
   const application = await PlatformApplication.open({ dataDirectory,
     locale: Intl.DateTimeFormat().resolvedOptions().locale,
-    ...(command === 'serve' ? { remoteAccess: (app: PlatformApplication) => new RemoteAccessService(app, { clientDirectory: values.web ? path.resolve(__dirname, '../../client/dist') : undefined }) } : {}),
+    ...(command === 'serve' ? {
+      remoteAccess: (app: PlatformApplication) => new RemoteAccessService(app, { clientDirectory: values.web ? path.resolve(__dirname, '../../client/dist') : undefined }),
+      controlApi: (app: PlatformApplication) => new ControlApiService(app),
+    } : {}),
     secretCodec: environmentSecretCodec(typeof values['key-env'] === 'string' ? values['key-env'] : undefined) });
   try {
     if (command === "serve") {
@@ -32,6 +36,7 @@ export async function runApplicationCommand(
         publicOrigin: typeof values['public-origin'] === 'string' ? values['public-origin'] : undefined,
       });
       const status = application.remoteAccess!.status();
+      await application.controlApi?.initialize();
       await application.nodes.activate();
       process.stdout.write(
         `GrayCode is listening on ${status.localAddress}. Authentication is required.${values.web ? ` Web: ${status.address}/` : ''}\n`,

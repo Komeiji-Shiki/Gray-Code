@@ -16,6 +16,7 @@
 | **工具与代理** | MCP 服务连接、Skills 技能扩展、子代理与外部 ACP 代理 | [工具、Skills 与代理](Agents-and-MCP.md) |
 | **视觉与电脑操作** | 屏幕截图、UI Automation 控件树、浏览器操作与桌面控制 | [截图与坐标工具](Visual-Tools.md) |
 | **自动化与多端** | 定时/事件自动任务、Discord/QQ 机器人接入与多设备协同 | [自动任务、Bot 与远程设备](Automation-and-Devices.md) |
+| **外部控制与语音** | 本地 HTTP 控制接口、事件流、Fish/Qwen/本地 TTS 与声音克隆 | [外部控制接口与语音合成](External-Control-and-Speech.md) |
 | **记忆与伴侣** | 长期事实记忆、工程日志、Live2D 桌面伴侣与屏幕感知 | [记忆、桌宠与屏幕感知配置](Memory-and-Companions.md) |
 | **角色与世界书** | 角色卡绑定、世界书预算、递归与向量激活、历史回合恢复 | [角色卡、世界书与正则](Characters-and-Worldbooks.md) |
 | **记忆迁移** | 从外部/旧版系统（如 LifeBook / Graphiti）导入历史记忆 | [LifeBook 记忆迁移](Memory-Migration.md) |

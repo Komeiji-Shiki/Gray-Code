@@ -18,6 +18,8 @@ withDefaults(defineProps<{
   canViewResponse?: boolean
   canBranch?: boolean
   canDelete?: boolean
+  canSpeak?: boolean
+  speaking?: boolean
 }>(), { canDelete: undefined })
 
 const emit = defineEmits<{
@@ -27,6 +29,7 @@ const emit = defineEmits<{
   retry: []
   viewResponse: []
   branch: []
+  speak: []
 }>()
 
 // 复制状态
@@ -78,6 +81,15 @@ function handleCopy() {
       size="small"
       :tooltip="isCopied ? t('components.common.tooltip.copied') : t('components.message.actions.copy')"
       @click="handleCopy"
+    />
+
+    <!-- 朗读 / 停止朗读 -->
+    <IconButton
+      v-if="canSpeak"
+      :icon="speaking ? 'codicon-stop-circle' : 'codicon-unmute'"
+      size="small"
+      :tooltip="speaking ? t('components.message.actions.stopSpeaking') : t('components.message.actions.speak')"
+      @click="emit('speak')"
     />
 
     <!-- 从此处创建分支 -->

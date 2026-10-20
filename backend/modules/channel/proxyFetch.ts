@@ -95,7 +95,7 @@ export function createProxyFetch(proxyUrl?: string): (url: string | URL, init?: 
         const options: FetchOptions = {
             method: init?.method || 'GET',
             headers: headersToRecord(mergeHeadersWithDefaultUserAgent(init?.headers)),
-            body: init?.body as string | undefined,
+            body: init?.body as string | Uint8Array | undefined,
             // 修复：透传调用方指定的 timeout（此前硬编码 120s，调用方超时被忽略）
             timeout: init?.timeout ?? 120000,
             signal: init?.signal ?? undefined  // 传递 abort signal，null→undefined
@@ -153,7 +153,7 @@ export async function* proxyStreamFetch(
             headers: headersWithUserAgent,
             body: init.body,
             signal: init.signal
-        });
+        } as unknown as RequestInit);
 
         if (!response.ok) {
             // 获取错误详情：必须先读 text() 再尝试解析 JSON——response.json() 会消费

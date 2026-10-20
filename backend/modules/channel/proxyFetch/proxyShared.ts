@@ -134,7 +134,8 @@ export function createAbortError(signal?: AbortSignal): Error {
 export interface FetchOptions {
     method: string;
     headers: Record<string, string>;
-    body?: string;
+    /** 字符串按 UTF-8 发送；上传文件时直接传二进制，避免 multipart 在代理路径下损坏。 */
+    body?: string | Uint8Array;
     timeout?: number;
     signal?: AbortSignal;
 }

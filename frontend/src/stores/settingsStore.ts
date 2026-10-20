@@ -10,6 +10,7 @@ import type { SmoothMode } from '../utils/smoothStream'
 export type SettingsTab = 'channel' | 'development' | 'tools' | 'autoExec' | 'mcp' | 'checkpoint' | 'summarize' | 'imageGen'
   | 'dependencies' | 'context' | 'prompt' | 'tokenCount' | 'subagents' | 'sound' | 'appearance' | 'companion' | 'clawd'
   | 'memory' | 'general' | 'usage' | 'discord' | 'onebot' | 'accounts' | 'workspaces' | 'remote'
+  | 'speech' | 'controlApi'
 
 /** 应用页面视图类型 */
 export type AppView = 'chat' | 'history' | 'settings' | 'usage'

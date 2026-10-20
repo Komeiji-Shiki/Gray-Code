@@ -4,6 +4,8 @@ import { validateExternalAgentProfiles } from '../externalAgents/settings';
 import { validateClawdSettings } from '../clawd/transport';
 import { validateDiscordSettings } from '../bots/config';
 import { validateRemoteAccess } from '../transport/webOrigin';
+import { validateControlApiSettings } from '../control/settings';
+import { validateSpeechSettings } from '../speech/settings';
 import { validateDecisionProvider } from '../model/decisionReviewer';
 import { isMcpToolName } from '../../../../shared/mcpToolNameCodec';
 import { DARK_PALETTES, DEFAULT_UI_FONT } from '../../../../shared/appearance';
@@ -208,6 +210,11 @@ export class SettingsService<T = never> {
       const token = Object.hasOwn(credentialUpdates, remoteCredential) ? credentialUpdates[remoteCredential] : await this.credential(remoteCredential);
       if (typeof token !== 'string' || token.length < 32) throw new Error('远程访问令牌至少需要 32 个字符，请生成随机令牌。');
     }
+    const controlCredential = next.controlApi?.credentialRef;
+    if (controlCredential && (next.controlApi?.enabled || Object.hasOwn(credentialUpdates, controlCredential))) {
+      const token = Object.hasOwn(credentialUpdates, controlCredential) ? credentialUpdates[controlCredential] : await this.credential(controlCredential);
+      if (typeof token !== 'string' || token.length < 32) throw new Error('外部控制令牌至少需要 32 个字符，请生成随机令牌。');
+    }
     for (const [id, value] of Object.entries(credentialUpdates)) {
       if (!identifier.test(id))
         throw new Error("Invalid credential identifier.");
@@ -234,6 +241,8 @@ export class SettingsService<T = never> {
       next.discord.credentialRef,
       next.onebot?.credentialRef,
       next.remoteAccess?.credentialRef,
+      next.controlApi?.credentialRef,
+      next.speech?.credentialRef,
     ].filter(Boolean) as string[]) {
       if (!reference.startsWith("env:") && !credentialIds.has(reference))
         throw new Error(`Credential ${reference} has not been supplied.`);
@@ -255,6 +264,8 @@ export class SettingsService<T = never> {
   }
   private async validate(settings: AppSettings): Promise<void> {
     validateRemoteAccess(settings.remoteAccess);
+    validateControlApiSettings(settings.controlApi);
+    validateSpeechSettings(settings.speech);
     validateDevelopmentSettings(settings.development);
     validateExternalAgentProfiles(settings.externalAgents);
     validateClawdSettings(settings.clawd);

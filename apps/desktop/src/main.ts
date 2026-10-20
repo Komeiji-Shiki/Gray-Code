@@ -40,6 +40,7 @@ import { DesktopPetWindow } from './petWindow';
 import { migrateLegacySettings } from './legacySettings';
 import { backfillPlaceholderTitles } from '../../server/src/conversations/autoTitles';
 import { RemoteAccessService } from '../../server/src/transport/remoteAccess';
+import { ControlApiService } from '../../server/src/control/service';
 import { DesktopOpenFiles, desktopFileArguments, openDesktopPath } from './openFiles';
 import { DesktopEditorRegistration } from './editorRegistration';
 import { bindDesktopAppearance } from './appearance';
@@ -147,7 +148,7 @@ async function activeTasks(): Promise<boolean> {
   if (application.isClosing) return false;
   const hasRuns = (await application.storage.listRuns({ activeOnly: true, limit: 1 })).length > 0;
   // 在异步查询后读取连接状态，避免连接中的 Bot 被当作空闲程序退出。
-  return hasRuns || application.runtime.preparingCount > 0 || application.productUi.chat.hasPendingStarts() || application.pets.keepsAlive || application.screenSense.keepsAlive || backups?.busy === true || application.automations.keepsAlive || application.discord.keepsAlive || application.onebot.keepsAlive || !!application.remoteAccess?.keepsAlive
+  return hasRuns || application.runtime.preparingCount > 0 || application.productUi.chat.hasPendingStarts() || application.pets.keepsAlive || application.screenSense.keepsAlive || backups?.busy === true || application.automations.keepsAlive || application.discord.keepsAlive || application.onebot.keepsAlive || !!application.remoteAccess?.keepsAlive || !!application.controlApi?.keepsAlive
     || application.nodes.keepsAlive || application.fileActions.hasPending || application.subagents.hasPendingWork() || !!application.terminals.list().length
     || application.interactiveTerminals.hasRunning || application.processes.activeCount > 0 || !!application.subagents.backgroundTasks().length;
 }
@@ -484,6 +485,7 @@ async function main(): Promise<void> {
     browser: application => browser = new DesktopBrowser(application, () => window, notify),
     computerCapture: new DesktopComputerCapture(),
     remoteAccess: application => new RemoteAccessService(application, { clientDirectory }),
+    controlApi: application => new ControlApiService(application),
     secretCodec,
   });
   if (window && !window.isDestroyed()) bindDesktopAppearance(window, application);
@@ -574,6 +576,8 @@ async function main(): Promise<void> {
   // 本地界面无需等监听器启动；命令行显式指定的 Web 启动失败仍进入统一恢复流程。
   await application.remoteAccess!.initialize(remoteStartup);
   if (application.remoteAccess!.status().address) console.log(`GrayCode Web: ${application.remoteAccess!.status().address}`);
+  await application.controlApi?.initialize();
+  if (application.controlApi?.status().localAddress) console.log(`GrayCode Control API: ${application.controlApi.status().localAddress}`);
   if (exitPhase !== 'idle') return;
   await application.nodes.activate();
   if (exitPhase !== 'idle') return;

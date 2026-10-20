@@ -504,6 +504,36 @@ export function settingsSearchIndex(isDesktopHost: boolean, supportsFileAssociat
     anchor: '[data-search-anchor="token-count-openai-responses"]'
   },
   {
+    key: 'speech', tab: 'speech',
+    labelKey: 'components.settings.settingsPanel.sections.speech.title',
+    keywords: ['语音', 'speech', 'tts', '朗读', '文字转语音', '音色', '音声', 'fish audio', 'qwen', 'cosyvoice', '克隆', '语音合成']
+  },
+  {
+    key: 'speech-provider', tab: 'speech',
+    labelKey: 'components.settings.speechSettings.providerTitle',
+    keywords: ['提供商', 'provider', 'fish audio', 'openai', 'qwen', 'dashscope', 'windows', 'sapi', '本地语音'],
+    anchor: '[data-search-anchor="speech-provider"]'
+  },
+  {
+    key: 'speech-clone', tab: 'speech',
+    labelKey: 'components.settings.speechSettings.clone.title',
+    keywords: ['克隆', 'clone', '音色', 'voice cloning', '参考录音', 'reference_id', 'fish'],
+    anchor: '[data-search-anchor="speech-clone"]'
+  },
+  ...(isDesktopHost ? ([
+    {
+      key: 'control-api', tab: 'controlApi',
+      labelKey: 'components.settings.settingsPanel.sections.controlApi.title',
+      keywords: ['外部控制', 'control api', 'api', '被控', 'http', 'sse', 'token', '令牌', '自动化']
+    },
+    {
+      key: 'control-api-token', tab: 'controlApi',
+      labelKey: 'components.settings.controlApiSettings.token',
+      keywords: ['令牌', 'token', 'bearer', 'api key', '认证'],
+      anchor: '[data-search-anchor="control-api-token"]'
+    },
+  ] satisfies SearchIndexEntry[]) : []),
+  {
     key: 'sound', tab: 'sound',
     labelKey: 'components.settings.settingsPanel.sections.sound.title',
     keywords: ['通知', 'notification', '通知', '声音', 'sound', 'サウンド', '提示音', 'windows']

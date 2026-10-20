@@ -88,7 +88,7 @@ export function sendRequestOverSocket(
     }
 
     const body = init.body || '';
-    const bodyBuffer = Buffer.from(body, 'utf8');
+    const bodyBuffer = typeof body === 'string' ? Buffer.from(body, 'utf8') : Buffer.from(body);
 
     // 监听取消信号（#34 修复：使用 closeSocketGracefully 优雅关闭）
     let aborted = false;

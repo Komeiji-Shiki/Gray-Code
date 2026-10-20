@@ -49,6 +49,15 @@ export class ApplicationRouter {
     if (method.startsWith('memory.')) return longMemoryRequest(app, session, method, params);
     if (method.startsWith('computer.')) return app.computer.call(session, method, params);
     if (method.startsWith('nodes.')) return app.nodes.call(session, method, params);
+    if (method.startsWith('speech.')) {
+      app.requireOwner(session.actorId);
+      switch (method) {
+        case 'speech.status': return app.speech.status();
+        case 'speech.synthesize': return app.speech.synthesize(params as { text: string; voice?: string; speed?: number; format?: 'mp3' | 'wav' | 'opus' }, session.actorId);
+        case 'speech.clone': return app.speech.clone(params as import('@graycode/contracts').SpeechCloneInput, session.actorId);
+        default: throw new Error('未知语音操作。');
+      }
+    }
     if (method.startsWith('pets.')) return app.pets.call(session, method, params);
     if (method.startsWith('automations.')) {
       switch (method) {
