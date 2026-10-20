@@ -43,6 +43,19 @@ The screenshot above is a real tool loop: the model searches and reads the login
 - **Branching conversations**: retries and edits never overwrite earlier answers. Every candidate branch can be switched to and continued, optionally restoring the matching workspace checkpoint.
 - **Parallel Git worktrees**: run several tasks in isolated worktrees without disturbing your source tree.
 
+### Prompts you control entry by entry
+
+![Preset prompt entries: a disabled entry, the chat history slot, and an assistant entry with a prefilled thought](wiki/assets/prompt-entries.png)
+
+Each mode is a preset assembled from ordered prompt entries, edited one by one like a SillyTavern preset:
+
+- **Toggle and reorder**: drag or move entries, and enable or disable any single entry without rewriting the whole prompt.
+- **Choose the role**: an entry can merge into the system prompt or be inserted as a temporary user or assistant message.
+- **Decide where history goes**: Chat History is itself an entry. Entries after it appear right before the current user message, which suits per-turn reminders. Dynamic context from earlier turns stays in place, so the request prefix remains stable.
+- **Prefilled thoughts**: an assistant entry can carry a preset reasoning passage that simulates a reply with visible thinking.
+- **Dynamic modules**: insert variables such as `{{$ENVIRONMENT}}`, `{{$WORKSPACE_FILES}}`, and `{{$MEMORY}}` directly into entries, and add character cards and worldbooks as reference entries.
+- **Modes on demand**: chat, coding, and character modes each pick a default preset, and presets can be duplicated, exported, or imported from others.
+
 ### It reads web pages, and it can click them too
 
 ![The model opens a board page in the built-in browser, adds a to-do, and checks off a finished item](wiki/assets/browser.png)
