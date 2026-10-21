@@ -9,7 +9,7 @@
   },
   "devDependencies": {
     "@types/node": "24.19.0",
-    "electron": "44.5.1"
+    "electron": "44.9.3"
   },
   "license": "SEE LICENSE IN LICENSE"
 }
