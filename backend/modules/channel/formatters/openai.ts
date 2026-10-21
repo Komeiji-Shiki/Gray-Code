@@ -315,8 +315,6 @@ export class OpenAIFormatter extends BaseFormatter {
             }
         }
 
-        const pendingCalls = new Set<string>();
-        const toolMediaMessages: any[] = [];
         for (const content of history) {
             const role = content.role === 'model' ? 'assistant' : content.role;
             
@@ -335,7 +333,6 @@ export class OpenAIFormatter extends BaseFormatter {
             }
             
             if (functionCallParts.length > 0) {
-                for (const part of functionCallParts) pendingCalls.add(part.functionCall!.id!);
                 // assistant 消息包含 tool_calls
                 // 所有 functionCall 放到末尾作为 tool_calls
                 const toolCalls = functionCallParts.map(p => ({
@@ -368,32 +365,25 @@ export class OpenAIFormatter extends BaseFormatter {
             // 后没有对应 tool 消息 → OpenAI 400 "insufficient tool messages"。
             // 这里改为独立分支，混合形态也能正确拆分出 tool 消息。
             if (functionResponseParts.length > 0) {
-                // 工具响应用 role: tool 发送；同消息的 textParts 并入首条 tool 消息的
-                // content（OpenAI tool 消息 content 可带文本），避免 text + functionResponse
-                // 混合形态把文本丢掉。
+                // 同消息的正文和顶层附件随首条工具结果发送，嵌套附件跟随各自的调用 ID，
+                // 避免把工具图片转成额外的 user 消息而丢失归属。
                 const textContent = textParts.map(p => p.text).join('\n');
                 for (const [index, part] of functionResponseParts.entries()) {
                     const resp = part.functionResponse!;
-                    if (resp.id) pendingCalls.delete(resp.id);
                     const serialized = serializeToolResultForLLM(resp.name, resp.response as Record<string, unknown>);
+                    const toolText = index === 0 && textContent ? `${textContent}\n\n${serialized}` : serialized;
+                    const toolMediaParts = [
+                        ...(index === 0 ? mediaParts : []),
+                        ...(resp.parts?.filter(p => p.inlineData || p.fileData) ?? [])
+                    ];
                     messages.push({
                         role: 'tool',
                         // 无 id 时生成：计数器+随机后缀保证同消息内多个 tool_result 不重复
                         // （对齐 anthropic.ts tool_result 的 id 生成；裸 Date.now() 同毫秒会碰撞）
                         tool_call_id: resp.id || `call_${Date.now()}_${index}_${Math.random().toString(36).slice(2, 8)}`,
                         name: resp.name,  // 工具名称是 OpenAI API 必需的
-                        content: index === 0 && textContent ? `${textContent}\n\n${serialized}` : serialized
+                        content: this.buildMessageContent([{ text: toolText }], toolMediaParts, pdfAttachmentEnabled)
                     });
-                }
-                if (mediaParts.length) {
-                    const sources = functionResponseParts.map(part => `${part.functionResponse!.name} (${part.functionResponse!.id})`).join(', ');
-                    toolMediaMessages.push({ role: 'user', content: this.buildMessageContent(
-                        [{ text: `Attachments returned by tools: ${sources}` }], mediaParts, pdfAttachmentEnabled) });
-                }
-                // 先完成同批所有 tool 响应，再追加图片，不能让图片消息打断调用配对。
-                if (pendingCalls.size === 0 && toolMediaMessages.length) {
-                    messages.push(...toolMediaMessages);
-                    toolMediaMessages.length = 0;
                 }
             }
 
