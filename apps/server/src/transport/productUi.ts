@@ -21,8 +21,6 @@ import { createCharacterStarterPreset } from '../../../../shared/characterPrompt
 import { characterConversation } from '../characters/conversation';
 import { memoryUiHandlers } from '../memory/ui';
 import { pathToFileURL } from 'node:url';
-import { ConversationManager } from '../../../../backend/modules/conversation/ConversationManager';
-import { SqliteStorageAdapter } from '../../../../backend/modules/conversation/SqliteStorageAdapter';
 import type { PlatformApplication } from '../application';
 import type { ClientSession } from './router';
 import type { ProductSettingsDraft } from '../settings/product';
@@ -43,7 +41,6 @@ import { speechRequest } from '../speech/requests';
 
 interface UiSession { mode?: 'chat' | 'code' | 'character'; preferences: ProductSettingsDraft; editing: boolean; workspaceId?: string }
 export class ProductUi {
-  readonly conversations: ConversationManager;
   readonly chat: ProductChat;
   readonly commands: ProductCommands;
   private readonly checkpointUi: CheckpointUi;
@@ -57,7 +54,6 @@ export class ProductUi {
     this.chat = new ProductChat(app);
     this.commands = new ProductCommands(event => app.publish(event));
     this.checkpointUi = new CheckpointUi(app);
-    this.conversations = new ConversationManager(new SqliteStorageAdapter(app.storage));
   }
   private client(id: string): Promise<UiSession> {
     let result = this.clients.get(id);
@@ -109,9 +105,8 @@ export class ProductUi {
       return this.commands.ready(client.clientId, data.viewId);
     }
     if (type === 'conversation.listConversations') {
-      this.app.requireOwner(client.actorId);
       // 全量 ID 扫描只读已保存会话，不能排在首次发送和会话切换前占用交互队列。
-      return conversationMetadataUiHandlers(this.app, this.conversations)['conversation.listConversations']({});
+      return this.app.conversations.listIds(client.actorId);
     }
     // 首屏后加载的存档与分支只依赖明确的对话 ID，不占用设置和会话导航的串行队列。
     if (type === 'checkpoint.getCheckpoints' || type === 'conversation.getBranchGraph') {
@@ -336,7 +331,7 @@ export class ProductUi {
     // 角色会话仍走前面的独立入口；其他稳定请求在原有会话和工作区权限检查之后处理。
     const stableHandlers: Omit<UiRequestHandlers, Extract<keyof UiRequestHandlers, `characters.conversation.${string}`>> = {
       ...subagentRequestHandlers(this.app, client),
-      ...conversationMetadataUiHandlers(this.app, this.conversations),
+      ...conversationMetadataUiHandlers(this.app, client),
       'platform.questions.answer': async params => {
         await this.app.runtime.answerQuestion(params.id, client.actorId, params.answers);
         return { success: true };
@@ -724,19 +719,19 @@ export class ProductUi {
         ui.workspaceId = typeof created.workspaceId === 'string' ? created.workspaceId : undefined;
         return { success: true, workspaceId: created.workspaceId, workspaceUri: created.workspaceUri };
       }
-      case 'conversation.getMessageMarkers': {
-        await this.app.conversation(client.actorId, data.conversationId);
-        return this.conversations.getMessageMarkers(data.conversationId);
-      }
-      case 'conversation.getMessagePosition': {
-        await this.app.conversation(client.actorId, data.conversationId);
-        return this.conversations.getMessagePosition(data.conversationId, data.messageId);
-      }
-      case 'conversation.getMessages': return this.conversations.getHistory(data.conversationId);
-      case 'conversation.getMessagesPaged': return this.conversations.getMessagesPaged(data.conversationId,
-        { beforeIndex: data.beforeIndex, offset: data.offset, limit: data.limit });
-      case 'conversation.setTitle': return new ConversationNavigation(this.app).rename(client.actorId, data.conversationId, data.title);
-      case 'conversation.updateSummary': await this.conversations.updateSummary(data.conversationId, data); return { success: true };
+      case 'conversation.getMessageMarkers':
+        return this.app.conversations.messageMarkers(client.actorId, data.conversationId);
+      case 'conversation.getMessagePosition':
+        return this.app.conversations.messagePosition(client.actorId, data.conversationId, data.messageId);
+      case 'conversation.getMessages':
+        return this.app.conversations.rawHistory(client.actorId, data.conversationId);
+      case 'conversation.getMessagesPaged':
+        return this.app.conversations.messagesPaged(client.actorId, data.conversationId,
+          { beforeIndex: data.beforeIndex, offset: data.offset, limit: data.limit });
+      case 'conversation.setTitle':
+        return this.app.conversations.rename(client.actorId, data.conversationId, data.title);
+      case 'conversation.updateSummary':
+        return this.app.conversations.updateSummary(client.actorId, data.conversationId, data);
       case 'getOpenTabs': return { tabs: this.app.files.editorContext(client.clientId, workspace).openFiles };
       case 'getActiveEditor': return { path: this.app.files.editorContext(client.clientId, workspace).activeFile ?? null };
     }

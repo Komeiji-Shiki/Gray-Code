@@ -228,12 +228,8 @@ export class ApplicationRouter {
           providerId: params.providerId, modelOverride: params.modelOverride, reasoningEffort: params.reasoningEffort, promptModeId: params.promptModeId }, undefined, { clientId: session.clientId });
       }
       case "conversations.rename": {
-        const current = await app.manageConversation(session.actorId, params.id);
-        return app.storage.saveMetadata({
-          ...current,
-          title: String(params.title),
-          updatedAt: Date.now(),
-        });
+        await app.conversations.rename(session.actorId, params.id, String(params.title));
+        return;
       }
       case "conversations.fork": {
         const current = await app.conversation(session.actorId, params.id);
@@ -288,9 +284,11 @@ export class ApplicationRouter {
         if (!params.requestKey || !String(params.text ?? "").trim())
           throw new Error("Supply a unique request key and a message.");
         if (conversation.title === "新对话") {
-          const history = await app.storage.historyInfo(conversation.id);
-          if (history.total === 0) await app.storage.saveMetadata({ ...conversation,
-            title: String(params.text).trim().replace(/\s+/g, " ").slice(0, 48), updatedAt: Date.now() });
+          const info = await app.storage.getConversationInfo(conversation.id);
+          if (info && info.messageCount === 0 && info.metadata.title === "新对话") {
+            await app.storage.saveMetadata({ ...info.metadata,
+              title: String(params.text).trim().replace(/\s+/g, " ").slice(0, 48), updatedAt: Date.now() }, { expectedMetadataToken: info.metadataToken }).catch(() => {});
+          }
         }
         return app.runtime.start(input, undefined, { clientId: session.clientId });
       }

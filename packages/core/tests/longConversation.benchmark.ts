@@ -14,7 +14,8 @@
  *   npx jest --config jest.platform.config.cjs --testMatch <glob> --runInBand --testTimeout 600000
  */
 import { PlatformApplication } from '../../../apps/server/src/application';
-import type { ConversationManager } from '../../../backend/modules/conversation/ConversationManager';
+import { ConversationManager } from '../../../backend/modules/conversation/ConversationManager';
+import { SqliteStorageAdapter } from '../../../backend/modules/conversation/SqliteStorageAdapter';
 import { aggregateUsageStats } from '../../../backend/modules/conversation/usageStats';
 import type { Content } from '../../../backend/modules/conversation/types';
 import { fixture } from './fixtures';
@@ -59,7 +60,7 @@ describe('基准 ② 长对话（1 万条消息，真实磁盘）', () => {
         f = await fixture();
         await f.store.close();
         app = await PlatformApplication.open({ dataDirectory: f.data });
-        manager = app.productUi.conversations;
+        manager = new ConversationManager(new SqliteStorageAdapter(app.storage));
     });
 
     afterEach(async () => {

@@ -7,7 +7,7 @@ export async function deleteConversation(app: PlatformApplication, actorId: stri
   const runs = await app.storage.listRuns({ conversationId, activeOnly: true });
   for (const run of runs) { await app.runtime.cancel(run.id, actorId); await app.runtime.wait(run.id); }
   await app.subagents.removeParent(actorId, conversationId);
-  await app.productUi.conversations.deleteConversation(conversationId);
+  await app.storage.deleteConversation(conversationId);
   await app.conversationWorkspaces.release([conversationId]);
   app.publish({ type: 'conversation.changed', conversationId, deleted: true });
 }

@@ -24,7 +24,7 @@ interface ConversationRow {
 /** 列表和用量统计共用的元数据字段投影。 */
 interface SummaryProjection {
   workspaceId?: string; botPlatform?: 'discord' | 'onebot'; parentConversationId?: string; isSubagent: boolean;
-  actorId?: string; platformMode?: string;
+  actorId?: string; platformMode?: string; preview?: string;
 }
 /** 投影只含少量短字符串；按条数限制即可覆盖大存档的一轮完整分页。 */
 const SUMMARY_PROJECTIONS = 20_000;
@@ -184,7 +184,9 @@ export class PlatformDatabase {
       return { metadata: this.objects.getValue<PlatformConversation>(row.metadata_hash), metadataToken: row.metadata_hash.toString('hex'),
         messageCount: history.message_count, historyRevision: history.revision };
     } },
-    saveMetadata: { concurrentRead: false, execute: metadata => this.saveMetadata(metadata) },
+    saveMetadata: { concurrentRead: false, execute: input => 'metadata' in input && typeof input.metadata === 'object' && input.metadata !== null && !('createdAt' in input)
+      ? this.saveMetadata(input.metadata, input.expectedMetadataToken)
+      : this.saveMetadata(input as PlatformConversation) },
     listConversations: { concurrentRead: true, execute: options => this.listConversations(options) },
     listConversationIds: { concurrentRead: true, execute: options => this.listConversationIds(options) },
     searchConversationIds: { concurrentRead: false, execute: ({ query }) => this.searchConversationIds(query) },
@@ -479,13 +481,18 @@ export class PlatformDatabase {
     return this.summary(this.conversation(metadata.id));
   }
 
-  private saveMetadata(metadata: PlatformConversation): void {
-    this.db.transaction(() => {
+  private saveMetadata(metadata: PlatformConversation, expectedMetadataToken?: string): { metadataToken: string } {
+    return this.db.transaction(() => {
       this.validateMetadata(metadata);
-      this.conversation(metadata.id);
+      const row = this.conversation(metadata.id);
+      if (expectedMetadataToken !== undefined && expectedMetadataToken !== row.metadata_hash.toString('hex')) {
+        throw new PlatformStorageError('REVISION_CONFLICT', 'Conversation metadata changed. Reload before applying the operation.');
+      }
+      const hash = this.objects.putValue(metadata);
       this.db.prepare('UPDATE conversations SET title=?,created_at=?,updated_at=?,workspace_uri=?,metadata_hash=? WHERE id=?')
-        .run(metadata.title ?? null, metadata.createdAt, metadata.updatedAt, metadata.workspaceUri ?? null, this.objects.putValue(metadata), metadata.id);
+        .run(metadata.title ?? null, metadata.createdAt, metadata.updatedAt, metadata.workspaceUri ?? null, hash, metadata.id);
       this.metadataVersion++;
+      return { metadataToken: hash.toString('hex') };
     })();
   }
 
@@ -514,7 +521,7 @@ export class PlatformDatabase {
     const cached = this.projections.get(key);
     if (cached) { this.projections.delete(key); this.projections.set(key, cached); return cached; }
     const { workspaceId, parentConversationId, actorId, custom } = this.objects.getValue<{ workspaceId?: unknown; parentConversationId?: unknown; actorId?: unknown;
-      custom?: { botOrigin?: { platform?: unknown }; platformSubagentId?: unknown; platformMode?: unknown } }>(hash, { fields: ['workspaceId', 'parentConversationId', 'actorId', 'custom'], omitBinary: true });
+      custom?: { botOrigin?: { platform?: unknown }; platformSubagentId?: unknown; platformMode?: unknown; preview?: unknown } }>(hash, { fields: ['workspaceId', 'parentConversationId', 'actorId', 'custom'], omitBinary: true });
     const botPlatform = custom?.botOrigin?.platform;
     const value: SummaryProjection = {
       ...(typeof workspaceId === 'string' ? { workspaceId } : {}),
@@ -523,6 +530,7 @@ export class PlatformDatabase {
       isSubagent: !!custom?.platformSubagentId,
       ...(typeof actorId === 'string' ? { actorId } : {}),
       ...(typeof custom?.platformMode === 'string' ? { platformMode: custom.platformMode } : {}),
+      ...(typeof custom?.preview === 'string' ? { preview: custom.preview } : {}),
     };
     this.projections.set(key, value);
     if (this.projections.size > SUMMARY_PROJECTIONS) this.projections.delete(this.projections.keys().next().value!);
@@ -530,12 +538,13 @@ export class PlatformDatabase {
   }
 
   private summary(row: ConversationRow, history: { message_count: number; revision: number } = this.histories.info(row.history_id)): ConversationSummary {
-    const { workspaceId, botPlatform, actorId, platformMode } = this.projection(row.metadata_hash);
+    const { workspaceId, botPlatform, actorId, platformMode, preview } = this.projection(row.metadata_hash);
     return { id: row.id, title: row.title ?? undefined, createdAt: row.created_at, updatedAt: row.updated_at,
       ...(workspaceId !== undefined ? { workspaceId } : {}),
       ...(botPlatform !== undefined ? { botPlatform } : {}),
       ...(actorId !== undefined ? { actorId } : {}),
       ...(platformMode !== undefined ? { platformMode } : {}),
+      ...(preview !== undefined ? { preview } : {}),
       workspaceUri: row.workspace_uri ?? undefined, messageCount: history.message_count, revision: history.revision };
   }
 

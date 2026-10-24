@@ -149,8 +149,8 @@ export function conversationUiHandlers(app: PlatformApplication, client: ClientS
       await app.conversation(client.actorId, data.conversationId);
       const deferCheckpoints = data.deferCheckpoints === true;
       const [metadata, result, checkpoints] = await Promise.all([
-        app.productUi.conversations.getMetadata(data.conversationId),
-        app.productUi.conversations.getMessagesPaged(data.conversationId, { beforeIndex: data.beforeIndex, offset: data.offset, limit: data.limit }),
+        app.conversations.metadata(client.actorId, data.conversationId),
+        app.conversations.messagesPaged(client.actorId, data.conversationId, { beforeIndex: data.beforeIndex, offset: data.offset, limit: data.limit }),
         deferCheckpoints ? { checkpoints: [] } : app.checkpoints.summaries(client.actorId, data.conversationId),
       ]);
       const custom = metadata?.custom ?? {};
@@ -171,14 +171,6 @@ export function conversationUiHandlers(app: PlatformApplication, client: ClientS
     },
     'conversation.rejectToolCalls': (data: Record<string, any>) => app.conversations.settleCancelled(client.actorId, data.conversationId, data.messageIndex,
       Array.isArray(data.toolCallIds) ? data.toolCallIds.filter((id: unknown): id is string => typeof id === 'string') : []),
-    'chat.awaitConversationIdle': async (data: Record<string, any>) => {
-      await app.conversation(client.actorId, data.conversationId);
-      const runs = await app.storage.listRuns({ conversationId: data.conversationId, activeOnly: true });
-      let timer: ReturnType<typeof setTimeout> | undefined;
-      try { await Promise.race([Promise.all(runs.map(run => app.runtime.wait(run.id))), new Promise(resolve => { timer = setTimeout(resolve, 10_000); })]); }
-      finally { if (timer) clearTimeout(timer); }
-      return { idle: !(await app.storage.listRuns({ conversationId: data.conversationId, activeOnly: true })).length };
-    },
     'chat.sendInterruptMessage': (data: Record<string, any>) => sendInterruptMessage(app, client, data),
     'chat.pendingUserInputs': (data: Record<string, any>) => pendingUserInputs(app, client, data.conversationId),
     'chat.updatePendingUserInput': (data: Record<string, any>) => changePendingUserInput(app, client, data, false),

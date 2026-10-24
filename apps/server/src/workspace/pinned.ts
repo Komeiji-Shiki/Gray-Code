@@ -14,7 +14,7 @@ import { uiFilePath, uiWorkspace } from './uiFiles';
 
 /** 对话固定文件独立保存，全局列表沿用共享设置草稿。 */
 export function pinnedFileHandlers(app: PlatformApplication, client: ClientSession, draft: ProductSettingsDraft, selected?: WorkspaceDefinition) {
-  const settings = draft.settings; const conversations = app.productUi.conversations;
+  const settings = draft.settings;
   const workspace = (data: Record<string, any>) => uiWorkspace(app, client, selected, data);
   async function validate(data: Record<string, any>) {
     const target = await workspace(data);
@@ -31,7 +31,7 @@ export function pinnedFileHandlers(app: PlatformApplication, client: ClientSessi
   async function files(data: Record<string, any>): Promise<PinnedFileItem[]> {
     if (data.conversationId) {
       await app.conversation(client.actorId, data.conversationId);
-      const value = await conversations.getCustomMetadata(data.conversationId, 'inputPinnedFiles');
+      const value = await app.conversations.customMetadata(client.actorId, data.conversationId, 'inputPinnedFiles');
       if (value !== undefined) return normalizePinnedFiles(value);
     }
     return structuredClone(settings.getPinnedFiles());
@@ -39,9 +39,10 @@ export function pinnedFileHandlers(app: PlatformApplication, client: ClientSessi
   async function change(data: Record<string, any>, update: (items: PinnedFileItem[]) => PinnedFileItem[]) {
     if (data.conversationId) {
       await app.conversation(client.actorId, data.conversationId);
-      return conversations.runExclusive(data.conversationId, async () => {
-        await conversations.setCustomMetadata(data.conversationId, 'inputPinnedFiles', update(await files(data)));
-      });
+      await app.conversations.updateCustomMetadata(client.actorId, data.conversationId, 'inputPinnedFiles', current =>
+        update(current !== undefined ? normalizePinnedFiles(current) : structuredClone(settings.getPinnedFiles())),
+      );
+      return;
     }
     await settings.updatePinnedFilesConfig({ files: update(await files(data)) });
   }

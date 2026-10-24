@@ -74,15 +74,12 @@ export class ConversationNavigation {
     const pinned: ConversationNavigationItem[] = [];
     if (pins.size) {
       const ids = [...pins.keys()];
-      // 旧宿主的批量摘要最多返回 200 条，置顶数量不能因此被静默截断。
       for (let offset = 0; offset < ids.length; offset += 200) {
-        const summaries = await this.app.productUi.conversations.getConversationMetadataBatch(ids.slice(offset, offset + 200));
-        for (const item of summaries) {
-          if (!item || query && !matching.has(item.id)) continue;
-          const metadata = await this.app.storage.getConversation(item.id);
-          const origin = (metadata?.custom as { botOrigin?: { platform?: string } } | undefined)?.botOrigin?.platform;
-          const summary = { ...item, workspaceId: typeof metadata?.workspaceId === 'string' ? metadata.workspaceId : undefined, botPlatform: botPlatform({ botPlatform: origin }) };
-          if (included(summary)) pinned.push(enrich(summary));
+        const batch = ids.slice(offset, offset + 200);
+        const page = await this.app.storage.listConversations({ ids: batch, limit: batch.length });
+        for (const item of page.items) {
+          if (query && !matching.has(item.id)) continue;
+          if (included(item)) pinned.push(enrich(item));
         }
       }
       pinned.sort((a, b) => (a.pinnedAt ?? 0) - (b.pinnedAt ?? 0));
@@ -91,20 +88,17 @@ export class ConversationNavigation {
     let orderedOffset = options.cursor?.orderedOffset ?? 0;
     if (!Number.isSafeInteger(orderedOffset) || orderedOffset < 0 || orderedOffset > ordering.conversations.length) throw new Error('侧边栏分页位置无效。');
     const orderedIds = new Set(ordering.conversations);
-    // 手动排列的旧对话直接读取摘要，翻页和重新启动后仍保留其显示位置。
+    // 手动排列的旧对话直接按候选 ID 批量读取摘要，翻页和重新启动后仍保留其显示位置。
     while (orderedOffset < ordering.conversations.length && items.length < 30) {
       const ids = ordering.conversations.slice(orderedOffset, orderedOffset + 30 - items.length);
-      const summaries = await this.app.productUi.conversations.getConversationMetadataBatch(ids);
-      const summariesById = new Map(summaries.filter(Boolean).map(summary => [summary.id, summary]));
+      const uniqueIds = [...new Set(ids)];
+      const page = await this.app.storage.listConversations({ ids: uniqueIds, limit: uniqueIds.length });
+      const summariesById = new Map(page.items.map(summary => [summary.id, summary]));
       orderedOffset += ids.length;
       for (const id of ids) {
         const item = summariesById.get(id);
         if (!item || pins.has(id) || hidden.has(id) || query && !matching.has(id)) continue;
-        const metadata = await this.app.storage.getConversation(id);
-        const origin = (metadata?.custom as { botOrigin?: { platform?: string } } | undefined)?.botOrigin?.platform;
-        // 旧批量摘要只有目录 URI，显式项目 ID 必须取自已有的元数据读取。
-        const summary = { ...item, workspaceId: typeof metadata?.workspaceId === 'string' ? metadata.workspaceId : undefined, botPlatform: botPlatform({ botPlatform: origin }) };
-        if (included(summary) && (options.scope === 'bots' || !preference(summary)?.removed)) items.push(enrich(summary));
+        if (included(item) && (options.scope === 'bots' || !preference(item)?.removed)) items.push(enrich(item));
       }
     }
     let recentStarted = !!options.cursor?.recent;
@@ -129,9 +123,7 @@ export class ConversationNavigation {
     this.app.publish({ type: 'conversation.changed', conversationId, metadataOnly: true }); return { success: true };
   }
   async rename(actorId: string, conversationId: string, title: string) {
-    this.app.requireOwner(actorId); await this.app.conversation(actorId, conversationId);
-    if (typeof title !== 'string' || !title.trim() || title.trim().length > 300) throw new Error('对话标题需要 1 至 300 个字符。');
-    await this.app.productUi.conversations.setTitle(conversationId, title.trim());
-    this.app.publish({ type: 'conversation.changed', conversationId, metadataOnly: true }); return { success: true };
+    this.app.requireOwner(actorId);
+    return this.app.conversations.rename(actorId, conversationId, title);
   }
 }

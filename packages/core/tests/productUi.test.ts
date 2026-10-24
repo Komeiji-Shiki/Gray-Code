@@ -374,3 +374,46 @@ test('真实嵌套工具结果中的提案身份限定卡片范围，复用工�
     expect(events).toHaveLength(count);
   } finally { await app.close(); await f.cleanup(); }
 });
+
+test('会话元数据读写通过版本化令牌串行重试，并发更新与摘要钳制不丢失自定义字段', async () => {
+  const f = await fixture(); await f.store.close(); const app = await PlatformApplication.open({ dataDirectory: f.data });
+  const client = { actorId: 'owner', clientId: 'versioned-metadata' };
+  const ui = (type: string, data = {}) => app.productUi.call(client, type, data) as Promise<any>;
+  try {
+    const created = await app.createConversation('owner', '初始标题', undefined, { existingKey: '保留' });
+    await app.storage.appendHistory(created.id, [{ id: 'u1', role: 'user', parts: [{ text: '首条消息' }] }]);
+    const save = app.storage.saveMetadata.bind(app.storage);
+    let intercepted = false;
+    jest.spyOn(app.storage, 'saveMetadata').mockImplementation(async (metadata, options) => {
+      if (!intercepted && options?.expectedMetadataToken) {
+        intercepted = true;
+        const latest = await app.storage.getConversationInfo(created.id);
+        await save({ ...latest!.metadata, title: '并发改名', custom: { ...latest!.metadata.custom, concurrentKey: '并发写入' } },
+          { expectedMetadataToken: latest!.metadataToken });
+      }
+      return save(metadata, options);
+    });
+    await ui('conversation.setCustomMetadata', { conversationId: created.id, key: 'inputModelConfig', value: { configId: 'ch1', modelId: 'm1' } });
+    expect(intercepted).toBe(true);
+    const fixedTime = 1_700_000_000_000;
+    const beforeSummary = await app.storage.getConversationInfo(created.id);
+    await save({ ...beforeSummary!.metadata, updatedAt: fixedTime }, { expectedMetadataToken: beforeSummary!.metadataToken });
+    await ui('conversation.updateSummary', { conversationId: created.id, messageCount: 999, preview: '首条消息预览' });
+    const meta = await ui('conversation.getConversationMetadata', { conversationId: created.id });
+    expect(meta).toMatchObject({
+      id: created.id,
+      title: '并发改名',
+      updatedAt: fixedTime,
+      custom: {
+        existingKey: '保留',
+        concurrentKey: '并发写入',
+        inputModelConfig: { configId: 'ch1', modelId: 'm1' },
+        messageCount: 1,
+        preview: '首条消息预览',
+      },
+    });
+    const batch = await ui('conversation.getConversationMetadataBatch', { conversationIds: [created.id, 'missing-id'] });
+    expect(batch).toEqual([expect.objectContaining({ id: created.id, title: '并发改名', messageCount: 1, preview: '首条消息预览', updatedAt: fixedTime })]);
+  } finally { jest.restoreAllMocks(); await app.close(); await f.cleanup(); }
+});
+

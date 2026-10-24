@@ -56,7 +56,7 @@ test('交付积压分批提交，后续冲突重试保留先前进度和父节�
     });
     await f.store.commitRecords(pending.map(value => ({ namespace: 'subagent-feedback', id: value.id, ownerId: id, value })));
     const app = { storage: f.store, subagents: { isChildConversation: () => false },
-      productUi: { conversations: { clearMetadataCache: jest.fn() } }, publish: jest.fn() } as unknown as PlatformApplication;
+      publish: jest.fn() } as unknown as PlatformApplication;
     const feedback = new SubagentFeedback(app);
     const commit = f.store.commitConversation.bind(f.store);
     let attempts = 0;
@@ -132,7 +132,7 @@ test('待办和活动工具跳过历史正文，元数据并发变更仍拒绝�
       catalogVersion: 'fixture', iteration: 0, status: 'queued', createdAt: Date.now(), updatedAt: Date.now() };
     await f.store.commitConversation({ conversationId: run.conversationId, expectedRevision: 1, startRun: { run } });
     const app = { storage: f.store, conversation: async (_actor: string, id: string) => f.store.getConversation(id),
-      productUi: { conversations: { clearMetadataCache: jest.fn() } }, publish: jest.fn(),
+      publish: jest.fn(),
       activity: { stats: async () => ({ generatedAt: Date.now(), today: null, currentSession: { active: false, startedAt: null, minutes: 0 },
         daily: [], hourlyHeatmap: [], monthly: [] }) },
     } as unknown as PlatformApplication;

@@ -86,7 +86,7 @@ export interface StorageOperations {
   initializeConversation: { input: { metadata: PlatformConversation; messages: PlatformMessage[]; records: RecordMutation[] }; output: ConversationSummary };
   getConversation: { input: { id: string }; output: PlatformConversation | null };
   getConversationInfo: { input: { id: string }; output: { metadata: PlatformConversation; metadataToken: string; messageCount: number; historyRevision: number } | null };
-  saveMetadata: { input: PlatformConversation; output: void };
+  saveMetadata: { input: PlatformConversation | { metadata: PlatformConversation; expectedMetadataToken?: string }; output: { metadataToken: string } };
   listConversations: { input: ConversationListOptions; output: ConversationList };
   /** 与 listConversations 同样的筛选、排序和游标，只返回编号。 */
   listConversationIds: { input: ConversationListOptions; output: { ids: string[]; nextCursor?: ConversationList['nextCursor'] } };

@@ -39,14 +39,32 @@ export class PlatformContextService {
   private async commit(frame: CapturedContext, runId?: string, snapshot = false): Promise<void> {
     if (!frame.dirty) return;
     const state = frame.state;
-    const result = await this.app.storage.commitConversation({ conversationId: state.metadata.id,
+    const buildMutation = () => ({ conversationId: state.metadata.id,
       expectedRevision: state.history.revision, expectedMetadataToken: state.metadataToken, activeRunId: runId,
       ...(frame.historyReplaced ? { messages: state.history.messages } : {
         ...(frame.messageUpdates.size ? { messageUpdates: [...frame.messageUpdates].map(([index, message]) => ({ index, message })) } : {}),
         ...(frame.appendMessages.length ? { appendMessages: frame.appendMessages } : {}),
       }),
       metadata: state.metadata,
-      ...(snapshot ? { snapshot: { id: randomUUID(), conversationId: state.metadata.id, timestamp: Date.now(), name: '总结变更前', kind: 'context-summary' } } : {}) });
+      ...(snapshot ? { snapshot: { id: randomUUID(), conversationId: state.metadata.id, timestamp: Date.now(), name: '总结变更前', kind: 'context-summary' as const } } : {}) });
+    let result;
+    try {
+      result = await this.app.storage.commitConversation(buildMutation());
+    } catch (error) {
+      if ((error as { code?: string }).code !== 'REVISION_CONFLICT') throw error;
+      const latest = await this.app.storage.getConversationInfo(state.metadata.id);
+      if (!latest || latest.historyRevision !== state.history.revision || latest.metadataToken === state.metadataToken) throw error;
+      // 运行期间仅外部元数据（如标题、思考强度或列表预览）被并发修改时，保留外部修改并合入本轮上下文状态。
+      const frameCustom = (state.metadata.custom ?? {}) as Record<string, unknown>;
+      const latestCustom = { ...((latest.metadata.custom ?? {}) as Record<string, unknown>) };
+      for (const key of ['platformContext', 'trimState'] as const) {
+        if (Object.hasOwn(frameCustom, key)) latestCustom[key] = frameCustom[key];
+        else delete latestCustom[key];
+      }
+      state.metadata = { ...latest.metadata, custom: latestCustom };
+      state.metadataToken = latest.metadataToken;
+      result = await this.app.storage.commitConversation(buildMutation());
+    }
     state.history.revision = result.revision; state.history.total = result.total; state.metadataToken = result.metadataToken;
     frame.dirty = false; frame.historyReplaced = false; frame.messageUpdates.clear(); frame.appendMessages.length = 0;
   }

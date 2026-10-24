@@ -1,7 +1,7 @@
 import { buildBranchTitle, buildBranchCustomMetadata, getTextPreviewFromContent } from '../../../../backend/modules/conversation/manager/metadataUtils';
 import { randomUUID } from 'node:crypto';
-import type { ConversationState, PlatformMessage } from '@graycode/contracts';
-import type { PreparedConversationChange } from '@graycode/core';
+import type { ConversationState, ConversationUiMetadata, ConversationUiSummary, PageOptions, PlatformConversation, PlatformMessage } from '@graycode/contracts';
+import { PlatformStorageError, type PreparedConversationChange } from '@graycode/core';
 import type { PlatformApplication } from '../application';
 import type { CharacterTurn } from '../characters/pipeline';
 import type { Content } from '../../../../backend/modules/conversation/types';
@@ -11,12 +11,153 @@ import { activePath, switchActivePath, softDeleteNode, restoreNode, renameBranch
 import { assertBranchCapacity, branchMutation, branchNamespace, branchView, groupMessages, materializeBranch, readBranches,
   readBranchPreview, type BranchPreviewState, type BranchState } from './branches';
 import { BRANCH_MESSAGE_PROJECTION, BRANCH_RECORD_PROJECTION } from './branchPreview';
+import { ensureCleanHistory, findMessagePosition, readDisplayMessagesPaged, readMessageMarkers } from './historyView';
 
 export class ConversationService {
   constructor(private readonly app: PlatformApplication) {}
   async read(actorId: string, id: string): Promise<ConversationState> {
     await this.app.conversation(actorId, id);
     return this.app.storage.readConversationState(id, [{ namespace: branchNamespace, id }]);
+  }
+  async listIds(actorId: string): Promise<string[]> {
+    this.app.requireOwner(actorId);
+    const hidden = this.app.subagents.childConversationIds();
+    const ids: string[] = [];
+    let cursor: { updatedAt: number; id: string } | undefined;
+    do {
+      const page = await this.app.storage.listConversationIds({ limit: 1000, cursor });
+      for (const id of page.ids) if (!hidden.has(id)) ids.push(id);
+      cursor = page.nextCursor;
+    } while (cursor);
+    return ids;
+  }
+  async metadata(actorId: string, id: string): Promise<ConversationUiMetadata | null> {
+    if (!this.app.actor(actorId)) throw new Error('Account is unavailable.');
+    const info = await this.app.storage.getConversationInfo(id);
+    if (!info) return null;
+    await this.app.conversation(actorId, id);
+    return {
+      ...info.metadata,
+      custom: { ...info.metadata.custom, messageCount: info.messageCount },
+    };
+  }
+  async customMetadata(actorId: string, id: string, key: string): Promise<unknown> {
+    const metadata = await this.metadata(actorId, id);
+    return metadata?.custom?.[key];
+  }
+  async summaries(actorId: string, conversationIds: string[]): Promise<ConversationUiSummary[]> {
+    this.app.requireOwner(actorId);
+    const all = Array.isArray(conversationIds) ? conversationIds.filter((id): id is string => typeof id === 'string' && id.length > 0) : [];
+    const truncated = all.length > 200;
+    const ids = all.slice(0, 200);
+    if (!ids.length) return [];
+    const uniqueIds = [...new Set(ids)];
+    const page = await this.app.storage.listConversations({ ids: uniqueIds, limit: uniqueIds.length });
+    const byId = new Map(page.items.map(item => [item.id, item]));
+    const result: ConversationUiSummary[] = [];
+    for (const id of ids) {
+      const item = byId.get(id);
+      if (!item) continue;
+      result.push({
+        id: item.id,
+        title: typeof item.title === 'string' && item.title.trim() ? item.title : `Chat ${item.id.slice(0, 8)}`,
+        createdAt: item.createdAt,
+        updatedAt: item.updatedAt,
+        messageCount: item.messageCount,
+        ...(item.preview !== undefined ? { preview: item.preview } : {}),
+        ...(item.workspaceUri !== undefined ? { workspaceUri: item.workspaceUri } : {}),
+      });
+    }
+    if (truncated) (result as ConversationUiSummary[] & { truncated?: boolean }).truncated = true;
+    return result;
+  }
+  /**
+   * 基于 metadataToken 的 CAS 版本化更新。
+   * 并发写入（如自动总结提交或连续设置修改）发生冲突时自动重读最新元数据并重新应用变更。
+   */
+  async updateMetadata(
+    actorId: string,
+    id: string,
+    mutate: (metadata: PlatformConversation, info: { messageCount: number; historyRevision: number }) => PlatformConversation | null | Promise<PlatformConversation | null>,
+  ): Promise<PlatformConversation> {
+    await this.app.manageConversation(actorId, id);
+    for (let attempt = 0; attempt < 8; attempt++) {
+      const info = await this.app.storage.getConversationInfo(id);
+      if (!info) throw new Error(`Conversation ${id} has been deleted or does not exist.`);
+      const current = structuredClone(info.metadata);
+      const next = await mutate(current, { messageCount: info.messageCount, historyRevision: info.historyRevision });
+      if (next === null) return info.metadata;
+      try {
+        await this.app.storage.saveMetadata(next, { expectedMetadataToken: info.metadataToken });
+        return next;
+      } catch (error) {
+        if (!(error instanceof PlatformStorageError) || error.code !== 'REVISION_CONFLICT' || attempt === 7) throw error;
+      }
+    }
+    throw new Error('Conversation metadata changed concurrently.');
+  }
+  async rename(actorId: string, id: string, title: string) {
+    if (typeof title !== 'string' || !title.trim() || title.trim().length > 300) throw new Error('对话标题需要 1 至 300 个字符。');
+    const normalized = title.trim();
+    await this.updateMetadata(actorId, id, metadata => {
+      if (metadata.title === normalized) return null;
+      return { ...metadata, title: normalized, updatedAt: Date.now() };
+    });
+    this.app.publish({ type: 'conversation.changed', conversationId: id, metadataOnly: true });
+    return { success: true };
+  }
+  async setCustomMetadata(actorId: string, id: string, key: string, value: unknown) {
+    await this.updateMetadata(actorId, id, metadata => ({
+      ...metadata,
+      updatedAt: Date.now(),
+      custom: { ...(metadata.custom as Record<string, unknown> ?? {}), [key]: value },
+    }));
+    return { success: true };
+  }
+  async updateCustomMetadata<T>(actorId: string, id: string, key: string, updater: (current: unknown) => T | Promise<T>): Promise<T> {
+    let resolved!: T;
+    await this.updateMetadata(actorId, id, async metadata => {
+      const custom = { ...(metadata.custom as Record<string, unknown> ?? {}) };
+      const current = custom[key];
+      resolved = await updater(current);
+      if (resolved === current) return null;
+      custom[key] = resolved;
+      return { ...metadata, updatedAt: Date.now(), custom };
+    });
+    return resolved;
+  }
+  async updateSummary(actorId: string, id: string, summary: { messageCount?: number; preview?: string }) {
+    // 列表摘要更新不移动 updatedAt，消息条数以存储已提交的真实计数为准。
+    await this.updateMetadata(actorId, id, (metadata, info) => {
+      const custom = { ...(metadata.custom as Record<string, unknown> ?? {}) };
+      if (summary.messageCount !== undefined) custom.messageCount = info.messageCount;
+      if (summary.preview !== undefined) custom.preview = summary.preview;
+      return { ...metadata, custom };
+    });
+    return { success: true };
+  }
+  async rawHistory(actorId: string, id: string): Promise<Content[]> {
+    if (!this.app.actor(actorId)) throw new Error('Account is unavailable.');
+    const existing = await this.app.findConversation(actorId, id);
+    if (!existing) return [];
+    const ensured = await ensureCleanHistory(this.app.storage, id);
+    if (!ensured.exists) return [];
+    if (ensured.messages) return structuredClone(ensured.messages);
+    return (await this.app.storage.readFullHistory(id)).messages as Content[];
+  }
+  async messagesPaged(actorId: string, id: string, options: PageOptions = {}): Promise<{ total: number; messages: Content[] }> {
+    if (!this.app.actor(actorId)) throw new Error('Account is unavailable.');
+    const existing = await this.app.findConversation(actorId, id);
+    if (!existing) return { total: 0, messages: [] };
+    return readDisplayMessagesPaged(this.app.storage, id, options);
+  }
+  async messageMarkers(actorId: string, id: string) {
+    await this.app.conversation(actorId, id);
+    return readMessageMarkers(this.app.storage, id);
+  }
+  async messagePosition(actorId: string, id: string, messageId: string) {
+    await this.app.conversation(actorId, id);
+    return findMessagePosition(this.app.storage, id, messageId);
   }
   private target(messages: ReadonlyArray<Pick<PlatformMessage, 'id'>>, index: number, messageId: string): void {
     if (!Number.isSafeInteger(index) || index < 0 || !messageId || messages[index]?.id !== messageId)
