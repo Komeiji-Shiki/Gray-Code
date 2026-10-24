@@ -4,20 +4,21 @@ import type { AppSettings, ControlApiSettings, ControlApiStatus } from '../../..
 import { onMessageFromExtension, sendToExtension } from '../../utils/vscode'
 import { markDesktopSettingsDirty, useDesktopSettingsDraft } from '../../platform/settingsDraft'
 import { copyToClipboard } from '../../utils/format'
+import { randomToken, useCredentialDraft } from '../../composables/useCredentialDraft'
 import { useI18n } from '../../i18n'
 
 const { t } = useI18n()
 const credentialId = 'control_api_token'
 const config = ref<ControlApiSettings>({ enabled: false, port: 18766, allowLan: false })
 const status = ref<ControlApiStatus>()
-const token = ref('')
+const credential = useCredentialDraft(() => credentialId)
+const token = credential.token
 const reveal = ref(false)
 const notice = ref('')
 const error = ref('')
 const busy = ref(false)
 let ready = false
 let changed = false
-let tokenEdited = false
 const stateLabels = computed<Record<ControlApiStatus['state'], string>>(() => ({
   disabled: t('components.settings.controlApiSettings.states.disabled'),
   stopped: t('components.settings.controlApiSettings.states.stopped'),
@@ -33,24 +34,18 @@ async function refresh() {
 }
 function edit() { changed = true; notice.value = ''; markDesktopSettingsDirty() }
 function changeToken(value: string) {
-  token.value = value
-  tokenEdited = true
+  credential.change(value)
   config.value.credentialRef = value.trim() ? credentialId : undefined
   edit()
 }
-function generateToken() {
-  changeToken([...crypto.getRandomValues(new Uint8Array(32))].map(value => value.toString(16).padStart(2, '0')).join(''))
-}
+function generateToken() { changeToken(randomToken()) }
 async function save() {
   if (!ready || !changed) return
   const settings = await sendToExtension<AppSettings>('platform.settings.get', {})
   settings.controlApi = { ...config.value }
-  await sendToExtension('platform.settings.update', { settings, ...(tokenEdited ? {
-    credentials: token.value.trim() ? { [credentialId]: token.value.trim() } : {},
-    clearCredentialChanges: token.value.trim() ? [] : [credentialId],
-  } : {}) })
+  await sendToExtension('platform.settings.update', { settings, ...credential.updates() })
   changed = false
-  tokenEdited = false
+  credential.saved()
 }
 async function action(operation: () => Promise<unknown>) {
   if (busy.value) return
@@ -85,7 +80,7 @@ onUnmounted(unsubscribe)
 onMounted(() => void action(async () => {
   const settings = await sendToExtension<AppSettings>('platform.settings.get', {})
   config.value = { ...config.value, ...settings.controlApi }
-  token.value = (await sendToExtension<{ token: string }>('platform.controlApi.token', {})).token
+  credential.load((await sendToExtension<{ token: string }>('platform.controlApi.token', {})).token)
   await refresh()
   ready = true
 }))

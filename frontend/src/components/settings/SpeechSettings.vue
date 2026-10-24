@@ -5,6 +5,7 @@ import { sendToExtension } from '../../utils/vscode'
 import { markDesktopSettingsDirty, useDesktopSettingsDraft } from '../../platform/settingsDraft'
 import { speak } from '../../composables/useSpeechPlayback'
 import { DEFAULT_SPEECH_SETTINGS, SPEECH_PROVIDER_DEFAULTS } from '@shared/speech'
+import { useCredentialDraft } from '../../composables/useCredentialDraft'
 import { useI18n } from '../../i18n'
 
 const { t } = useI18n()
@@ -12,7 +13,6 @@ const isDesktopHost = typeof window !== 'undefined' && !!window.__GRAYCODE_HOST
 const saving = ref(false)
 const config = ref<SpeechSettings>({ ...DEFAULT_SPEECH_SETTINGS })
 const status = ref<SpeechStatus>()
-const token = ref('')
 const reveal = ref(false)
 const notice = ref('')
 const error = ref('')
@@ -23,9 +23,11 @@ const cloneFile = ref<File>()
 const cloning = ref(false)
 let ready = false
 let changed = false
-let tokenEdited = false
 const isRemoteProvider = computed(() => config.value.provider !== 'system')
+/** 每个云端提供商的密钥分开保存，切回来时还能读到之前填写的那一个。 */
 const credentialId = computed(() => `speech_${config.value.provider}_key`)
+const credential = useCredentialDraft(() => credentialId.value)
+const token = credential.token
 const providers: { value: SpeechProvider; label: string }[] = [
   { value: 'fish', label: t('components.settings.speechSettings.providers.fish') },
   { value: 'openai', label: t('components.settings.speechSettings.providers.openai') },
@@ -49,16 +51,14 @@ async function changeProvider(provider: SpeechProvider) {
   // 音色不跨提供商沿用：OpenAI 的 alloy 对 Windows 语音或 Qwen 都无效。
   const defaults = SPEECH_PROVIDER_DEFAULTS[provider]
   config.value = { ...config.value, ...defaults, voice: defaults.voice, provider }
-  token.value = await loadCredential(provider)
-  tokenEdited = false
+  credential.load(await loadCredential(provider))
   config.value.credentialRef = token.value.trim() ? credentialId.value : undefined
   if (provider === 'system' && status.value?.systemVoices?.length) config.value.voice = status.value.systemVoices[0]
   edit()
 }
 
 function changeToken(value: string) {
-  token.value = value
-  tokenEdited = true
+  credential.change(value)
   config.value.credentialRef = value.trim() ? credentialId.value : undefined
   edit()
 }
@@ -68,12 +68,9 @@ async function save() {
   const settings = await sendToExtension<AppSettings>('platform.settings.get', {})
   settings.speech = { ...config.value, endpoint: config.value.endpoint?.trim() || undefined,
     credentialRef: isRemoteProvider.value ? config.value.credentialRef : undefined }
-  await sendToExtension('platform.settings.update', { settings, ...(tokenEdited ? {
-    credentials: token.value.trim() ? { [credentialId.value]: token.value.trim() } : {},
-    clearCredentialChanges: token.value.trim() ? [] : [credentialId.value],
-  } : {}) })
+  await sendToExtension('platform.settings.update', { settings, ...credential.updates() })
   changed = false
-  tokenEdited = false
+  credential.saved()
   await refreshStatus()
 }
 
@@ -135,7 +132,7 @@ async function createVoice() {
 onMounted(async () => {
   const settings = await sendToExtension<AppSettings>('platform.settings.get', {})
   config.value = { ...DEFAULT_SPEECH_SETTINGS, ...settings.speech }
-  token.value = await loadCredential(config.value.provider)
+  credential.load(await loadCredential(config.value.provider))
   if (token.value.trim() && isRemoteProvider.value && !config.value.credentialRef) config.value.credentialRef = credentialId.value
   await refreshStatus()
   if (config.value.provider === 'system' && !config.value.voice && status.value?.systemVoices?.length)
