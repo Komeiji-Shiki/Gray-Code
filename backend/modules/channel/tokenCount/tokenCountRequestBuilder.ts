@@ -5,8 +5,8 @@
  * 的内容转换逻辑抽为纯函数（token 计数职责的一部分）。
  */
 
-import { cleanContentForAPI } from '../../conversation';
-import type { Content } from '../../conversation';
+import { cleanContentForAPI } from '../../conversation/helpers';
+import type { Content } from '../../conversation/types';
 import {
     isImageMimeType,
     isPdfMimeType,
