@@ -4,7 +4,7 @@ import { createProxyFetch } from '../../../../backend/modules/channel/proxyFetch
 import { SPEECH_MAX_TEXT, speechSegments } from '../../../../shared/speech';
 import type { PlatformApplication } from '../application';
 import { speechSettings } from './settings';
-import { listSystemVoices, synthesizeSystem } from './systemVoice';
+import { SystemVoice } from './systemVoice';
 
 const maxAudioBytes = 30 * 1024 * 1024;
 /** 合成结果按 base64 长度计入缓存，重读同一段时不再请求按字计费的提供商。 */
@@ -43,7 +43,7 @@ function clip(text: string, mimeType: string, bytes: Buffer): SpeechClip {
 
 /** 调用方（界面、RPC 与控制接口）在各自入口确认主人身份，这里只校验参数并调用提供商。 */
 export class SpeechService {
-  private voices?: Promise<string[]>;
+  private readonly systemVoice = new SystemVoice();
   private readonly cache = new Map<string, SpeechClip>();
   private cacheSize = 0;
   constructor(private readonly app: PlatformApplication) {}
@@ -73,6 +73,9 @@ export class SpeechService {
 
   settings(): SpeechSettings { return speechSettings(this.app.settings.read('speech').speech); }
 
+  /** 应用关闭时结束本机语音进程。 */
+  close(): void { this.systemVoice.close(); }
+
   private credential(reference?: string): Promise<string | null> {
     return reference ? this.app.settings.credential(reference) : Promise.resolve(null);
   }
@@ -81,11 +84,9 @@ export class SpeechService {
     const settings = this.settings();
     const status: SpeechStatus = { available: true, enabled: settings.enabled, provider: settings.provider };
     if (settings.provider === 'system') {
-      try {
-        this.voices ??= listSystemVoices();
-        status.systemVoices = await this.voices;
-      } catch (error) {
-        this.voices = undefined;
+      // 每次都向常驻进程查询，新安装的语音包不需要重启应用就能出现。
+      try { status.systemVoices = await this.systemVoice.voices(); }
+      catch (error) {
         status.available = false;
         status.error = error instanceof Error ? error.message : String(error);
       }
@@ -110,9 +111,8 @@ export class SpeechService {
     const clips = keys.map(key => this.cached(key));
     const missing = texts.flatMap((text, index) => clips[index] ? [] : [index]);
     if (settings.provider === 'system') {
-      // 本机语音一次 PowerShell 调用合成全部缺失的片段，避免每段都重新加载系统语音。
-      const items = missing.length ? await synthesizeSystem(missing.map(index => texts[index]), voice, speed) : [];
-      items.forEach((item, position) => { clips[missing[position]] = clip(item.text, 'audio/wav', item.bytes); });
+      const audio = missing.length ? await this.systemVoice.synthesize(missing.map(index => texts[index]), voice, speed) : [];
+      audio.forEach((bytes, position) => { clips[missing[position]] = clip(texts[missing[position]], 'audio/wav', bytes); });
     } else {
       for (const index of missing) {
         const text = texts[index];

@@ -662,6 +662,7 @@ export class PlatformApplication {
       ['自动任务', () => this.automations?.close()],
       ['远程入口', () => this.remoteAccess?.close()],
       ['外部控制接口', () => this.controlApi?.close()],
+      ['语音合成', () => this.speech?.close()],
       ['Discord 总结', () => this.discord?.summaries.stop()],
       ['OneBot 总结', () => this.onebot?.summaries.stop()],
       ['任务接续', () => this.subagents?.feedback.continuation.close()],

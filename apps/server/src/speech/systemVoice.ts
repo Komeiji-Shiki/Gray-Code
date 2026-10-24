@@ -1,67 +1,122 @@
-import { spawn } from 'node:child_process';
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
-import path from 'node:path';
+import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
+import { createInterface } from 'node:readline';
 
-const powershell = process.platform === 'win32' ? 'powershell.exe' : undefined;
-const timeoutMs = 120_000;
-const quote = (value: string) => `'${value.replace(/'/g, "''")}'`;
-// 输出与错误都按 UTF-8 读取；不设置时中文系统的错误信息按 GBK 写出，读回来是乱码。
-const preamble = `$ErrorActionPreference = 'Stop'
-[Console]::OutputEncoding = [Text.Encoding]::UTF8
-Add-Type -AssemblyName System.Speech`;
-const listScript = `${preamble}
-$voice = New-Object System.Speech.Synthesis.SpeechSynthesizer
-$voice.GetInstalledVoices() | ForEach-Object { $_.VoiceInfo.Name }
-$voice.Dispose()`;
+const requestTimeoutMs = 120_000;
+/** 空闲这么久后结束进程；下次朗读重新启动，只多一次加载系统语音的时间。 */
+const idleMs = 120_000;
 
-function run(script: string): Promise<string> {
-  if (!powershell) return Promise.reject(new Error('本机语音合成只支持 Windows。'));
-  return new Promise((resolve, reject) => {
-    const child = spawn(powershell, ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-Command', script],
-      { windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] });
-    const output: Buffer[] = []; const errors: Buffer[] = [];
-    let bytes = 0;
-    const timer = setTimeout(() => { child.kill(); reject(new Error('本机语音合成超时。')); }, timeoutMs);
-    child.stdout.on('data', (chunk: Buffer) => { bytes += chunk.length; if (bytes <= 1024 * 1024) output.push(chunk); });
-    child.stderr.on('data', (chunk: Buffer) => { if (errors.reduce((total, item) => total + item.length, 0) < 16 * 1024) errors.push(chunk); });
-    child.once('error', error => { clearTimeout(timer); reject(error); });
-    child.once('close', code => {
-      clearTimeout(timer);
-      if (code === 0) { resolve(Buffer.concat(output).toString('utf8')); return; }
-      const message = Buffer.concat(errors).toString('utf8').trim();
-      reject(new Error(message || `本机语音合成失败（退出码 ${code}）。`));
-    });
-  });
-}
-
-export async function listSystemVoices(): Promise<string[]> {
-  const output = await run(listScript);
-  return output.split(/\r?\n/).map(line => line.trim()).filter(Boolean);
-}
-
-/** 一次 PowerShell 调用合成全部片段，避免长回复每段都重启系统语音。 */
-export async function synthesizeSystem(texts: string[], voice: string | undefined, speed: number): Promise<{ text: string; bytes: Buffer }[]> {
-  if (!powershell) throw new Error('本机语音合成只支持 Windows。');
-  const directory = await mkdtemp(path.join(tmpdir(), 'graycode-speech-'));
+/**
+ * 常驻循环：System.Speech 只加载一次，之后每行读入一个 JSON 请求、写出一行 JSON 结果。
+ * 音频写入内存流并以 base64 返回，不落临时文件；base64 不含需要转义的字符，直接拼成 JSON。
+ * 输入输出都按 UTF-8，中文文本和中文系统的错误信息都不会乱码。
+ */
+const workerScript = String.raw`$ErrorActionPreference = 'Stop'
+[Console]::InputEncoding = New-Object System.Text.UTF8Encoding $false
+[Console]::OutputEncoding = New-Object System.Text.UTF8Encoding $false
+Add-Type -AssemblyName System.Speech
+$synth = New-Object System.Speech.Synthesis.SpeechSynthesizer
+$defaultVoice = $synth.Voice.Name
+while ($null -ne ($line = [Console]::In.ReadLine())) {
   try {
-    const files = texts.map((text, index) => ({ text, path: path.join(directory, `${index}.wav`) }));
-    const input = path.join(directory, 'input.json');
-    await writeFile(input, JSON.stringify(files), 'utf8');
+    $request = $line | ConvertFrom-Json
+    if ($request.command -eq 'voices') {
+      $names = @($synth.GetInstalledVoices() | ForEach-Object { $_.VoiceInfo.Name })
+      [Console]::Out.WriteLine((ConvertTo-Json -Compress -InputObject @{ ok = $true; voices = $names }))
+      continue
+    }
+    if ($request.voice) { $synth.SelectVoice($request.voice) } else { $synth.SelectVoice($defaultVoice) }
+    $synth.Rate = [int]$request.rate
+    $clips = foreach ($text in $request.texts) {
+      $stream = New-Object System.IO.MemoryStream
+      $synth.SetOutputToWaveStream($stream)
+      $synth.Speak([string]$text)
+      $synth.SetOutputToNull()
+      [Convert]::ToBase64String($stream.ToArray())
+      $stream.Dispose()
+    }
+    [Console]::Out.WriteLine('{"ok":true,"clips":["' + (@($clips) -join '","') + '"]}')
+  } catch {
+    [Console]::Out.WriteLine((ConvertTo-Json -Compress -InputObject @{ ok = $false; error = $_.Exception.Message }))
+  }
+}`;
+
+interface Pending { resolve(value: Record<string, any>): void; reject(error: Error): void }
+
+/** 语音服务独占的 Windows 本机语音进程；请求串行执行，只结束自己启动的这一个进程。 */
+export class SystemVoice {
+  private child?: ChildProcessWithoutNullStreams;
+  private pending?: Pending;
+  private queue: Promise<unknown> = Promise.resolve();
+  private idle?: NodeJS.Timeout;
+  private closed = false;
+
+  async voices(): Promise<string[]> {
+    return (await this.request({ command: 'voices' })).voices ?? [];
+  }
+
+  async synthesize(texts: string[], voice: string | undefined, speed: number): Promise<Buffer[]> {
     const rate = Math.max(-10, Math.min(10, Math.round((speed - 1) * 10)));
-    const script = `${preamble}
-$items = Get-Content -Raw -Encoding UTF8 ${quote(input)} | ConvertFrom-Json
-$voice = New-Object System.Speech.Synthesis.SpeechSynthesizer
-${voice ? `$voice.SelectVoice(${quote(voice)})` : ''}
-$voice.Rate = ${rate}
-foreach ($item in $items) {
-  $voice.SetOutputToWaveFile($item.path)
-  $voice.Speak($item.text)
-}
-$voice.Dispose()`;
-    await run(script);
-    return await Promise.all(files.map(async item => ({ text: item.text, bytes: await readFile(item.path) })));
-  } finally {
-    await rm(directory, { recursive: true, force: true }).catch(() => {});
+    const result = await this.request({ command: 'speak', texts, voice: voice ?? '', rate });
+    return (result.clips as string[]).map(clip => Buffer.from(clip, 'base64'));
+  }
+
+  close(): void {
+    this.closed = true;
+    this.stop();
+  }
+
+  private request(command: Record<string, unknown>): Promise<Record<string, any>> {
+    const run = this.queue.catch(() => {}).then(() => this.send(command));
+    this.queue = run;
+    return run;
+  }
+
+  private send(command: Record<string, unknown>): Promise<Record<string, any>> {
+    if (this.closed) return Promise.reject(new Error('本机语音已关闭。'));
+    if (process.platform !== 'win32') return Promise.reject(new Error('本机语音合成只支持 Windows。'));
+    clearTimeout(this.idle);
+    const child = this.child ?? this.start();
+    return new Promise<Record<string, any>>((resolve, reject) => {
+      const timer = setTimeout(() => { reject(new Error('本机语音合成超时。')); this.stop(); }, requestTimeoutMs);
+      this.pending = {
+        resolve: value => { clearTimeout(timer); resolve(value); },
+        reject: error => { clearTimeout(timer); reject(error); },
+      };
+      child.stdin.write(`${JSON.stringify(command)}\n`);
+    }).finally(() => {
+      this.pending = undefined;
+      this.idle = setTimeout(() => this.stop(), idleMs);
+      this.idle.unref();
+    });
+  }
+
+  private start(): ChildProcessWithoutNullStreams {
+    const child = spawn('powershell.exe', ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-Command', workerScript],
+      { windowsHide: true, stdio: 'pipe' });
+    this.child = child;
+    let diagnostic = '';
+    child.stderr.on('data', (chunk: Buffer) => { diagnostic = (diagnostic + chunk.toString('utf8')).slice(-4_000); });
+    child.stdin.on('error', () => {});
+    createInterface({ input: child.stdout }).on('line', line => {
+      let message: Record<string, any>;
+      try { message = JSON.parse(line); } catch { return; }
+      if (message.ok) this.pending?.resolve(message);
+      else this.pending?.reject(new Error(String(message.error || '本机语音合成失败。')));
+    });
+    child.once('error', error => this.pending?.reject(error));
+    child.once('close', code => {
+      if (this.child === child) this.child = undefined;
+      this.pending?.reject(new Error(diagnostic.trim() || `本机语音进程已退出（退出码 ${code}）。`));
+    });
+    return child;
+  }
+
+  private stop(): void {
+    clearTimeout(this.idle);
+    const child = this.child;
+    if (!child) return;
+    this.child = undefined;
+    child.stdin.end();
+    child.kill();
   }
 }
