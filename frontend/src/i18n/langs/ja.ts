@@ -1174,7 +1174,7 @@ const ja: LanguageMessages = {
                 endpointRpc: 'UI と同じ RPC メソッドを呼び出します。REST 化されていない操作に使えます。',
                 endpointSpeech: '設定済みのプロバイダーで音声を合成し、base64 の音声断片を返します。',
                 agentHint: '待ち受け中はアドレスとトークンを含む検出ファイルを ~/.graycode/control-api/ に書き込みます。Claude Code や Codex などのローカルエージェントはこれを読み、GET /v1 の説明に従って直接呼び出せます。API の停止時やアプリ終了時に削除されます。',
-                securityHint: 'トークンはオーナー権限と同じです。信頼できるアプリだけに渡し、ブラウザのアドレス欄や公開ログに載せないでください。'
+                securityHint: 'トークンはオーナー権限と同じで、メッセージ送信やツール呼び出しの承認もできます。信頼できるアプリだけに渡し、ブラウザのアドレス欄や公開ログに載せないでください。'
             },
             channelSettings: {
                 selector: {

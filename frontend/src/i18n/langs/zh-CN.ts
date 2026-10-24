@@ -1176,7 +1176,7 @@ const zhCN = {
                 endpointRpc: '调用界面同款 RPC 方法，适合尚未封装为 REST 的操作。',
                 endpointSpeech: '使用已配置的提供商合成语音，返回 base64 音频片段。',
                 agentHint: '接口监听时会在 ~/.graycode/control-api/ 写入发现文件（地址与令牌），本机的 Claude Code、Codex 等代理读取后按 GET /v1 的说明直接调用；接口停止或应用退出时删除。',
-                securityHint: '令牌等同于主人权限，请只交给可信应用；不要在浏览器地址栏或公开日志中携带令牌。'
+                securityHint: '令牌等同于主人权限，可以发送消息、批准工具调用，请只交给可信应用；不要在浏览器地址栏或公开日志中携带令牌。'
             },
             channelSettings: {
                 selector: {

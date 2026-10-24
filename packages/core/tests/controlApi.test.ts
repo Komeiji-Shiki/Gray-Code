@@ -36,6 +36,8 @@ function createApp() {
       },
       wait: (id: string) => id === 'run-slow' ? new Promise(() => {}) : Promise.resolve(runs.get(id)),
       cancel: async () => {},
+      pendingApprovals: () => [],
+      pendingQuestions: () => [],
     },
     storage: {
       directory: '/data',

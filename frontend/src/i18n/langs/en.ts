@@ -1174,7 +1174,7 @@ const en: LanguageMessages = {
                 endpointRpc: 'Call the same RPC methods as the UI for operations without a REST wrapper.',
                 endpointSpeech: 'Synthesize speech with the configured provider; returns base64 audio clips.',
                 agentHint: 'While listening, a discovery file with the address and token is written to ~/.graycode/control-api/. Local agents such as Claude Code or Codex read it and follow GET /v1 to call the API directly. It is removed when the API stops or the app quits.',
-                securityHint: 'The token grants owner permissions. Only give it to trusted apps and never put it in browser addresses or public logs.'
+                securityHint: 'The token grants owner permissions, including sending messages and approving tool calls. Only give it to trusted apps and never put it in browser addresses or public logs.'
             },
             channelSettings: {
                 selector: {

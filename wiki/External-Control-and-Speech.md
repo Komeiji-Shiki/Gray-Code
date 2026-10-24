@@ -53,6 +53,8 @@ curl -H "Authorization: Bearer <token>" http://127.0.0.1:18766/v1
 | `POST /v1/conversations/:id/messages` | 发送用户消息并启动任务。 |
 | `GET /v1/runs/:id` | 任务状态；结束后附带最终回复，支持 `wait` 秒数。 |
 | `GET /v1/runs/:id/events` | 读取任务事件，支持 `after`、`limit`。 |
+| `POST /v1/runs/:id/approvals/:approvalId` | 批准或拒绝待审批的工具调用。 |
+| `POST /v1/runs/:id/questions/:questionId` | 回答模型提出的问题。 |
 | `POST /v1/runs/:id/cancel` | 取消任务。 |
 | `GET /v1/events` | SSE 事件流。 |
 | `POST /v1/rpc` | 调用界面同款 RPC，适合尚未封装为 REST 的操作。 |
@@ -73,7 +75,27 @@ curl -X POST http://127.0.0.1:18766/v1/conversations/<conversationId>/messages  
 - `wait`：`true` 表示等到任务结束；数字表示最多等待的秒数（1～3600）。很多代理的命令有超时限制，建议传秒数。
 - `requestKey` 或 `Idempotency-Key` 请求头：幂等键。超时后用同一个键重发，返回的是同一个任务，不会重复执行。
 
-任务已经结束时返回 `200`，结构为 `{ "conversationId": "...", "run": { ... }, "done": true, "reply": "最终回复" }`；仍在运行时返回 `202` 与 `"done": false`，之后用 `GET /v1/runs/:id?wait=120` 继续等待。任务状态为 `awaiting_approval` 或 `awaiting_input` 时，表示在等 GrayCode 界面中的审批或回答。
+任务已经结束时返回 `200`，结构为 `{ "conversationId": "...", "run": { ... }, "done": true, "reply": "最终回复" }`；仍在运行时返回 `202` 与 `"done": false`，之后用 `GET /v1/runs/:id?wait=120` 继续等待。
+
+### 审批与回答
+
+任务状态为 `awaiting_approval` 或 `awaiting_input` 时，响应里的 `pending` 列出正在等待的内容：
+
+```json
+{
+  "done": false,
+  "run": { "id": "<runId>", "status": "awaiting_approval" },
+  "pending": {
+    "approvals": [{ "id": "<approvalId>", "toolName": "delete_file", "input": { "text": "{\"path\":\"old.log\"}" }, "effects": ["data_delete"] }],
+    "questions": []
+  }
+}
+```
+
+- 批准或拒绝：`POST /v1/runs/<runId>/approvals/<approvalId>`，请求体 `{ "accepted": true }` 或 `{ "accepted": false }`。审批带 `choices`（如「只允许这一次」「始终允许」）时改传 `{ "choiceId": "<选项 id>" }`。
+- 回答问题：`POST /v1/runs/<runId>/questions/<questionId>`，请求体 `{ "answers": ["蓝色"] }`，与 `questions` 一一对应。
+
+审批和问题在 GrayCode 界面里同样可以处理，先到的一方生效；已经处理过的审批或问题返回 `404`。工具参数超过 2000 字符时 `input` 截断并标记 `truncated`。
 
 ### 读取历史
 
@@ -106,7 +128,7 @@ curl -N -H "Authorization: Bearer <token>"   "http://127.0.0.1:18766/v1/events?t
 ### 安全边界
 
 - 接口只以主人身份工作，没有单独的只读令牌或工具白名单。
-- 任务仍然经过正常的工具权限、工作区与审批流程；接口不会绕过确认。
+- 任务仍然经过正常的工具权限、工作区与审批流程。持有令牌的调用方可以通过接口批准审批，等同于在界面中点击确认；只想让外部程序观察、不想让它批准时，不要把令牌交给它。
 - 令牌更换并保存后立即生效：端口不变，旧令牌失效，用旧令牌建立的事件流会断开，需要用新令牌重连。修改端口或局域网开关会重新监听。
 - 只需要本机脚本访问时，保持「允许局域网访问」关闭。
 

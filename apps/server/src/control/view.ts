@@ -7,7 +7,7 @@ export const runFinished = (run: RunRecord): boolean => finishedStatuses.has(run
 
 type Part = Record<string, any>;
 
-function preview(value: unknown): { text: string; truncated?: true } {
+export function preview(value: unknown): { text: string; truncated?: true } {
   const text = typeof value === 'string' ? value : JSON.stringify(value ?? null);
   return text.length > previewLimit ? { text: text.slice(0, previewLimit), truncated: true } : { text };
 }

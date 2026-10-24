@@ -5,7 +5,7 @@ import type { PlatformApplication } from '../application';
 import type { ApplicationRouter, ClientSession } from '../transport/router';
 import { chatUserMessage } from '../transport/chatInput';
 import { maxReferenceAudioBytes } from '../speech/service';
-import { compactMessage, runFinished, runReply } from './view';
+import { compactMessage, preview, runFinished, runReply } from './view';
 import packageMetadata from '../../../../package.json';
 
 export const session: ClientSession = { actorId: 'owner', clientId: 'control-api' };
@@ -82,9 +82,24 @@ export function controlRoutes(application: PlatformApplication, options: {
     if (!run) throw new ControlRequestError(404, `任务不存在：${id}`);
     return run;
   };
+  const approvalOf = (runId: string, id: string) => {
+    const request = application.runtime.pendingApprovals().find(item => item.id === id && item.runId === runId);
+    if (!request) throw new ControlRequestError(404, '这个审批不存在或已经处理。');
+    return request;
+  };
+  /** 运行中的任务附带正在等待的审批与问题，代理据此决定批准、拒绝或回答。 */
+  const pendingOf = (runId: string) => {
+    const approvals = application.runtime.pendingApprovals().filter(item => item.runId === runId).map(item => ({
+      id: item.id, toolName: item.toolName, input: preview(item.args), effects: item.effects,
+      ...(item.reason ? { reason: item.reason } : {}), ...(item.choices ? { choices: item.choices } : {}),
+    }));
+    const questions = application.runtime.pendingQuestions().filter(item => item.runId === runId)
+      .map(item => ({ id: item.id, questions: item.questions, expiresAt: item.expiresAt }));
+    return approvals.length || questions.length ? { pending: { approvals, questions } } : {};
+  };
   /** 结束的任务附带最终回复，调用方不必再翻历史。 */
   const describeRun = async (run: RunRecord) => {
-    if (!runFinished(run)) return { run, done: false };
+    if (!runFinished(run)) return { run, done: false, ...pendingOf(run.id) };
     const tail = await application.storage.readHistory(run.conversationId, { limit: replyWindow });
     const reply = runReply(tail.messages, run.id);
     return { run, done: true, ...(reply ? { reply } : {}) };
@@ -110,7 +125,8 @@ export function controlRoutes(application: PlatformApplication, options: {
         conventions: [
           '请求与响应都是 JSON；错误响应为 { error, code? }，按 HTTP 状态区分：400 参数错误，401 令牌错误，404 不存在，'
             + '409 会话已有任务在运行或数据已变化，502 上游服务失败。',
-          '任务状态 awaiting_approval / awaiting_input 表示在等 GrayCode 界面中的审批或回答，接口不会绕过。',
+          '任务状态 awaiting_approval / awaiting_input 时，响应的 pending 列出待审批的工具调用与待回答的问题，'
+            + '可以用 /v1/runs/:id/approvals/:approvalId 批准或拒绝、用 /v1/runs/:id/questions/:questionId 回答，GrayCode 界面也能处理。',
           '长任务建议 wait 传秒数（如 120），超时返回 202 与当前状态，再用 GET /v1/runs/:id?wait=120 继续等待。',
         ],
         routes: routes.map(({ method, path, summary, query, body }) => ({ method, path, summary,
@@ -231,6 +247,31 @@ export function controlRoutes(application: PlatformApplication, options: {
         const events = await application.storage.readRunEvents(run.id, integer(url.searchParams.get('after'), 0, 0, Number.MAX_SAFE_INTEGER, 'after'),
           integer(url.searchParams.get('limit'), 200, 1, 1000, 'limit'));
         return [200, { run, events }];
+      },
+    },
+    {
+      method: 'POST', path: '/v1/runs/:id/approvals/:approvalId', summary: '批准或拒绝待审批的工具调用，审批项见任务状态的 pending.approvals。',
+      body: { accepted: 'true 批准，false 拒绝', choiceId: '审批带 choices 时改为传其中一个选项的 id（如只允许这一次或始终允许）' },
+      handle: async ({ params, body }) => {
+        const request = approvalOf((await runOf(params.id)).id, params.approvalId);
+        const input = await body();
+        const choiceId = typeof input.choiceId === 'string' ? input.choiceId : undefined;
+        if (choiceId === undefined && typeof input.accepted !== 'boolean')
+          throw new ControlRequestError(400, request.choices ? `请传 choiceId，可选：${request.choices.map(choice => choice.id).join(', ')}。` : 'accepted 必须是 true 或 false。');
+        // 带选项的审批由选项决定批准与否，运行时会按选项种类覆盖 accepted。
+        await application.runtime.resolveApproval(request.id, session.actorId, input.accepted === true, choiceId);
+        return [200, { success: true }];
+      },
+    },
+    {
+      method: 'POST', path: '/v1/runs/:id/questions/:questionId', summary: '回答模型提出的问题，问题见任务状态的 pending.questions。',
+      body: { answers: '字符串数组，与 questions 一一对应；问题带 options 时可直接填其中一项' },
+      handle: async ({ params, body }) => {
+        const run = await runOf(params.id);
+        const question = application.runtime.pendingQuestions().find(item => item.id === params.questionId && item.runId === run.id);
+        if (!question) throw new ControlRequestError(404, '这个问题不存在、已经回答或已过期。');
+        await application.runtime.answerQuestion(question.id, session.actorId, (await body()).answers);
+        return [200, { success: true }];
       },
     },
     {
