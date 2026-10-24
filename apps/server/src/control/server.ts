@@ -64,9 +64,7 @@ function string(value: unknown, field: string, max = 20_000): string {
 export interface ControlServerOptions { port: number; token: string; allowLan: boolean }
 
 export async function startControlServer(application: PlatformApplication, options: ControlServerOptions) {
-  if (options.token.length < 32) throw new Error('外部控制令牌至少需要 32 个字符。');
-  if (!Number.isInteger(options.port) || options.port < 0 || options.port > 65535) throw new Error('外部控制端口无效。');
-  const expected = hash(options.token);
+  let expected = hash(options.token);
   const router = new ApplicationRouter(application);
   const recent: { id: string; event: Record<string, any>; frame: Buffer; bytes: number }[] = [];
   const streams = new Map<ServerResponse, (event: Record<string, any>) => boolean>();
@@ -273,6 +271,12 @@ export async function startControlServer(application: PlatformApplication, optio
 
   return {
     port: (server.address() as AddressInfo).port,
+    /** 保留端口和进行中的请求；事件流按旧令牌建立，轮换后全部断开，客户端需用新令牌重连。 */
+    rotateToken: async (token: string) => {
+      expected = hash(token);
+      for (const stream of streams.keys()) stream.end();
+      streams.clear();
+    },
     close: async () => {
       if (closing) return;
       closing = true;

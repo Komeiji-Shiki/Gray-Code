@@ -1,5 +1,7 @@
+import { createServer } from 'node:net';
 import type { PlatformApplication } from '../../../apps/server/src/application';
 import { startControlServer } from '../../../apps/server/src/control/server';
+import { ControlApiService } from '../../../apps/server/src/control/service';
 
 const token = 'a'.repeat(64);
 const conversation = { id: 'conversation-1', title: 'Hello', actorId: 'owner', createdAt: 1, updatedAt: 2, workspaceId: 'workspace-1' };
@@ -114,5 +116,56 @@ describe('external control API', () => {
       const missing = await request(server.port, '/v1/does-not-exist', { headers });
       expect(missing.status).toBe(404);
     } finally { await server.close(); }
+  });
+
+  test('service follows saved settings: rotates tokens in place, restarts on target changes and keeps manual stops', async () => {
+    const { app } = createApp();
+    const listeners: ((event: Record<string, any>) => void)[] = [];
+    let config: Record<string, any> = { enabled: true, port: 0, credentialRef: 'control_api_token', allowLan: false };
+    let secret = token;
+    const read = app.settings.read;
+    Object.assign(app, {
+      settings: { read: (key: string) => key === 'controlApi' ? { controlApi: config } : read(key), credential: async () => secret },
+      subscribe: (listener: (event: Record<string, any>) => void) => { listeners.push(listener); return () => {}; },
+      publish: (event: Record<string, any>) => { for (const listener of [...listeners]) listener(event); },
+    });
+    const save = async (next: Record<string, any> = config) => {
+      config = next;
+      app.publish({ type: 'settings.changed' });
+      await new Promise(resolve => setTimeout(resolve, 50));
+    };
+    const service = new ControlApiService(app);
+    try {
+      await service.initialize();
+      const { port } = service.status();
+      expect(service.status().state).toBe('listening');
+      expect(service.keepsAlive).toBe(true);
+      const controller = new AbortController();
+      const stream = await request(port!, '/v1/events', { headers: { Authorization: `Bearer ${token}` }, signal: controller.signal });
+      const ended = stream.text();
+
+      secret = 'b'.repeat(64);
+      await save();
+      await expect(ended).resolves.toContain(': connected');
+      expect(service.status().port).toBe(port);
+      expect((await request(port!, '/v1/health', { headers: { Authorization: `Bearer ${token}` } })).status).toBe(401);
+      expect((await request(port!, '/v1/health', { headers: { Authorization: `Bearer ${secret}` } })).status).toBe(200);
+
+      const probe = createServer();
+      const fixed = await new Promise<number>(resolve => probe.listen(0, '127.0.0.1', () => resolve((probe.address() as any).port)));
+      await new Promise(resolve => probe.close(resolve));
+      await save({ ...config, port: fixed });
+      expect(service.status()).toMatchObject({ state: 'listening', port: fixed });
+
+      service.stop();
+      await new Promise(resolve => setTimeout(resolve, 50));
+      expect(service.status().state).toBe('stopped');
+      expect(service.keepsAlive).toBe(false);
+      await save();
+      expect(service.status().state).toBe('stopped');
+      await save({ ...config, port: 0 });
+      expect(service.status().state).toBe('listening');
+      controller.abort();
+    } finally { await service.close(); }
   });
 });
