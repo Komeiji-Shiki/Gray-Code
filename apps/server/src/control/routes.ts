@@ -311,7 +311,7 @@ export function controlRoutes(application: PlatformApplication, options: {
           ...(typeof input.voice === 'string' && input.voice ? { voice: input.voice } : {}),
           ...(input.speed !== undefined ? { speed: Number(input.speed) } : {}),
           ...(typeof input.format === 'string' ? { format: input.format as 'mp3' | 'wav' | 'opus' } : {}),
-        })];
+        }, session.clientId)];
       },
     },
     {

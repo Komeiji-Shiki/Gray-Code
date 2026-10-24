@@ -45,7 +45,8 @@ function clip(text: string, mimeType: string, bytes: Buffer): SpeechClip {
 export class SpeechService {
   private readonly systemVoice = new SystemVoice();
   private readonly cache = new Map<string, SpeechClip>();
-  private readonly activeRequests = new Set<AbortController>();
+  /** 进行中的请求与发起它的客户端；没有归属的（如克隆音色）只在应用关闭时中止。 */
+  private readonly activeRequests = new Map<AbortController, string | undefined>();
   private cacheSize = 0;
   constructor(private readonly app: PlatformApplication) {}
 
@@ -79,22 +80,21 @@ export class SpeechService {
 
   settings(): SpeechSettings { return speechSettings(this.app.settings.read('speech').speech); }
 
-  /** 中止仍在进行的云端或本机语音合成。 */
-  cancel(): void {
-    for (const controller of this.activeRequests) controller.abort(new Error('语音合成已取消。'));
-    this.activeRequests.clear();
-    this.systemVoice.cancel();
+  /** 中止该客户端仍在进行的合成；其他客户端与控制接口的请求不受影响。 */
+  cancel(owner: string): void {
+    for (const [controller, requestOwner] of this.activeRequests)
+      if (requestOwner === owner) controller.abort(new Error('语音合成已取消。'));
   }
 
-  /** 应用关闭时结束本机语音进程。 */
+  /** 应用关闭时中止全部请求并结束本机语音进程。 */
   close(): void {
-    this.cancel();
+    for (const controller of this.activeRequests.keys()) controller.abort(new Error('语音服务已关闭。'));
     this.systemVoice.close();
   }
 
-  private async track<T>(run: (signal: AbortSignal) => Promise<T>): Promise<T> {
+  private async track<T>(owner: string | undefined, run: (signal: AbortSignal) => Promise<T>): Promise<T> {
     const controller = new AbortController();
-    this.activeRequests.add(controller);
+    this.activeRequests.set(controller, owner);
     try {
       return await run(controller.signal);
     } finally {
@@ -120,7 +120,8 @@ export class SpeechService {
     return status;
   }
 
-  async synthesize(input: SpeechInput): Promise<SpeechSynthesisResult> {
+  /** owner 是发起请求的客户端，同一客户端之后可以用 cancel 中止它。 */
+  async synthesize(input: SpeechInput, owner: string): Promise<SpeechSynthesisResult> {
     const settings = this.settings();
     if (!settings.enabled) throw new Error('请先在设置中启用语音合成。');
     if (typeof input.text !== 'string') throw new Error('text 必须是字符串。');
@@ -139,9 +140,9 @@ export class SpeechService {
     keys.forEach((key, index) => { if (!clips[index] && !missingByKey.has(key)) missingByKey.set(key, index); });
     const missing = [...missingByKey.values()];
     const synthesized = new Map<string, SpeechClip>();
-    await this.track(async signal => {
+    await this.track(owner, async signal => {
       if (settings.provider === 'system') {
-        const audio = missing.length ? await this.systemVoice.synthesize(missing.map(index => texts[index]), voice, speed) : [];
+        const audio = await this.systemVoice.synthesize(missing.map(index => texts[index]), voice, speed, signal);
         audio.forEach((bytes, position) => {
           const index = missing[position];
           synthesized.set(keys[index], clip(texts[index], 'audio/wav', bytes));
@@ -172,6 +173,8 @@ export class SpeechService {
       combined.throwIfAborted();
       response = await fetcher(url, { ...init, signal: combined });
     } catch (error) {
+      // 调用方主动取消不是上游故障，原样抛出取消原因；超时与连接失败才算上游失败。
+      if (signal.aborted) throw signal.reason;
       throw new SpeechProviderError(`无法连接语音合成接口：${(error as Error).message}`);
     }
     if (!response.ok) {
@@ -236,7 +239,7 @@ export class SpeechService {
     const bytes = Buffer.from(input.audio, 'base64');
     if (!bytes.length) throw new Error('参考录音内容为空。');
     if (bytes.length > maxReferenceAudioBytes) throw new Error('参考录音不能超过 50 MiB。');
-    return this.track(async signal => {
+    return this.track(undefined, async signal => {
       const apiKey = await this.credential(settings.credentialRef);
       if (!apiKey) throw new Error('Fish Audio API Key 不可用，请先填写并保存。');
       const extension = input.mimeType.includes('wav') ? 'wav' : input.mimeType.includes('mpeg') ? 'mp3'

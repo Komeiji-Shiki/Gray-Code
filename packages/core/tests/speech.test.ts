@@ -55,7 +55,7 @@ describe('speech providers', () => {
   test('Fish Audio sends model and reference in the expected request', async () => {
     const request = jest.fn(async () => new Response(Buffer.from('mp3-data'), { status: 200 }));
     globalThis.fetch = request as unknown as typeof fetch;
-    const result = await new SpeechService(fakeApp(fish)).synthesize({ text: '你好。' });
+    const result = await new SpeechService(fakeApp(fish)).synthesize({ text: '你好。' }, 'ui');
     expect(result.provider).toBe('fish');
     expect(result.clips).toEqual([{ text: '你好。', mimeType: 'audio/mpeg', base64: Buffer.from('mp3-data').toString('base64') }]);
     const [url, init] = request.mock.calls[0] as unknown as [string, RequestInit];
@@ -71,7 +71,7 @@ describe('speech providers', () => {
     const request = jest.fn(async () => new Response(JSON.stringify({ output: { audio: {
       data: Buffer.from('wav-data').toString('base64') } } }), { status: 200, headers: { 'Content-Type': 'application/json' } }));
     globalThis.fetch = request as unknown as typeof fetch;
-    const result = await new SpeechService(fakeApp(settings)).synthesize({ text: '你好。' });
+    const result = await new SpeechService(fakeApp(settings)).synthesize({ text: '你好。' }, 'ui');
     expect(result.clips[0]).toMatchObject({ mimeType: 'audio/wav', base64: Buffer.from('wav-data').toString('base64') });
     const [url, init] = request.mock.calls[0] as unknown as [string, RequestInit];
     expect(url).toBe(settings.endpoint);
@@ -84,7 +84,7 @@ describe('speech providers', () => {
       model: 'kokoro', voice: 'af_heart', format: 'mp3', speed: 1.2 };
     const request = jest.fn(async () => new Response(Buffer.from('audio'), { status: 200 }));
     globalThis.fetch = request as unknown as typeof fetch;
-    await new SpeechService(fakeApp(settings, null)).synthesize({ text: 'Hello.' });
+    await new SpeechService(fakeApp(settings, null)).synthesize({ text: 'Hello.' }, 'ui');
     const [url, init] = request.mock.calls[0] as unknown as [string, RequestInit];
     expect(url).toBe('http://127.0.0.1:8880/v1/audio/speech');
     expect(new Headers(init.headers).get('authorization')).toBeNull();
@@ -111,15 +111,15 @@ describe('speech providers', () => {
   test('reads Markdown as plain text and marks provider failures as upstream errors', async () => {
     const request = jest.fn(async () => new Response(Buffer.from('mp3-data'), { status: 200 }));
     globalThis.fetch = request as unknown as typeof fetch;
-    await new SpeechService(fakeApp(fish)).synthesize({ text: '## 标题\n\n**好的**，见 [文档](https://example.com)。\n```\ncode\n```' });
+    await new SpeechService(fakeApp(fish)).synthesize({ text: '## 标题\n\n**好的**，见 [文档](https://example.com)。\n```\ncode\n```' }, 'ui');
     const [, init] = request.mock.calls[0] as unknown as [string, RequestInit];
     expect(JSON.parse(String(init.body)).text).toBe('标题\n\n好的，见 文档。');
 
     globalThis.fetch = jest.fn(async () => new Response('quota exceeded', { status: 429 })) as unknown as typeof fetch;
-    await expect(new SpeechService(fakeApp(fish)).synthesize({ text: '你好。' }))
+    await expect(new SpeechService(fakeApp(fish)).synthesize({ text: '你好。' }, 'ui'))
       .rejects.toMatchObject({ code: 'UPSTREAM_FAILED', message: expect.stringContaining('429') });
     globalThis.fetch = jest.fn(async () => { throw new TypeError('fetch failed'); }) as unknown as typeof fetch;
-    await expect(new SpeechService(fakeApp(fish)).synthesize({ text: '你好。' })).rejects.toMatchObject({ code: 'UPSTREAM_FAILED' });
+    await expect(new SpeechService(fakeApp(fish)).synthesize({ text: '你好。' }, 'ui')).rejects.toMatchObject({ code: 'UPSTREAM_FAILED' });
   });
 
   test('one request entry checks the owner once and validates clone input types', async () => {
@@ -135,16 +135,16 @@ describe('speech providers', () => {
     const request = jest.fn(async () => new Response(Buffer.from('mp3-data'), { status: 200 }));
     globalThis.fetch = request as unknown as typeof fetch;
     const service = new SpeechService(fakeApp(fish));
-    const first = await service.synthesize({ text: '同一句话。' });
-    expect(await service.synthesize({ text: '同一句话。' })).toEqual(first);
+    const first = await service.synthesize({ text: '同一句话。' }, 'ui');
+    expect(await service.synthesize({ text: '同一句话。' }, 'ui')).toEqual(first);
     expect(request).toHaveBeenCalledTimes(1);
-    await service.synthesize({ text: '同一句话。', speed: 1.5 });
+    await service.synthesize({ text: '同一句话。', speed: 1.5 }, 'ui');
     expect(request).toHaveBeenCalledTimes(2);
-    await service.synthesize({ text: '同一句话。\n新的一句。' });
+    await service.synthesize({ text: '同一句话。\n新的一句。' }, 'ui');
     expect(request).toHaveBeenCalledTimes(3);
   });
 
-  test('deduplicates repeated sentences within one call, keeps plain text intact and aborts active requests on cancel', async () => {
+  test('deduplicates repeated sentences within one call, keeps plain text intact and cancels only the calling client', async () => {
     const calls: string[] = [];
     globalThis.fetch = jest.fn(async (_url: string, init: RequestInit) => {
       const parsed = JSON.parse(String(init.body));
@@ -154,21 +154,30 @@ describe('speech providers', () => {
     const app = fakeApp(fish);
     const sentence = `${'重复'.repeat(350)}。`;
     const repeated = `${sentence}${sentence}`;
-    const result = await app.speech.synthesize({ text: repeated });
+    const result = await app.speech.synthesize({ text: repeated }, 'ui');
     expect(result.clips).toHaveLength(2);
     expect(result.clips[0]).toEqual(result.clips[1]);
     expect(calls).toHaveLength(1);
     expect((app.speech as unknown as { cacheSize: number }).cacheSize).toBe(result.clips[0].base64.length);
 
     calls.length = 0;
-    await app.speech.synthesize({ text: '1. 保留 [原始](文本)。', plain: true });
+    await app.speech.synthesize({ text: '1. 保留 [原始](文本)。', plain: true }, 'ui');
     expect(calls).toEqual(['1. 保留 [原始](文本)。']);
 
     globalThis.fetch = jest.fn((_url: string, init: RequestInit) => new Promise<Response>((_resolve, reject) => {
       init.signal?.addEventListener('abort', () => reject(init.signal?.reason ?? new Error('aborted')), { once: true });
     })) as unknown as typeof fetch;
-    const pending = app.speech.synthesize({ text: '正在合成的长句。' });
+    const own = speechRequest(app, { actorId: 'owner', clientId: 'ui' }, 'speech.synthesize', { text: '正在合成的长句。' });
+    const other = app.speech.synthesize({ text: '另一个客户端的句子。' }, 'control-api');
+    let otherSettled = false;
+    other.catch(() => {}).finally(() => { otherSettled = true; });
     await speechRequest(app, { actorId: 'owner', clientId: 'ui' }, 'speech.cancel', {});
-    await expect(pending).rejects.toMatchObject({ code: 'UPSTREAM_FAILED' });
+    const cancelled = await own.catch(error => error);
+    expect(cancelled.message).toBe('语音合成已取消。');
+    expect(cancelled.code).toBeUndefined();
+    await new Promise(resolve => setImmediate(resolve));
+    expect(otherSettled).toBe(false);
+    app.speech.close();
+    await expect(other).rejects.toThrow('语音服务已关闭。');
   });
 });
