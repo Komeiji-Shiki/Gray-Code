@@ -551,6 +551,11 @@ const en: LanguageMessages = {
                 speak: 'Read this reply aloud',
                 stopSpeaking: 'Stop reading'
             },
+            speech: {
+                unsupported: 'Audio playback is not supported here.',
+                playFailed: 'Audio playback failed.',
+                failed: 'Reading aloud failed: {message}'
+            },
             branch: {
                 previous: 'Previous candidate',
                 next: 'Next candidate',

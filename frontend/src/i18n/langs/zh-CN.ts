@@ -553,6 +553,11 @@ const zhCN = {
                 speak: '朗读这条回复',
                 stopSpeaking: '停止朗读'
             },
+            speech: {
+                unsupported: '当前环境不支持音频播放。',
+                playFailed: '音频播放失败。',
+                failed: '朗读失败：{message}'
+            },
             branch: {
                 previous: '上一个候选',
                 next: '下一个候选',

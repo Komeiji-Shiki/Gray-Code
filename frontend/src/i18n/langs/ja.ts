@@ -551,6 +551,11 @@ const ja: LanguageMessages = {
                 speak: 'この返信を読み上げる',
                 stopSpeaking: '読み上げを停止'
             },
+            speech: {
+                unsupported: 'この環境では音声を再生できません。',
+                playFailed: '音声の再生に失敗しました。',
+                failed: '読み上げに失敗しました：{message}'
+            },
             branch: {
                 previous: '前の候補',
                 next: '次の候補',

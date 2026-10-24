@@ -21,7 +21,7 @@ export {
  * 本文件仅保留编排与轻量直通逻辑（共享辅助 + 消息操作 + 忙时投递回显）。
  */
 
-import { computed, nextTick, onMounted, provide, watch, type ComponentPublicInstance } from 'vue'
+import { computed, provide, watch, type ComponentPublicInstance } from 'vue'
 import { CustomScrollbar, DeleteDialog, Tooltip, ConfirmDialog } from '../common'
 import MessageItem from './MessageItem.vue'
 import ChatError from './ChatError.vue'
@@ -36,7 +36,7 @@ import { useTodoPanel } from './useTodoPanel'
 import { useCheckpointRestoreFlow } from './useCheckpointRestoreFlow'
 import { useVirtualMessageWindow } from './useVirtualMessageWindow'
 import { messageConversationKey, messageToolResultKey, messageWorkspaceUriKey } from '../../composables/messageConversationContext'
-import { ensureSpeechConfig, speakMessage, speechAutoPlay, speechEnabled } from '../../composables/useSpeechPlayback'
+import { speechFailure, useSpeechAutoPlay, useSpeechSettingsSync } from '../../composables/useSpeechPlayback'
 
 const { t } = useI18n()
 
@@ -53,18 +53,8 @@ provide(messageWorkspaceUriKey, computed(() => chatStore.currentConversation?.wo
 provide(messageToolResultKey, (id, response) => chatStore.getToolDisplayResult(id, response))
 const continuingBackground = computed(() => chatStore.allMessages.at(-1)?.source === 'background_task')
 
-onMounted(() => { void ensureSpeechConfig() })
-// 任务结束时消息可能已被持久化对象替换，按整轮状态触发自动朗读，避免消息组件重新挂载后漏播。
-watch(() => chatStore.isStreaming, async (streaming, previous) => {
-  if (streaming || !previous) return
-  await ensureSpeechConfig()
-  if (!speechEnabled.value || !speechAutoPlay.value) return
-  await nextTick()
-  const messages = chatStore.allMessages
-  const last = messages.at(-1)
-  if (!last || last.role !== 'assistant' || last.isSummary || !last.content?.trim()) return
-  void speakMessage(last.content, last.id, { automatic: true }).catch(error => console.warn('[Speech] 自动朗读失败：', error))
-})
+useSpeechSettingsSync()
+useSpeechAutoPlay(chatStore, error => { chatStore.error = speechFailure(error) })
 
 /** 共享辅助：todo/build 两侧共用的工具结果合并（以参数注入两个 composable，不搞全局） */
 function getMergedToolResult(tool: any): Record<string, unknown> {

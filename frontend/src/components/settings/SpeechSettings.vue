@@ -3,22 +3,14 @@ import { computed, onMounted, ref } from 'vue'
 import type { AppSettings, SpeechProvider, SpeechSettings, SpeechStatus } from '../../../../packages/contracts/src'
 import { sendToExtension } from '../../utils/vscode'
 import { markDesktopSettingsDirty, useDesktopSettingsDraft } from '../../platform/settingsDraft'
-import { invalidateSpeechConfig, playSpeechSample } from '../../composables/useSpeechPlayback'
+import { speak } from '../../composables/useSpeechPlayback'
+import { DEFAULT_SPEECH_SETTINGS, SPEECH_PROVIDER_DEFAULTS } from '@shared/speech'
 import { useI18n } from '../../i18n'
 
 const { t } = useI18n()
 const isDesktopHost = typeof window !== 'undefined' && !!window.__GRAYCODE_HOST
 const saving = ref(false)
-const defaults: SpeechSettings = { enabled: false, provider: 'fish', endpoint: 'https://api.fish.audio',
-  model: 'drama-3', format: 'mp3', speed: 1, autoPlay: false }
-const providerDefaults: Record<SpeechProvider, Partial<SpeechSettings>> = {
-  fish: { endpoint: 'https://api.fish.audio', model: 'drama-3', format: 'mp3' },
-  openai: { endpoint: 'https://api.openai.com/v1', model: 'tts-1', voice: 'alloy', format: 'mp3' },
-  qwen: { endpoint: 'https://dashscope.aliyuncs.com/api/v1/services/audio/tts/SpeechSynthesizer',
-    model: 'qwen-audio-3.1-tts-flash', voice: 'Cherry', format: 'mp3' },
-  system: { format: 'wav', voice: '' },
-}
-const config = ref<SpeechSettings>({ ...defaults })
+const config = ref<SpeechSettings>({ ...DEFAULT_SPEECH_SETTINGS })
 const status = ref<SpeechStatus>()
 const token = ref('')
 const reveal = ref(false)
@@ -54,7 +46,9 @@ async function loadCredential(provider: SpeechProvider) {
 
 async function changeProvider(provider: SpeechProvider) {
   if (config.value.provider === provider) return
-  config.value = { ...config.value, ...providerDefaults[provider], provider }
+  // 音色不跨提供商沿用：OpenAI 的 alloy 对 Windows 语音或 Qwen 都无效。
+  const defaults = SPEECH_PROVIDER_DEFAULTS[provider]
+  config.value = { ...config.value, ...defaults, voice: defaults.voice, provider }
   token.value = await loadCredential(provider)
   tokenEdited = false
   config.value.credentialRef = token.value.trim() ? credentialId.value : undefined
@@ -80,7 +74,6 @@ async function save() {
   } : {}) })
   changed = false
   tokenEdited = false
-  invalidateSpeechConfig()
   await refreshStatus()
 }
 
@@ -100,7 +93,7 @@ async function test() {
   if (changed) { error.value = t('components.settings.speechSettings.saveFirst'); return }
   if (busy.value) return
   busy.value = true; error.value = ''
-  try { await playSpeechSample(t('components.settings.speechSettings.testText')) }
+  try { await speak(t('components.settings.speechSettings.testText')) }
   catch (cause) { error.value = (cause as Error).message }
   finally { busy.value = false }
 }
@@ -141,7 +134,7 @@ async function createVoice() {
 
 onMounted(async () => {
   const settings = await sendToExtension<AppSettings>('platform.settings.get', {})
-  config.value = { ...defaults, ...settings.speech }
+  config.value = { ...DEFAULT_SPEECH_SETTINGS, ...settings.speech }
   token.value = await loadCredential(config.value.provider)
   if (token.value.trim() && isRemoteProvider.value && !config.value.credentialRef) config.value.credentialRef = credentialId.value
   await refreshStatus()
