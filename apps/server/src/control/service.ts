@@ -3,12 +3,16 @@ import type { PlatformApplication } from '../application';
 import { ListenerLifecycle } from '../transport/listenerLifecycle';
 import { lanAddresses } from '../transport/webOrigin';
 import { startControlServer } from './server';
+import { ControlDiscoveryFile } from './discovery';
 import type { ControlApiHost } from './port';
+import packageMetadata from '../../../../package.json';
 
 /** 外部应用控制接口与网页远程入口相互独立：令牌、端口和生命周期都不共用。 */
 export class ControlApiService implements ControlApiHost {
   private closed = false;
   private readonly unsubscribe: () => void;
+  private readonly discovery: ControlDiscoveryFile;
+  private discoveryQueue: Promise<void> = Promise.resolve();
   private readonly listener = new ListenerLifecycle<Awaited<ReturnType<typeof startControlServer>>>({
     plan: async () => {
       const config = this.configured();
@@ -21,10 +25,11 @@ export class ControlApiService implements ControlApiHost {
         start: () => startControlServer(this.app, { port: config.port, token, allowLan: config.allowLan === true }),
       };
     },
-    changed: () => this.emit(),
+    changed: () => { this.emit(); this.syncDiscovery(); },
   });
 
-  constructor(private readonly app: PlatformApplication) {
+  constructor(private readonly app: PlatformApplication, options: { discoveryDirectory: string }) {
+    this.discovery = new ControlDiscoveryFile(options.discoveryDirectory);
     this.unsubscribe = app.subscribe(event => {
       if (event.type === 'settings.changed') this.listener.reapply();
     });
@@ -37,6 +42,16 @@ export class ControlApiService implements ControlApiHost {
   }
 
   private emit() { if (!this.closed) this.app.publish({ type: 'control.changed' }); }
+
+  /** 只在监听时保留发现文件；写入按状态变化顺序串行，失败不影响接口本身。 */
+  private syncDiscovery() {
+    const port = this.listener.state === 'listening' ? this.listener.server?.port : undefined;
+    this.discoveryQueue = this.discoveryQueue.then(async () => {
+      if (port === undefined) { await this.discovery.remove(); return; }
+      await this.discovery.write({ url: `http://127.0.0.1:${port}`, token: await this.accessToken(),
+        version: packageMetadata.version, dataDirectory: this.app.storage.directory });
+    }).catch(error => console.warn('[ControlApi] 发现文件更新失败：', error));
+  }
 
   status(): ControlApiStatus {
     const config = this.configured();
@@ -68,5 +83,7 @@ export class ControlApiService implements ControlApiHost {
   async close(): Promise<void> {
     this.closed = true; this.unsubscribe();
     await this.listener.close();
+    await this.discoveryQueue;
+    await this.discovery.remove().catch(error => console.warn('[ControlApi] 发现文件删除失败：', error));
   }
 }

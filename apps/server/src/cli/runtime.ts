@@ -3,6 +3,7 @@ import { createInterface } from "node:readline";
 import { PlatformApplication } from "../application";
 import { RemoteAccessService } from '../transport/remoteAccess';
 import { ControlApiService } from '../control/service';
+import { controlDiscoveryDirectory } from '../control/discovery';
 import { backfillPlaceholderTitles } from '../conversations/autoTitles';
 import path from 'node:path';
 import { environmentSecretCodec } from '../settings/environmentSecrets';
@@ -16,7 +17,7 @@ export async function runApplicationCommand(
     locale: Intl.DateTimeFormat().resolvedOptions().locale,
     ...(command === 'serve' ? {
       remoteAccess: (app: PlatformApplication) => new RemoteAccessService(app, { clientDirectory: values.web ? path.resolve(__dirname, '../../client/dist') : undefined }),
-      controlApi: (app: PlatformApplication) => new ControlApiService(app),
+      controlApi: (app: PlatformApplication) => new ControlApiService(app, { discoveryDirectory: controlDiscoveryDirectory() }),
     } : {}),
     secretCodec: environmentSecretCodec(typeof values['key-env'] === 'string' ? values['key-env'] : undefined) });
   try {

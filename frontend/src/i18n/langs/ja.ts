@@ -1134,7 +1134,7 @@ const ja: LanguageMessages = {
             },
             controlApiSettings: {
                 title: '外部制御 API',
-                description: 'トークンで保護されたローカル HTTP API を起動し、スクリプトや Stream Deck などのアプリからメッセージ送信、会話の取得、イベント購読を行えるようにします。',
+                description: 'トークンで保護されたローカル HTTP API を起動し、スクリプト、Stream Deck、Claude Code や Codex などの AI エージェント、その他のアプリからメッセージ送信、会話の取得、イベント購読を行えるようにします。',
                 enabled: '外部制御 API を有効にする',
                 enabledHint: 'メインウィンドウを閉じても、アプリ終了または手動停止までバックグラウンドで待ち受けます。',
                 allowLan: 'LAN からのアクセスを許可',
@@ -1161,12 +1161,14 @@ const ja: LanguageMessages = {
                 lanAddress: 'LAN アドレス',
                 endpoints: 'エンドポイント一覧',
                 endpointsHint: 'すべてのエンドポイントにトークンが必要です。イベントストリームは Server-Sent Events で、Last-Event-ID による再開に対応します。',
-                endpointStatus: 'サービスの状態、バージョン、Agent、実行中のタスク数。',
+                endpointCatalog: 'パス、パラメーター、待機方法、エラーコードをまとめた完全な説明です。スクリプトや AI エージェントは一度読めばすぐに使えます。',
+                endpointStatus: 'サービスの状態、バージョン、実行中のタスク数、選択できるエージェント・モデルチャネル・ワークスペース。',
                 endpointConversations: '会話一覧。同じパスへの POST で新しい会話を作成します。',
-                endpointMessages: '指定した会話にメッセージを送って実行を開始します。wait: true で完了を待てます。',
+                endpointMessages: '指定した会話にメッセージを送って実行を開始します。wait に true または秒数を指定すると、完了時に最終的な返信をそのまま返します。',
                 endpointEvents: 'アプリのイベントを購読します。types と conversationId で絞り込めます。',
                 endpointRpc: 'UI と同じ RPC メソッドを呼び出します。REST 化されていない操作に使えます。',
                 endpointSpeech: '設定済みのプロバイダーで音声を合成し、base64 の音声断片を返します。',
+                agentHint: '待ち受け中はアドレスとトークンを含む検出ファイルを ~/.graycode/control-api/ に書き込みます。Claude Code や Codex などのローカルエージェントはこれを読み、GET /v1 の説明に従って直接呼び出せます。API の停止時やアプリ終了時に削除されます。',
                 securityHint: 'トークンはオーナー権限と同じです。信頼できるアプリだけに渡し、ブラウザのアドレス欄や公開ログに載せないでください。'
             },
             channelSettings: {

@@ -1134,7 +1134,7 @@ const en: LanguageMessages = {
             },
             controlApiSettings: {
                 title: 'Control API',
-                description: 'Run a local token-protected HTTP API so scripts, Stream Decks or other apps can send messages, read conversations and subscribe to events.',
+                description: 'Run a local token-protected HTTP API so scripts, Stream Decks, AI agents such as Claude Code or Codex, and other apps can send messages, read conversations and subscribe to events.',
                 enabled: 'Enable Control API',
                 enabledHint: 'Keeps listening in the background after the main window closes, until the app quits or you stop it.',
                 allowLan: 'Allow LAN access',
@@ -1161,12 +1161,14 @@ const en: LanguageMessages = {
                 lanAddress: 'LAN address',
                 endpoints: 'Endpoints',
                 endpointsHint: 'All endpoints require the token. The event stream uses Server-Sent Events and supports resume with Last-Event-ID.',
-                endpointStatus: 'Service status, version, agents and active runs.',
+                endpointCatalog: 'Full reference with paths, parameters, waiting and error codes. Scripts and AI agents can read it once and start using the API.',
+                endpointStatus: 'Service status, version, active runs, and the agents, providers and workspaces you can choose.',
                 endpointConversations: 'List conversations; POST to the same path creates one.',
-                endpointMessages: 'Send a message and start a run; wait: true waits for completion.',
+                endpointMessages: 'Send a message and start a run; wait accepts true or a number of seconds and returns the final reply when done.',
                 endpointEvents: 'Subscribe to application events; filter with types and conversationId.',
                 endpointRpc: 'Call the same RPC methods as the UI for operations without a REST wrapper.',
                 endpointSpeech: 'Synthesize speech with the configured provider; returns base64 audio clips.',
+                agentHint: 'While listening, a discovery file with the address and token is written to ~/.graycode/control-api/. Local agents such as Claude Code or Codex read it and follow GET /v1 to call the API directly. It is removed when the API stops or the app quits.',
                 securityHint: 'The token grants owner permissions. Only give it to trusted apps and never put it in browser addresses or public logs.'
             },
             channelSettings: {

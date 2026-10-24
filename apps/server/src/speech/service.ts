@@ -8,6 +8,8 @@ import { listSystemVoices, synthesizeSystem } from './systemVoice';
 const maxTextLength = 12_000;
 const chunkLimit = 1_200;
 const maxAudioBytes = 30 * 1024 * 1024;
+/** Fish 参考录音的解码后上限；控制接口按它推算请求体上限。 */
+export const maxReferenceAudioBytes = 50 * 1024 * 1024;
 const mimeTypes: Record<string, string> = { mp3: 'audio/mpeg', wav: 'audio/wav', opus: 'audio/ogg' };
 /** 代理请求只接受字符串或字节，multipart 由这里拼成 Buffer，不依赖 FormData 的序列化。 */
 function multipart(boundary: string, fields: { name: string; value: string }[],
@@ -207,7 +209,7 @@ export class SpeechService {
     if (!/^audio\//.test(input.mimeType)) throw new Error('参考录音必须是音频文件。');
     const bytes = Buffer.from(input.audio, 'base64');
     if (!bytes.length) throw new Error('参考录音内容为空。');
-    if (bytes.length > 50 * 1024 * 1024) throw new Error('参考录音不能超过 50 MiB。');
+    if (bytes.length > maxReferenceAudioBytes) throw new Error('参考录音不能超过 50 MiB。');
     const apiKey = await this.credential(settings.credentialRef);
     if (!apiKey) throw new Error('Fish Audio API Key 不可用，请重新填写。');
     const extension = input.mimeType.includes('wav') ? 'wav' : input.mimeType.includes('mpeg') ? 'mp3'

@@ -41,6 +41,7 @@ import { migrateLegacySettings } from './legacySettings';
 import { backfillPlaceholderTitles } from '../../server/src/conversations/autoTitles';
 import { RemoteAccessService } from '../../server/src/transport/remoteAccess';
 import { ControlApiService } from '../../server/src/control/service';
+import { controlDiscoveryDirectory } from '../../server/src/control/discovery';
 import { DesktopOpenFiles, desktopFileArguments, openDesktopPath } from './openFiles';
 import { DesktopEditorRegistration } from './editorRegistration';
 import { bindDesktopAppearance } from './appearance';
@@ -485,7 +486,7 @@ async function main(): Promise<void> {
     browser: application => browser = new DesktopBrowser(application, () => window, notify),
     computerCapture: new DesktopComputerCapture(),
     remoteAccess: application => new RemoteAccessService(application, { clientDirectory }),
-    controlApi: application => new ControlApiService(application),
+    controlApi: application => new ControlApiService(application, { discoveryDirectory: controlDiscoveryDirectory() }),
     secretCodec,
   });
   if (window && !window.isDestroyed()) bindDesktopAppearance(window, application);

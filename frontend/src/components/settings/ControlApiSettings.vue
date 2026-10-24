@@ -77,7 +77,7 @@ async function copy(value: string, message: string) {
   if (!await copyToClipboard(value)) throw new Error(t('components.settings.controlApiSettings.copyFailed'))
   notice.value = message
 }
-const example = computed(() => `curl -H "Authorization: Bearer ${token.value || '<token>'}" "${address.value}/v1/status"`)
+const example = computed(() => `curl -H "Authorization: Bearer ${token.value || '<token>'}" "${address.value}/v1"`)
 const unsubscribe = onMessageFromExtension(message => {
   if (message.type === 'command' && message.command === 'platform.controlApi.changed') void refresh().catch(() => {})
 })
@@ -167,6 +167,7 @@ useDesktopSettingsDraft(save, () => ready)
     <h3>{{ t('components.settings.controlApiSettings.endpoints') }}</h3>
     <p>{{ t('components.settings.controlApiSettings.endpointsHint') }}</p>
     <ul class="control-endpoints">
+      <li><code>GET /v1</code><span>{{ t('components.settings.controlApiSettings.endpointCatalog') }}</span></li>
       <li><code>GET /v1/status</code><span>{{ t('components.settings.controlApiSettings.endpointStatus') }}</span></li>
       <li><code>GET /v1/conversations</code><span>{{ t('components.settings.controlApiSettings.endpointConversations') }}</span></li>
       <li><code>POST /v1/conversations/:id/messages</code><span>{{ t('components.settings.controlApiSettings.endpointMessages') }}</span></li>
@@ -175,6 +176,7 @@ useDesktopSettingsDraft(save, () => ready)
       <li><code>POST /v1/speech</code><span>{{ t('components.settings.controlApiSettings.endpointSpeech') }}</span></li>
     </ul>
     <pre class="control-example">{{ example }}</pre>
+    <p class="control-hint">{{ t('components.settings.controlApiSettings.agentHint') }}</p>
     <p class="control-hint">{{ t('components.settings.controlApiSettings.securityHint') }}</p>
     <p v-if="notice" role="status">{{ notice }}</p>
     <p v-if="error" role="alert" class="control-error">{{ error }}</p>

@@ -1136,7 +1136,7 @@ const zhCN = {
             },
             controlApiSettings: {
                 title: '外部控制接口',
-                description: '在本地启动带令牌的 HTTP 接口，让脚本、Stream Deck 或其他应用发送消息、读取会话和订阅事件。',
+                description: '在本地启动带令牌的 HTTP 接口，让脚本、Stream Deck、Claude Code 与 Codex 等 AI 代理或其他应用发送消息、读取会话和订阅事件。',
                 enabled: '启用外部控制接口',
                 enabledHint: '关闭主窗口后仍会在后台保持监听，直到应用退出或手动停止。',
                 allowLan: '允许局域网访问',
@@ -1163,12 +1163,14 @@ const zhCN = {
                 lanAddress: '局域网地址',
                 endpoints: '接口一览',
                 endpointsHint: '所有接口都需要令牌。事件流使用 Server-Sent Events，可用 Last-Event-ID 从断点续传。',
-                endpointStatus: '服务状态、版本、Agent 与活动任务数。',
+                endpointCatalog: '完整接口说明：路径、参数、等待方式与错误码，脚本和 AI 代理读一次即可上手。',
+                endpointStatus: '服务状态、版本、活动任务数，以及可选的智能体、模型渠道与工作区。',
                 endpointConversations: '列出会话；POST 同路径可新建会话。',
-                endpointMessages: '向指定会话发送消息并启动任务，wait: true 可等待完成。',
+                endpointMessages: '向指定会话发送消息并启动任务；wait 传 true 或秒数，结束时直接返回最终回复。',
                 endpointEvents: '订阅全部应用事件，可用 types 与 conversationId 过滤。',
                 endpointRpc: '调用界面同款 RPC 方法，适合尚未封装为 REST 的操作。',
                 endpointSpeech: '使用已配置的提供商合成语音，返回 base64 音频片段。',
+                agentHint: '接口监听时会在 ~/.graycode/control-api/ 写入发现文件（地址与令牌），本机的 Claude Code、Codex 等代理读取后按 GET /v1 的说明直接调用；接口停止或应用退出时删除。',
                 securityHint: '令牌等同于主人权限，请只交给可信应用；不要在浏览器地址栏或公开日志中携带令牌。'
             },
             channelSettings: {

@@ -1,6 +1,6 @@
 # 外部控制接口与语音合成
 
-GrayCode 2.x 提供一个本地 HTTP 控制接口，让脚本、Stream Deck、桌面小工具或其他应用直接驱动 GrayCode；同时提供统一的语音合成能力，支持云端接口、本地部署和 Windows 本机语音。
+GrayCode 2.x 提供一个本地 HTTP 控制接口，让脚本、Stream Deck、桌面小工具、Claude Code 与 Codex 等 AI 代理或其他应用直接驱动 GrayCode；同时提供统一的语音合成能力，支持云端接口、本地部署和 Windows 本机语音。
 
 ## 一、外部控制接口
 
@@ -15,14 +15,26 @@ GrayCode 2.x 提供一个本地 HTTP 控制接口，让脚本、Stream Deck、�
 
 接口默认只监听 `127.0.0.1`。开启「允许局域网访问」后会监听 `0.0.0.0`，局域网内其他设备可以用 HTTP 直接访问；这条通道没有 TLS，令牌和消息内容不会加密，只建议在可信网络中使用。
 
-关闭主窗口后，只要接口仍在监听，应用会继续留在后台；可以在设置里手动停止，或退出应用。使用 `npm run platform -- --data <目录> serve` 运行无界面服务时，只要保存过的设置里启用了外部控制接口，它也会随服务一起启动。
+关闭主窗口后，只要接口仍在监听，应用会继续留在后台；手动停止或启动失败（如端口被占用）后不再保持后台。使用 `npm run platform -- --data <目录> serve` 运行无界面服务时，只要保存过的设置里启用了外部控制接口，它也会随服务一起启动。
+
+### 让 AI 代理直接使用
+
+接口监听时，GrayCode 会在 `~/.graycode/control-api/<进程号>.json` 写入发现文件，内容包括 `url`、`token`、`pid`、`version` 与 `dataDirectory`；接口停止或应用退出时删除，异常退出留下的旧文件会在下次写入时清理。Windows 上对应 `%USERPROFILE%\.graycode\control-api\`。
+
+Claude Code、Codex 等本机代理只需要知道这个约定：读取发现文件拿到地址和令牌，再请求 `GET /v1`，返回内容列出全部接口、参数、等待方式和错误码，按说明调用即可。可以在代理的项目说明（如 `CLAUDE.md`、`AGENTS.md`）里写一句：
+
+```text
+GrayCode 外部控制接口：读取 ~/.graycode/control-api/*.json 取得 url 与 token，GET {url}/v1 查看用法。
+```
+
+发现文件里的令牌与加密凭据的访问范围相同：同一系统用户的进程本来就能解密 GrayCode 的凭据存储，文件只是多了一个约定位置。
 
 ### 认证
 
 所有请求都需要附带令牌：
 
 ```bash
-curl -H "Authorization: Bearer <token>" http://127.0.0.1:18766/v1/status
+curl -H "Authorization: Bearer <token>" http://127.0.0.1:18766/v1
 ```
 
 也可以使用 `X-GrayCode-Token: <token>`。令牌等同于主人权限，不要写进浏览器地址栏、公开日志或会提交到仓库的脚本。
@@ -31,14 +43,15 @@ curl -H "Authorization: Bearer <token>" http://127.0.0.1:18766/v1/status
 
 | 方法与路径 | 说明 |
 | --- | --- |
+| `GET /v1` | 完整接口说明：每个接口的参数、等待方式与错误约定。 |
 | `GET /v1/health` | 服务与版本，可用于连接检查。 |
-| `GET /v1/status` | 当前账号、Agent 列表与活动任务数。 |
-| `GET /v1/conversations` | 会话列表，支持 `limit`、`query`、`workspaceUri`、`cursor`。 |
+| `GET /v1/status` | 活动任务数，以及发送消息时可选的智能体、模型渠道与工作区。 |
+| `GET /v1/conversations` | 会话列表，支持 `limit`、`query`、`workspaceUri`、`cursor`（上一页返回的 `nextCursor`）。 |
 | `POST /v1/conversations` | 新建会话，请求体 `{ "title": "...", "workspaceId": "..." }`。 |
 | `GET /v1/conversations/:id` | 读取会话元数据。 |
-| `GET /v1/conversations/:id/messages` | 读取历史分页，支持 `limit`、`beforeIndex`、`offset`。 |
+| `GET /v1/conversations/:id/messages` | 读取历史分页，支持 `limit`、`beforeIndex`、`offset`、`view`。 |
 | `POST /v1/conversations/:id/messages` | 发送用户消息并启动任务。 |
-| `GET /v1/runs/:id` | 读取任务状态。 |
+| `GET /v1/runs/:id` | 任务状态；结束后附带最终回复，支持 `wait` 秒数。 |
 | `GET /v1/runs/:id/events` | 读取任务事件，支持 `after`、`limit`。 |
 | `POST /v1/runs/:id/cancel` | 取消任务。 |
 | `GET /v1/events` | SSE 事件流。 |
@@ -49,31 +62,46 @@ curl -H "Authorization: Bearer <token>" http://127.0.0.1:18766/v1/status
 ### 发送消息
 
 ```bash
-curl -X POST http://127.0.0.1:18766/v1/conversations/<conversationId>/messages \
-  -H "Authorization: Bearer <token>" \
-  -H "Content-Type: application/json" \
-  -d '{"text":"检查当前工作区的改动","wait":true}'
+curl -X POST http://127.0.0.1:18766/v1/conversations/<conversationId>/messages   -H "Authorization: Bearer <token>"   -H "Content-Type: application/json"   -H "Idempotency-Key: review-2026-10-24"   -d '{"text":"检查当前工作区的改动","wait":120}'
 ```
 
 可选字段：
 
 - `agentId`：智能体；省略时使用列表中的第一个。
-- `providerId`、`model`、`reasoningEffort`：覆盖本次模型与推理强度。
-- `attachments`：与输入框相同的附件数组。
-- `wait`：为 `true` 时等待任务结束后返回最终状态；网络请求会一直保持到任务完成。
+- `providerId`、`model`、`reasoningEffort`：覆盖本次模型与推理强度，可选值见 `GET /v1/status`。
+- `attachments`：附件数组，每项 `{ "name": "...", "mimeType": "image/png", "data": "<base64>" }`。
+- `wait`：`true` 表示等到任务结束；数字表示最多等待的秒数（1～3600）。很多代理的命令有超时限制，建议传秒数。
+- `requestKey` 或 `Idempotency-Key` 请求头：幂等键。超时后用同一个键重发，返回的是同一个任务，不会重复执行。
 
-返回 `202`，结构为 `{ "conversationId": "...", "run": { ... } }`。
+任务已经结束时返回 `200`，结构为 `{ "conversationId": "...", "run": { ... }, "done": true, "reply": "最终回复" }`；仍在运行时返回 `202` 与 `"done": false`，之后用 `GET /v1/runs/:id?wait=120` 继续等待。任务状态为 `awaiting_approval` 或 `awaiting_input` 时，表示在等 GrayCode 界面中的审批或回答。
+
+### 读取历史
+
+`GET /v1/conversations/:id/messages` 默认返回紧凑形态：每条消息包含 `index`、`role`、正文 `text`，工具调用与结果的摘要（超过 2000 字符截断并标记 `truncated`），以及附件类型；不包含思考内容和 base64 数据，适合直接交给模型阅读。需要原始结构（含附件数据）时加 `view=raw`。
+
+### 错误
+
+错误响应为 `{ "error": "说明", "code": "可选的错误码" }`，按 HTTP 状态区分：
+
+| 状态 | 含义 |
+| --- | --- |
+| `400` | 参数或业务校验失败，说明里会写出可选值。 |
+| `401` | 令牌缺失或不正确。 |
+| `404` | 会话、任务或接口不存在；接口不存在时请先读 `GET /v1`。 |
+| `405` | 路径存在但不支持该方法，`Allow` 响应头列出可用方法。 |
+| `409` | 会话已有任务在运行（`STORAGE_BUSY`），或数据已被其他操作修改。 |
+| `413` | 请求体过大。 |
+| `502` | 语音合成等上游服务失败（`UPSTREAM_FAILED`）。 |
 
 ### 事件流
 
 ```bash
-curl -N -H "Authorization: Bearer <token>" \
-  "http://127.0.0.1:18766/v1/events?types=run.completed,run.failed&conversationId=<id>"
+curl -N -H "Authorization: Bearer <token>"   "http://127.0.0.1:18766/v1/events?types=run.completed,run.failed&conversationId=<id>"
 ```
 
 - `types` 用逗号分隔，同时匹配顶层事件与 `event` 内的运行事件。
 - `conversationId` 只保留与该会话有关的事件。
-- 断线重连时把最后一条 `id:` 作为 `Last-Event-ID` 请求头（或 `after` 查询参数），服务会从补发缓冲继续；缓冲已被淘汰时收到 `event: reset`，此时重新读取会话与任务状态。
+- 断线后五分钟内重连时，把最后一条 `id:` 作为 `Last-Event-ID` 请求头（或 `after` 查询参数），服务会从补发缓冲继续；超过五分钟、缓冲已被淘汰或应用重启后收到 `event: reset`，此时重新读取会话与任务状态。
 
 ### 安全边界
 
@@ -129,7 +157,7 @@ http://127.0.0.1:8880/v1
 curl -X POST http://127.0.0.1:18766/v1/speech \
   -H "Authorization: Bearer <token>" \
   -H "Content-Type: application/json" \
-  -d '{"text":"主人，欢迎回来呀。"}'
+  -d '{"text":"欢迎回来，今天也一起加油吧。"}'
 ```
 
 返回 `clips` 数组，每个片段包含 `text`、`mimeType` 和 base64 编码的 `base64`。长文本会按句子切分，调用方依次播放即可。
@@ -140,7 +168,7 @@ Fish Audio 的克隆也可以直接通过接口完成：
 curl -X POST http://127.0.0.1:18766/v1/speech/clone \
   -H "Authorization: Bearer <token>" \
   -H "Content-Type: application/json" \
-  -d "{\"title\":\"灰魂\",\"mimeType\":\"audio/wav\",\"audio\":\"<base64>\"}"
+  -d "{\"title\":\"Gray\",\"mimeType\":\"audio/wav\",\"audio\":\"<base64>\"}"
 ```
 
 返回 `{ "id": "<reference_id>", "state": "trained" }`。创建后的音色 ID 仍需要填入语音设置，才会用于后续合成。

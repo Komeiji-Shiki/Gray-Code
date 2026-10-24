@@ -11,7 +11,8 @@
 | [apps/desktop/src/requests.ts](apps/desktop/src/requests.ts) | 桌面请求处理、兼容入口、权限与退出阶段声明 |
 | [apps/server/src/application.ts](apps/server/src/application.ts) | 平台服务组合根与生命周期 |
 | [apps/server/src/main.ts](apps/server/src/main.ts) | 独立 CLI、Web 服务与存储命令 |
-| [apps/server/src/control/server.ts](apps/server/src/control/server.ts) | 外部应用控制接口：令牌认证、REST、SSE 与 RPC 透传 |
+| [apps/server/src/control/routes.ts](apps/server/src/control/routes.ts) | 外部控制接口路由表，同时作为 `GET /v1` 的自我说明；HTTP 认证与 SSE 在同目录 `server.ts` |
+| [apps/server/src/transport/listenerLifecycle.ts](apps/server/src/transport/listenerLifecycle.ts) | 网页远程入口与外部控制接口共用的监听生命周期 |
 | [apps/server/src/speech/service.ts](apps/server/src/speech/service.ts) | 语音合成：Fish Audio、Qwen、OpenAI 兼容接口与 Windows 本机语音 |
 | [packages/core/src/runtime/runtime.ts](packages/core/src/runtime/runtime.ts) | 模型/工具循环、运行状态、确认、取消与结果保存 |
 | [packages/core/src/storage/database.ts](packages/core/src/storage/database.ts) | 数据库、事务、历史与记录操作 |
