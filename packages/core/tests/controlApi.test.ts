@@ -266,6 +266,10 @@ describe('external control API', () => {
       controller.abort();
     } finally {
       await service.close();
+      await service.start();
+      service.stop();
+      expect(service.status().state).toBe('stopped');
+      expect(service.keepsAlive).toBe(false);
       expect(await readdir(directory)).toEqual([]);
       await rm(directory, { recursive: true, force: true });
     }

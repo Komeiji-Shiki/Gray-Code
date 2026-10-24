@@ -5,7 +5,8 @@ import { mount } from '@vue/test-utils'
 const mocks = vi.hoisted(() => ({
   listeners: [] as ((message: any) => void)[],
   settings: { speech: { enabled: true, autoPlay: true } } as Record<string, any>,
-  synthesis: [] as { text: string; resolve: () => void; reject: (error: Error) => void }[],
+  synthesis: [] as { text: string; plain?: boolean; resolve: () => void; reject: (error: Error) => void }[],
+  cancels: 0,
   played: [] as string[],
   finishPlayback: [] as (() => void)[],
 }))
@@ -17,8 +18,12 @@ vi.mock('@/utils/vscode', () => ({
   },
   sendToExtension: vi.fn((type: string, data: Record<string, any>) => {
     if (type === 'platform.settings.get') return Promise.resolve(structuredClone(mocks.settings))
+    if (type === 'speech.cancel') {
+      mocks.cancels++
+      return Promise.resolve({ ok: true })
+    }
     return new Promise((resolve, reject) => {
-      mocks.synthesis.push({ text: data.text, reject,
+      mocks.synthesis.push({ text: data.text, plain: data.plain, reject,
         resolve: () => resolve({ provider: 'fish', clips: [{ text: data.text, mimeType: 'audio/mpeg', base64: 'YQ==' }] }) })
     })
   }),
@@ -39,6 +44,7 @@ const emit = (message: any) => { for (const listener of [...mocks.listeners]) li
 
 beforeEach(() => {
   mocks.synthesis.length = 0
+  mocks.cancels = 0
   mocks.played.length = 0
   mocks.finishPlayback.length = 0
   mocks.settings = { speech: { enabled: true, autoPlay: true } }
@@ -46,11 +52,13 @@ beforeEach(() => {
 afterEach(() => stopSpeech())
 
 describe('朗读播放', () => {
-  test('合成过程中停止，合成返回后不会再出声', async () => {
+  test('合成过程中停止，合成返回后不会再出声，并通知后端取消在途合成', async () => {
     const reading = speak('第一句。', 'stop-during-synthesis')
     expect(speechPlaying.value).toBe(true)
+    expect(mocks.synthesis[0].plain).toBe(true)
     stopSpeech()
     expect(speechPlaying.value).toBe(false)
+    expect(mocks.cancels).toBe(1)
     mocks.synthesis[0].resolve()
     await reading
     expect(mocks.played).toEqual([])

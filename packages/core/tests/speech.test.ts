@@ -143,4 +143,32 @@ describe('speech providers', () => {
     await service.synthesize({ text: '同一句话。\n新的一句。' });
     expect(request).toHaveBeenCalledTimes(3);
   });
+
+  test('deduplicates repeated sentences within one call, keeps plain text intact and aborts active requests on cancel', async () => {
+    const calls: string[] = [];
+    globalThis.fetch = jest.fn(async (_url: string, init: RequestInit) => {
+      const parsed = JSON.parse(String(init.body));
+      calls.push(parsed.text);
+      return new Response(Buffer.from(`audio:${parsed.text}`), { status: 200 });
+    }) as unknown as typeof fetch;
+    const app = fakeApp(fish);
+    const sentence = `${'重复'.repeat(350)}。`;
+    const repeated = `${sentence}${sentence}`;
+    const result = await app.speech.synthesize({ text: repeated });
+    expect(result.clips).toHaveLength(2);
+    expect(result.clips[0]).toEqual(result.clips[1]);
+    expect(calls).toHaveLength(1);
+    expect((app.speech as unknown as { cacheSize: number }).cacheSize).toBe(result.clips[0].base64.length);
+
+    calls.length = 0;
+    await app.speech.synthesize({ text: '1. 保留 [原始](文本)。', plain: true });
+    expect(calls).toEqual(['1. 保留 [原始](文本)。']);
+
+    globalThis.fetch = jest.fn((_url: string, init: RequestInit) => new Promise<Response>((_resolve, reject) => {
+      init.signal?.addEventListener('abort', () => reject(init.signal?.reason ?? new Error('aborted')), { once: true });
+    })) as unknown as typeof fetch;
+    const pending = app.speech.synthesize({ text: '正在合成的长句。' });
+    await speechRequest(app, { actorId: 'owner', clientId: 'ui' }, 'speech.cancel', {});
+    await expect(pending).rejects.toMatchObject({ code: 'UPSTREAM_FAILED' });
+  });
 });

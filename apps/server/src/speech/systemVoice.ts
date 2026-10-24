@@ -26,15 +26,16 @@ while ($null -ne ($line = [Console]::In.ReadLine())) {
     }
     if ($request.voice) { $synth.SelectVoice($request.voice) } else { $synth.SelectVoice($defaultVoice) }
     $synth.Rate = [int]$request.rate
-    $clips = foreach ($text in $request.texts) {
+    $clips = @(foreach ($text in $request.texts) {
       $stream = New-Object System.IO.MemoryStream
       $synth.SetOutputToWaveStream($stream)
       $synth.Speak([string]$text)
       $synth.SetOutputToNull()
       [Convert]::ToBase64String($stream.ToArray())
       $stream.Dispose()
-    }
-    [Console]::Out.WriteLine('{"ok":true,"clips":["' + (@($clips) -join '","') + '"]}')
+    })
+    $body = if ($clips.Count) { '"' + ($clips -join '","') + '"' } else { '' }
+    [Console]::Out.WriteLine('{"ok":true,"clips":[' + $body + ']}')
   } catch {
     [Console]::Out.WriteLine((ConvertTo-Json -Compress -InputObject @{ ok = $false; error = $_.Exception.Message }))
   }
@@ -48,6 +49,7 @@ export class SystemVoice {
   private pending?: Pending;
   private queue: Promise<unknown> = Promise.resolve();
   private idle?: NodeJS.Timeout;
+  private generation = 0;
   private closed = false;
 
   async voices(): Promise<string[]> {
@@ -55,18 +57,29 @@ export class SystemVoice {
   }
 
   async synthesize(texts: string[], voice: string | undefined, speed: number): Promise<Buffer[]> {
+    if (!texts.length) return [];
     const rate = Math.max(-10, Math.min(10, Math.round((speed - 1) * 10)));
     const result = await this.request({ command: 'speak', texts, voice: voice ?? '', rate });
     return (result.clips as string[]).map(clip => Buffer.from(clip, 'base64'));
   }
 
-  close(): void {
-    this.closed = true;
+  cancel(): void {
+    this.generation++;
+    this.pending?.reject(new Error('语音合成已取消。'));
     this.stop();
   }
 
+  close(): void {
+    this.closed = true;
+    this.cancel();
+  }
+
   private request(command: Record<string, unknown>): Promise<Record<string, any>> {
-    const run = this.queue.catch(() => {}).then(() => this.send(command));
+    const generation = this.generation;
+    const run = this.queue.catch(() => {}).then(() => {
+      if (generation !== this.generation) throw new Error('语音合成已取消。');
+      return this.send(command);
+    });
     this.queue = run;
     return run;
   }
@@ -99,7 +112,11 @@ export class SystemVoice {
     child.stdin.on('error', () => {});
     createInterface({ input: child.stdout }).on('line', line => {
       let message: Record<string, any>;
-      try { message = JSON.parse(line); } catch { return; }
+      try { message = JSON.parse(line); }
+      catch {
+        if (line.trim()) diagnostic = `${diagnostic}${line}\n`.slice(-4_000);
+        return;
+      }
       if (message.ok) this.pending?.resolve(message);
       else this.pending?.reject(new Error(String(message.error || '本机语音合成失败。')));
     });

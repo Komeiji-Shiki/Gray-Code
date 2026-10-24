@@ -1,7 +1,7 @@
 import { createHash, randomUUID } from 'node:crypto';
 import type { SpeechClip, SpeechCloneInput, SpeechCloneResult, SpeechSettings, SpeechStatus, SpeechSynthesisResult } from '@graycode/contracts';
 import { createProxyFetch } from '../../../../backend/modules/channel/proxyFetch';
-import { SPEECH_MAX_TEXT, speechSegments } from '../../../../shared/speech';
+import { SPEECH_MAX_TEXT, speechSegments, splitSpeechText } from '../../../../shared/speech';
 import type { PlatformApplication } from '../application';
 import { speechSettings } from './settings';
 import { SystemVoice } from './systemVoice';
@@ -15,7 +15,7 @@ const formats = new Set(['mp3', 'wav', 'opus']);
 const mimeTypes: Record<string, string> = { mp3: 'audio/mpeg', wav: 'audio/wav', opus: 'audio/ogg' };
 
 export type SpeechFormat = 'mp3' | 'wav' | 'opus';
-export interface SpeechInput { text: string; voice?: string; speed?: number; format?: SpeechFormat }
+export interface SpeechInput { text: string; voice?: string; speed?: number; format?: SpeechFormat; plain?: boolean }
 
 /** 上游语音服务失败或返回了不可用的内容；控制接口据此返回 502。 */
 export class SpeechProviderError extends Error {
@@ -45,6 +45,7 @@ function clip(text: string, mimeType: string, bytes: Buffer): SpeechClip {
 export class SpeechService {
   private readonly systemVoice = new SystemVoice();
   private readonly cache = new Map<string, SpeechClip>();
+  private readonly activeRequests = new Set<AbortController>();
   private cacheSize = 0;
   constructor(private readonly app: PlatformApplication) {}
 
@@ -62,6 +63,11 @@ export class SpeechService {
   }
 
   private remember(key: string, value: SpeechClip): void {
+    const existing = this.cache.get(key);
+    if (existing) {
+      this.cache.delete(key);
+      this.cacheSize -= existing.base64.length;
+    }
     this.cache.set(key, value);
     this.cacheSize += value.base64.length;
     for (const [oldest, entry] of this.cache) {
@@ -73,8 +79,28 @@ export class SpeechService {
 
   settings(): SpeechSettings { return speechSettings(this.app.settings.read('speech').speech); }
 
+  /** 中止仍在进行的云端或本机语音合成。 */
+  cancel(): void {
+    for (const controller of this.activeRequests) controller.abort(new Error('语音合成已取消。'));
+    this.activeRequests.clear();
+    this.systemVoice.cancel();
+  }
+
   /** 应用关闭时结束本机语音进程。 */
-  close(): void { this.systemVoice.close(); }
+  close(): void {
+    this.cancel();
+    this.systemVoice.close();
+  }
+
+  private async track<T>(run: (signal: AbortSignal) => Promise<T>): Promise<T> {
+    const controller = new AbortController();
+    this.activeRequests.add(controller);
+    try {
+      return await run(controller.signal);
+    } finally {
+      this.activeRequests.delete(controller);
+    }
+  }
 
   private credential(reference?: string): Promise<string | null> {
     return reference ? this.app.settings.credential(reference) : Promise.resolve(null);
@@ -99,7 +125,7 @@ export class SpeechService {
     if (!settings.enabled) throw new Error('请先在设置中启用语音合成。');
     if (typeof input.text !== 'string') throw new Error('text 必须是字符串。');
     if (input.text.length > SPEECH_MAX_TEXT) throw new Error(`单次最多朗读 ${SPEECH_MAX_TEXT} 个字符，请分段发送。`);
-    const texts = speechSegments(input.text);
+    const texts = input.plain ? splitSpeechText(input.text.trim()) : speechSegments(input.text);
     if (!texts.length) throw new Error('没有可朗读的文字。');
     const voice = typeof input.voice === 'string' && input.voice.trim() ? input.voice.trim() : settings.voice;
     const speed = input.speed ?? settings.speed!;
@@ -109,28 +135,45 @@ export class SpeechService {
     if (settings.provider === 'qwen' && format === 'opus') throw new Error('Qwen-Audio-TTS 不支持 Opus 输出。');
     const keys = texts.map(text => this.cacheKey(settings, text, voice, speed, format));
     const clips = keys.map(key => this.cached(key));
-    const missing = texts.flatMap((text, index) => clips[index] ? [] : [index]);
-    if (settings.provider === 'system') {
-      const audio = missing.length ? await this.systemVoice.synthesize(missing.map(index => texts[index]), voice, speed) : [];
-      audio.forEach((bytes, position) => { clips[missing[position]] = clip(texts[missing[position]], 'audio/wav', bytes); });
-    } else {
-      for (const index of missing) {
-        const text = texts[index];
-        const bytes = settings.provider === 'fish' ? await this.fish(settings, text, speed, format)
-          : settings.provider === 'qwen' ? await this.qwen(settings, text, speed, format, voice!)
-          : await this.openai(settings, text, speed, format, voice!);
-        clips[index] = clip(text, mimeTypes[format], bytes);
+    const missingByKey = new Map<string, number>();
+    keys.forEach((key, index) => { if (!clips[index] && !missingByKey.has(key)) missingByKey.set(key, index); });
+    const missing = [...missingByKey.values()];
+    const synthesized = new Map<string, SpeechClip>();
+    await this.track(async signal => {
+      if (settings.provider === 'system') {
+        const audio = missing.length ? await this.systemVoice.synthesize(missing.map(index => texts[index]), voice, speed) : [];
+        audio.forEach((bytes, position) => {
+          const index = missing[position];
+          synthesized.set(keys[index], clip(texts[index], 'audio/wav', bytes));
+        });
+      } else {
+        for (const index of missing) {
+          const text = texts[index];
+          const bytes = settings.provider === 'fish' ? await this.fish(settings, text, speed, format, signal)
+            : settings.provider === 'qwen' ? await this.qwen(settings, text, speed, format, voice!, signal)
+            : await this.openai(settings, text, speed, format, voice!, signal);
+          synthesized.set(keys[index], clip(text, mimeTypes[format], bytes));
+        }
       }
-    }
-    for (const index of missing) this.remember(keys[index], clips[index]!);
-    return { provider: settings.provider, ...(settings.provider === 'fish' ? {} : { voice }), clips: clips as SpeechClip[] };
+    });
+    for (const [key, value] of synthesized) this.remember(key, value);
+    return {
+      provider: settings.provider,
+      ...(settings.provider === 'fish' ? {} : { voice }),
+      clips: keys.map((key, index) => clips[index] ?? synthesized.get(key)!),
+    };
   }
 
-  private async request(url: string, init: RequestInit, timeout = 120_000): Promise<Response> {
+  private async request(url: string, init: RequestInit, signal: AbortSignal, timeout = 120_000): Promise<Response> {
     const fetcher = createProxyFetch(this.app.product.runtimeSettings().getEffectiveProxyUrl());
+    const combined = AbortSignal.any([signal, AbortSignal.timeout(timeout)]);
     let response: Response;
-    try { response = await fetcher(url, { ...init, signal: AbortSignal.timeout(timeout) }); }
-    catch (error) { throw new SpeechProviderError(`无法连接语音合成接口：${(error as Error).message}`); }
+    try {
+      combined.throwIfAborted();
+      response = await fetcher(url, { ...init, signal: combined });
+    } catch (error) {
+      throw new SpeechProviderError(`无法连接语音合成接口：${(error as Error).message}`);
+    }
     if (!response.ok) {
       const body = await response.text().catch(() => '');
       throw new SpeechProviderError(`语音合成接口返回 ${response.status}${body ? `：${body.slice(0, 400)}` : ''}`);
@@ -142,7 +185,7 @@ export class SpeechService {
     return Buffer.from(await response.arrayBuffer());
   }
 
-  private async fish(settings: SpeechSettings, text: string, speed: number, format: string): Promise<Buffer> {
+  private async fish(settings: SpeechSettings, text: string, speed: number, format: string, signal: AbortSignal): Promise<Buffer> {
     const apiKey = await this.credential(settings.credentialRef);
     if (!apiKey) throw new Error('Fish Audio API Key 不可用，请重新填写。');
     if (!settings.referenceId?.trim()) throw new Error('请先在语音设置中创建或填写 Fish Audio 克隆音色 ID。');
@@ -150,35 +193,35 @@ export class SpeechService {
       method: 'POST',
       headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json', model: settings.model! },
       body: JSON.stringify({ text, reference_id: settings.referenceId.trim(), format, ...(speed !== 1 ? { speed } : {}) }),
-    });
+    }, signal);
     return this.audio(response);
   }
 
-  private async openai(settings: SpeechSettings, text: string, speed: number, format: string, voice: string): Promise<Buffer> {
+  private async openai(settings: SpeechSettings, text: string, speed: number, format: string, voice: string, signal: AbortSignal): Promise<Buffer> {
     const apiKey = await this.credential(settings.credentialRef);
     const response = await this.request(`${settings.endpoint}/audio/speech`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', ...(apiKey ? { Authorization: `Bearer ${apiKey}` } : {}) },
       body: JSON.stringify({ model: settings.model, input: text, voice, speed, response_format: format }),
-    });
+    }, signal);
     return this.audio(response);
   }
 
   /** Qwen-Audio-TTS 同步接口把音频放在 URL 或 base64 字段中，两种都接受。 */
-  private async qwen(settings: SpeechSettings, text: string, speed: number, format: string, voice: string): Promise<Buffer> {
+  private async qwen(settings: SpeechSettings, text: string, speed: number, format: string, voice: string, signal: AbortSignal): Promise<Buffer> {
     const apiKey = await this.credential(settings.credentialRef);
     if (!apiKey) throw new Error('Qwen 语音合成需要 DashScope API Key，请重新填写。');
     const response = await this.request(settings.endpoint!, {
       method: 'POST',
       headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
       body: JSON.stringify({ model: settings.model, input: { text, voice, format, ...(speed !== 1 ? { rate: speed } : {}) } }),
-    });
+    }, signal);
     const value = await response.json().catch(() => null) as {
       output?: { audio?: { url?: string; data?: string } }; message?: string; code?: string;
     } | null;
     const audio = value?.output?.audio;
     if (audio?.data) return Buffer.from(audio.data.slice(audio.data.indexOf(',') + 1), 'base64');
-    if (audio?.url) return this.audio(await this.request(audio.url, { method: 'GET' }, 60_000));
+    if (audio?.url) return this.audio(await this.request(audio.url, { method: 'GET' }, signal, 60_000));
     throw new SpeechProviderError(value?.message || value?.code || 'Qwen 没有返回音频。');
   }
 
@@ -193,27 +236,29 @@ export class SpeechService {
     const bytes = Buffer.from(input.audio, 'base64');
     if (!bytes.length) throw new Error('参考录音内容为空。');
     if (bytes.length > maxReferenceAudioBytes) throw new Error('参考录音不能超过 50 MiB。');
-    const apiKey = await this.credential(settings.credentialRef);
-    if (!apiKey) throw new Error('Fish Audio API Key 不可用，请先填写并保存。');
-    const extension = input.mimeType.includes('wav') ? 'wav' : input.mimeType.includes('mpeg') ? 'mp3'
-      : input.mimeType.includes('mp4') || input.mimeType.includes('m4a') ? 'm4a' : input.mimeType.includes('ogg') ? 'opus' : 'wav';
-    const boundary = `----GrayCode${randomUUID().replace(/-/g, '')}`;
-    const fields = [
-      { name: 'type', value: 'tts' },
-      { name: 'title', value: title.slice(0, 80) },
-      { name: 'train_mode', value: 'fast' },
-      { name: 'visibility', value: 'private' },
-      ...(typeof input.text === 'string' && input.text.trim() ? [{ name: 'text', value: input.text.trim().slice(0, 2_000) }] : []),
-    ];
-    const body = multipart(boundary, fields, { name: 'voices', filename: `reference.${extension}`, mimeType: input.mimeType, bytes });
-    const response = await this.request(`${settings.endpoint}/model`, {
-      // Node 的 Buffer 都以 ArrayBuffer 为底层，直接共享内存，不再复制一份录音。
-      method: 'POST', body: new Uint8Array(body.buffer as ArrayBuffer, body.byteOffset, body.byteLength),
-      headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': `multipart/form-data; boundary=${boundary}` },
+    return this.track(async signal => {
+      const apiKey = await this.credential(settings.credentialRef);
+      if (!apiKey) throw new Error('Fish Audio API Key 不可用，请先填写并保存。');
+      const extension = input.mimeType.includes('wav') ? 'wav' : input.mimeType.includes('mpeg') ? 'mp3'
+        : input.mimeType.includes('mp4') || input.mimeType.includes('m4a') ? 'm4a' : input.mimeType.includes('ogg') ? 'opus' : 'wav';
+      const boundary = `----GrayCode${randomUUID().replace(/-/g, '')}`;
+      const fields = [
+        { name: 'type', value: 'tts' },
+        { name: 'title', value: title.slice(0, 80) },
+        { name: 'train_mode', value: 'fast' },
+        { name: 'visibility', value: 'private' },
+        ...(typeof input.text === 'string' && input.text.trim() ? [{ name: 'text', value: input.text.trim().slice(0, 2_000) }] : []),
+      ];
+      const body = multipart(boundary, fields, { name: 'voices', filename: `reference.${extension}`, mimeType: input.mimeType, bytes });
+      const response = await this.request(`${settings.endpoint}/model`, {
+        // Node 的 Buffer 都以 ArrayBuffer 为底层，直接共享内存，不再复制一份录音。
+        method: 'POST', body: new Uint8Array(body.buffer as ArrayBuffer, body.byteOffset, body.byteLength),
+        headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': `multipart/form-data; boundary=${boundary}` },
+      }, signal);
+      const value = await response.json().catch(() => null) as { _id?: string; id?: string; state?: string; title?: string } | null;
+      const id = value?._id || value?.id;
+      if (!id) throw new SpeechProviderError('Fish Audio 没有返回音色 ID。');
+      return { id, ...(value?.state ? { state: value.state } : {}), ...(value?.title ? { title: value.title } : {}) };
     });
-    const value = await response.json().catch(() => null) as { _id?: string; id?: string; state?: string; title?: string } | null;
-    const id = value?._id || value?.id;
-    if (!id) throw new SpeechProviderError('Fish Audio 没有返回音色 ID。');
-    return { id, ...(value?.state ? { state: value.state } : {}), ...(value?.title ? { title: value.title } : {}) };
   }
 }

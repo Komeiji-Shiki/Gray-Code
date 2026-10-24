@@ -13,6 +13,8 @@ export const speechAutoPlay = ref(false)
 
 let session: AbortController | null = null
 let configSequence = 0
+let pendingSyntheses = 0
+const maxAutoSpoken = 500
 const autoSpoken = new Set<string>()
 
 /** 朗读失败显示在聊天错误条里；这个错误码不在可重试列表中，只提供关闭。 */
@@ -50,16 +52,19 @@ export function useSpeechSettingsSync(): void {
 }
 
 export function stopSpeech(): void {
+  const hasPending = pendingSyntheses > 0
   session?.abort()
   session = null
   speechPlaying.value = false
   speechMessageId.value = undefined
+  if (hasPending) void sendToExtension('speech.cancel', {}).catch(() => {})
 }
 
 function synthesize(text: string): Promise<SpeechSynthesisResult> {
-  const pending = sendToExtension<SpeechSynthesisResult>('speech.synthesize', { text })
+  pendingSyntheses++
+  const pending = sendToExtension<SpeechSynthesisResult>('speech.synthesize', { text, plain: true })
   // 停止后不再等待的预取结果不能变成未处理的拒绝。
-  pending.catch(() => {})
+  void pending.finally(() => { pendingSyntheses = Math.max(0, pendingSyntheses - 1) }).catch(() => {})
   return pending
 }
 
@@ -115,6 +120,10 @@ export function useSpeechAutoPlay(store: AutoPlayStore, report: (error: unknown)
       if (!last || last.role !== 'assistant' || last.isSummary || autoSpoken.has(last.id)) return
       const text = speechTextOf(last)
       if (!text) return
+      if (autoSpoken.size >= maxAutoSpoken) {
+        const oldest = autoSpoken.values().next().value
+        if (oldest !== undefined) autoSpoken.delete(oldest)
+      }
       autoSpoken.add(last.id)
       speak(text, last.id).catch(report)
     })

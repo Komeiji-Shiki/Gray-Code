@@ -11,6 +11,7 @@ export async function speechRequest(app: PlatformApplication, session: ClientSes
   switch (method) {
     case 'speech.status': return app.speech.status();
     case 'speech.synthesize': return app.speech.synthesize(params as SpeechInput);
+    case 'speech.cancel': app.speech.cancel(); return { ok: true };
     case 'speech.clone': return app.speech.clone(params as SpeechCloneInput);
     case 'speech.credential': {
       // 设置页切换提供商时回填该提供商已保存的密钥；凭据按提供商分开保存。

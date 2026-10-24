@@ -50,14 +50,21 @@ export class ListenerLifecycle<S extends ManagedListener> {
   }
 
   start(): Promise<void> {
+    if (this.closed) return Promise.resolve();
     this.paused = false;
     return this.enqueue(() => this.apply());
   }
 
   stop(): void {
+    if (this.closed) return;
     this.paused = true; this.state = this.server ? 'stopping' : 'stopped'; this.emit();
-    void this.enqueue(async () => { await this.disconnect(); this.state = 'stopped'; this.error = undefined; this.emit(); })
-      .catch(error => this.fail(error));
+    void this.enqueue(async () => {
+      if (this.closed) return;
+      await this.disconnect();
+      this.state = 'stopped';
+      this.error = undefined;
+      this.emit();
+    }).catch(error => this.fail(error));
   }
 
   async close(): Promise<void> {
@@ -70,6 +77,7 @@ export class ListenerLifecycle<S extends ManagedListener> {
   private emit() { if (!this.closed) this.hooks.changed(); }
 
   private fail(error: unknown) {
+    if (this.closed) return;
     this.state = 'error'; this.error = error instanceof Error ? error.message : String(error); this.emit();
   }
 
