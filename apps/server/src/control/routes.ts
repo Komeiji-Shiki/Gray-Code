@@ -267,7 +267,7 @@ export function controlRoutes(application: PlatformApplication, options: {
           ...(typeof input.voice === 'string' && input.voice ? { voice: input.voice } : {}),
           ...(input.speed !== undefined ? { speed: Number(input.speed) } : {}),
           ...(typeof input.format === 'string' ? { format: input.format as 'mp3' | 'wav' | 'opus' } : {}),
-        }, session.actorId)];
+        })];
       },
     },
     {
@@ -276,7 +276,7 @@ export function controlRoutes(application: PlatformApplication, options: {
       handle: async ({ body }) => {
         const input = await body(cloneBodyLimit);
         return [201, await application.speech.clone({ title: input.title, audio: input.audio, mimeType: input.mimeType,
-          ...(typeof input.text === 'string' ? { text: input.text } : {}) }, session.actorId)];
+          ...(typeof input.text === 'string' ? { text: input.text } : {}) })];
       },
     },
   ];

@@ -1,55 +1,36 @@
 import type { SpeechSettings } from '@graycode/contracts';
 import type { PlatformApplication } from '../../../apps/server/src/application';
-import { SpeechService, splitSpeechText } from '../../../apps/server/src/speech/service';
+import { SpeechService } from '../../../apps/server/src/speech/service';
+import { speechRequest } from '../../../apps/server/src/speech/requests';
 import { speechSettings, validateSpeechSettings } from '../../../apps/server/src/speech/settings';
 
 function fakeApp(settings: SpeechSettings, credential: string | null = 'test-key'): PlatformApplication {
-  return {
-    requireOwner: () => {},
+  const app = {
+    requireOwner: (actorId: string) => { if (actorId !== 'owner') throw new Error('Owner access is required.'); },
     settings: {
       read: (key: string) => key === 'speech' ? { speech: settings } : {},
       credential: async () => credential,
     },
     product: { runtimeSettings: () => ({ getEffectiveProxyUrl: () => undefined }) },
-  } as unknown as PlatformApplication;
+  } as unknown as PlatformApplication & { speech: SpeechService };
+  app.speech = new SpeechService(app);
+  return app;
 }
 
 const fish: SpeechSettings = { enabled: true, provider: 'fish', endpoint: 'https://api.fish.audio', model: 'drama-3',
   credentialRef: 'speech_fish_key', referenceId: 'voice-1', format: 'mp3', speed: 1 };
 
-describe('speech text splitting', () => {
-  test('splits long text at sentence boundaries without losing content', () => {
-    const text = '第一句。第二句！第三句？\n第四句；'.repeat(120);
-    const chunks = splitSpeechText(text, 80);
-    expect(chunks.length).toBeGreaterThan(1);
-    expect(chunks.every(chunk => chunk.length <= 80)).toBe(true);
-    expect(chunks.join('').replace(/\s/g, '')).toBe(text.replace(/\s/g, ''));
-  });
-
-  test('hard-cuts oversized text without splitting surrogate pairs', () => {
-    const text = '😀'.repeat(700);
-    const chunks = splitSpeechText(text, 1200);
-    expect(chunks.length).toBeGreaterThan(1);
-    for (const chunk of chunks) {
-      expect(chunk.length).toBeLessThanOrEqual(1200);
-      expect(chunk).not.toMatch(/[\uD800-\uDBFF]$/);
-      expect(chunk).not.toMatch(/^[\uDC00-\uDFFF]/);
-    }
-    expect(chunks.join('')).toBe(text);
-  });
-
-  test('returns no clips for whitespace', () => {
-    expect(splitSpeechText(' \n\t ')).toEqual([]);
-  });
-});
-
 describe('speech settings', () => {
-  test('feeds provider defaults and validates Fish cloning', () => {
-    const value = speechSettings({ enabled: true, provider: 'fish', credentialRef: 'key', referenceId: 'voice' });
-    expect(value.model).toBe('drama-3');
-    expect(value.format).toBe('mp3');
-    expect(() => validateSpeechSettings({ enabled: true, provider: 'fish', credentialRef: 'key' })).toThrow('音色');
-    expect(() => validateSpeechSettings(value)).not.toThrow();
+  test('fills provider defaults at read time without the save step rewriting settings', () => {
+    const value = speechSettings({ enabled: true, provider: 'fish', credentialRef: 'key', referenceId: 'voice', speed: undefined });
+    expect(value).toMatchObject({ model: 'drama-3', format: 'mp3', speed: 1, endpoint: 'https://api.fish.audio' });
+    expect(speechSettings({ enabled: true, provider: 'openai', endpoint: 'http://127.0.0.1:8880/v1/' }))
+      .toMatchObject({ endpoint: 'http://127.0.0.1:8880/v1', voice: 'alloy', model: 'tts-1' });
+    // 克隆音色要先保存 API Key 才能创建，保存时不能要求音色 ID 已经存在。
+    const draft: SpeechSettings = { enabled: true, provider: 'fish', credentialRef: 'key', endpoint: 'https://api.fish.audio/' };
+    const before = structuredClone(draft);
+    expect(() => validateSpeechSettings(draft)).not.toThrow();
+    expect(draft).toEqual(before);
   });
 
   test('requires credentials for cloud providers and fixes Windows output', () => {
@@ -57,7 +38,8 @@ describe('speech settings', () => {
       .toThrow('API Key');
     const system = speechSettings({ enabled: true, provider: 'system', format: 'mp3' });
     validateSpeechSettings(system);
-    expect(system.format).toBe('wav');
+    expect(system).toMatchObject({ format: 'wav', endpoint: undefined, model: undefined });
+    expect(() => validateSpeechSettings({ enabled: false, provider: 'qwen', format: 'opus' })).toThrow('Opus');
   });
 
   test('rejects invalid endpoints and speeds', () => {
@@ -73,7 +55,7 @@ describe('speech providers', () => {
   test('Fish Audio sends model and reference in the expected request', async () => {
     const request = jest.fn(async () => new Response(Buffer.from('mp3-data'), { status: 200 }));
     globalThis.fetch = request as unknown as typeof fetch;
-    const result = await new SpeechService(fakeApp(fish)).synthesize({ text: '你好。' }, 'owner');
+    const result = await new SpeechService(fakeApp(fish)).synthesize({ text: '你好。' });
     expect(result.provider).toBe('fish');
     expect(result.clips).toEqual([{ text: '你好。', mimeType: 'audio/mpeg', base64: Buffer.from('mp3-data').toString('base64') }]);
     const [url, init] = request.mock.calls[0] as unknown as [string, RequestInit];
@@ -89,7 +71,7 @@ describe('speech providers', () => {
     const request = jest.fn(async () => new Response(JSON.stringify({ output: { audio: {
       data: Buffer.from('wav-data').toString('base64') } } }), { status: 200, headers: { 'Content-Type': 'application/json' } }));
     globalThis.fetch = request as unknown as typeof fetch;
-    const result = await new SpeechService(fakeApp(settings)).synthesize({ text: '你好。' }, 'owner');
+    const result = await new SpeechService(fakeApp(settings)).synthesize({ text: '你好。' });
     expect(result.clips[0]).toMatchObject({ mimeType: 'audio/wav', base64: Buffer.from('wav-data').toString('base64') });
     const [url, init] = request.mock.calls[0] as unknown as [string, RequestInit];
     expect(url).toBe(settings.endpoint);
@@ -102,7 +84,7 @@ describe('speech providers', () => {
       model: 'kokoro', voice: 'af_heart', format: 'mp3', speed: 1.2 };
     const request = jest.fn(async () => new Response(Buffer.from('audio'), { status: 200 }));
     globalThis.fetch = request as unknown as typeof fetch;
-    await new SpeechService(fakeApp(settings, null)).synthesize({ text: 'Hello.' }, 'owner');
+    await new SpeechService(fakeApp(settings, null)).synthesize({ text: 'Hello.' });
     const [url, init] = request.mock.calls[0] as unknown as [string, RequestInit];
     expect(url).toBe('http://127.0.0.1:8880/v1/audio/speech');
     expect(new Headers(init.headers).get('authorization')).toBeNull();
@@ -113,8 +95,8 @@ describe('speech providers', () => {
     const request = jest.fn(async () => new Response(JSON.stringify({ _id: 'new-voice', state: 'trained' }),
       { status: 200, headers: { 'Content-Type': 'application/json' } }));
     globalThis.fetch = request as unknown as typeof fetch;
-    const result = await new SpeechService(fakeApp(fish)).clone({ title: '灰魂', audio: Buffer.from('wav').toString('base64'),
-      mimeType: 'audio/wav' }, 'owner');
+    const result = await new SpeechService(fakeApp(fish)).clone({ title: 'Gray', audio: Buffer.from('wav').toString('base64'),
+      mimeType: 'audio/wav' });
     expect(result).toEqual({ id: 'new-voice', state: 'trained' });
     const [url, init] = request.mock.calls[0] as unknown as [string, RequestInit];
     expect(url).toBe('https://api.fish.audio/model');
@@ -124,5 +106,28 @@ describe('speech providers', () => {
     expect(body).toContain('name="visibility"\r\n\r\nprivate');
     expect(body).toContain('name="voices"; filename="reference.wav"');
     expect(body).toContain('Content-Type: audio/wav');
+  });
+
+  test('reads Markdown as plain text and marks provider failures as upstream errors', async () => {
+    const request = jest.fn(async () => new Response(Buffer.from('mp3-data'), { status: 200 }));
+    globalThis.fetch = request as unknown as typeof fetch;
+    await new SpeechService(fakeApp(fish)).synthesize({ text: '## 标题\n\n**好的**，见 [文档](https://example.com)。\n```\ncode\n```' });
+    const [, init] = request.mock.calls[0] as unknown as [string, RequestInit];
+    expect(JSON.parse(String(init.body)).text).toBe('标题\n\n好的，见 文档。');
+
+    globalThis.fetch = jest.fn(async () => new Response('quota exceeded', { status: 429 })) as unknown as typeof fetch;
+    await expect(new SpeechService(fakeApp(fish)).synthesize({ text: '你好。' }))
+      .rejects.toMatchObject({ code: 'UPSTREAM_FAILED', message: expect.stringContaining('429') });
+    globalThis.fetch = jest.fn(async () => { throw new TypeError('fetch failed'); }) as unknown as typeof fetch;
+    await expect(new SpeechService(fakeApp(fish)).synthesize({ text: '你好。' })).rejects.toMatchObject({ code: 'UPSTREAM_FAILED' });
+  });
+
+  test('one request entry checks the owner once and validates clone input types', async () => {
+    const app = fakeApp(fish);
+    await expect(speechRequest(app, { actorId: 'guest', clientId: 'remote' }, 'speech.synthesize', { text: '你好' })).rejects.toThrow('Owner');
+    await expect(speechRequest(app, { actorId: 'owner', clientId: 'ui' }, 'speech.clone', { title: 42, audio: 'AAAA', mimeType: 'audio/wav' }))
+      .rejects.toThrow('音色名称');
+    await expect(speechRequest(app, { actorId: 'owner', clientId: 'ui' }, 'speech.credential', { provider: 'fish' })).resolves.toEqual({ token: 'test-key' });
+    await expect(speechRequest(app, { actorId: 'owner', clientId: 'ui' }, 'speech.unknown', {})).rejects.toThrow('未知语音操作');
   });
 });

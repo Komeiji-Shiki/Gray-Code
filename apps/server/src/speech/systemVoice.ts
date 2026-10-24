@@ -6,9 +6,11 @@ import path from 'node:path';
 const powershell = process.platform === 'win32' ? 'powershell.exe' : undefined;
 const timeoutMs = 120_000;
 const quote = (value: string) => `'${value.replace(/'/g, "''")}'`;
-const listScript = `$ErrorActionPreference = 'Stop'
+// 输出与错误都按 UTF-8 读取；不设置时中文系统的错误信息按 GBK 写出，读回来是乱码。
+const preamble = `$ErrorActionPreference = 'Stop'
 [Console]::OutputEncoding = [Text.Encoding]::UTF8
-Add-Type -AssemblyName System.Speech
+Add-Type -AssemblyName System.Speech`;
+const listScript = `${preamble}
 $voice = New-Object System.Speech.Synthesis.SpeechSynthesizer
 $voice.GetInstalledVoices() | ForEach-Object { $_.VoiceInfo.Name }
 $voice.Dispose()`;
@@ -47,8 +49,7 @@ export async function synthesizeSystem(texts: string[], voice: string | undefine
     const input = path.join(directory, 'input.json');
     await writeFile(input, JSON.stringify(files), 'utf8');
     const rate = Math.max(-10, Math.min(10, Math.round((speed - 1) * 10)));
-    const script = `$ErrorActionPreference = 'Stop'
-Add-Type -AssemblyName System.Speech
+    const script = `${preamble}
 $items = Get-Content -Raw -Encoding UTF8 ${quote(input)} | ConvertFrom-Json
 $voice = New-Object System.Speech.Synthesis.SpeechSynthesizer
 ${voice ? `$voice.SelectVoice(${quote(voice)})` : ''}

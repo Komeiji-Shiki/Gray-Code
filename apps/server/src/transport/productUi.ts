@@ -39,6 +39,7 @@ import { activateConversationWorkspace } from '../conversations/workspace';
 import { validateDecisionProvider } from '../model/decisionReviewer';
 import type { WorkspaceDiff } from '../workspace/diffs';
 import type { UiRequestHandlers, UiStartupSnapshot } from '@graycode/contracts';
+import { speechRequest } from '../speech/requests';
 
 interface UiSession { mode?: 'chat' | 'code' | 'character'; preferences: ProductSettingsDraft; editing: boolean; workspaceId?: string }
 export class ProductUi {
@@ -141,20 +142,7 @@ export class ProductUi {
       if (type === 'platform.controlApi.stop') { this.app.controlApi.stop(); return { success: true }; }
       throw new Error('未知外部控制接口操作。');
     }
-    if (type.startsWith('speech.')) {
-      this.app.requireOwner(client.actorId);
-      if (type === 'speech.status') return this.app.speech.status();
-      if (type === 'speech.credential') {
-        const provider = String(data.provider ?? '');
-        if (!['fish', 'openai', 'qwen'].includes(provider)) return { token: '' };
-        const saved = this.app.settings.read('speech').speech;
-        const reference = saved?.provider === provider && saved.credentialRef ? saved.credentialRef : `speech_${provider}_key`;
-        return { token: await this.app.settings.credential(reference) ?? '' };
-      }
-      if (type === 'speech.synthesize') return this.app.speech.synthesize(data as { text: string; voice?: string; speed?: number; format?: 'mp3' | 'wav' | 'opus' }, client.actorId);
-      if (type === 'speech.clone') return this.app.speech.clone(data as import('@graycode/contracts').SpeechCloneInput, client.actorId);
-      throw new Error('未知语音操作。');
-    }
+    if (type.startsWith('speech.')) return speechRequest(this.app, client, type, data);
     if (type.startsWith('platform.remote.')) {
       this.app.requireOwner(client.actorId);
       if (!this.app.remoteAccess) throw new Error('当前启动方式未提供远程连接管理。');

@@ -151,9 +151,9 @@ export async function* proxyStreamFetch(
         const response = await fetch(url, {
             method: init.method,
             headers: headersWithUserAgent,
-            body: init.body,
+            body: init.body as RequestInit['body'],
             signal: init.signal
-        } as unknown as RequestInit);
+        });
 
         if (!response.ok) {
             // 获取错误详情：必须先读 text() 再尝试解析 JSON——response.json() 会消费

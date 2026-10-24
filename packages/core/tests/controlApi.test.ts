@@ -6,6 +6,7 @@ import type { PlatformApplication } from '../../../apps/server/src/application';
 import { startControlServer } from '../../../apps/server/src/control/server';
 import { ControlApiService } from '../../../apps/server/src/control/service';
 import { PlatformStorageError } from '../../../packages/core/src/errors';
+import { SpeechProviderError } from '../../../apps/server/src/speech/service';
 
 const token = 'a'.repeat(64);
 const headers = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' };
@@ -61,6 +62,7 @@ function createApp() {
     emit: (event: Record<string, any>) => { for (const listener of listeners) listener(event); },
     speech: {
       synthesize: async (input: Record<string, any>) => { synthesized.push(input);
+        if (input.text === 'fail') throw new SpeechProviderError('语音合成接口返回 500');
         return { provider: 'fish', clips: [{ text: input.text, mimeType: 'audio/mpeg', base64: 'YQ==' }] }; },
       clone: async () => ({ id: 'voice-2', state: 'trained' }),
     },
@@ -189,6 +191,9 @@ describe('external control API', () => {
     const speech = await request(port, '/v1/speech', { method: 'POST', headers, body: JSON.stringify({ text: '你好' }) });
     expect(await body(speech)).toMatchObject({ provider: 'fish', clips: [{ base64: 'YQ==' }] });
     expect(app.synthesized[0]).toMatchObject({ text: '你好' });
+    const upstream = await request(port, '/v1/speech', { method: 'POST', headers, body: JSON.stringify({ text: 'fail' }) });
+    expect(upstream.status).toBe(502);
+    expect(await body(upstream)).toMatchObject({ code: 'UPSTREAM_FAILED' });
   }));
 
   test('service follows saved settings, rotates tokens in place and publishes a discovery file while listening', async () => {
