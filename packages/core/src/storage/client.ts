@@ -115,7 +115,7 @@ export class PlatformStorage {
   memoryRevisions(scope: MemoryScopeDefinition, before?: number) { return this.request('memoryRevisions', { scope, before }); }
   memoryWrite(input: MemoryWrite) { return this.request('memoryWrite', input); }
   saveMetadata(metadata: PlatformConversation, options?: { expectedMetadataToken?: string }) {
-    return this.request('saveMetadata', options?.expectedMetadataToken !== undefined ? { metadata, expectedMetadataToken: options.expectedMetadataToken } : metadata);
+    return this.request('saveMetadata', { metadata, expectedMetadataToken: options?.expectedMetadataToken });
   }
   listConversations(options: ConversationListOptions = {}) { return this.request('listConversations', options); }
   listConversationIds(options: ConversationListOptions = {}) { return this.request('listConversationIds', options); }

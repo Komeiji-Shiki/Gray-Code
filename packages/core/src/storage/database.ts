@@ -184,9 +184,7 @@ export class PlatformDatabase {
       return { metadata: this.objects.getValue<PlatformConversation>(row.metadata_hash), metadataToken: row.metadata_hash.toString('hex'),
         messageCount: history.message_count, historyRevision: history.revision };
     } },
-    saveMetadata: { concurrentRead: false, execute: input => 'metadata' in input && typeof input.metadata === 'object' && input.metadata !== null && !('createdAt' in input)
-      ? this.saveMetadata(input.metadata, input.expectedMetadataToken)
-      : this.saveMetadata(input as PlatformConversation) },
+    saveMetadata: { concurrentRead: false, execute: ({ metadata, expectedMetadataToken }) => this.saveMetadata(metadata, expectedMetadataToken) },
     listConversations: { concurrentRead: true, execute: options => this.listConversations(options) },
     listConversationIds: { concurrentRead: true, execute: options => this.listConversationIds(options) },
     searchConversationIds: { concurrentRead: false, execute: ({ query }) => this.searchConversationIds(query) },

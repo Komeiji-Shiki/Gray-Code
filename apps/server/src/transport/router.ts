@@ -287,7 +287,11 @@ export class ApplicationRouter {
           const info = await app.storage.getConversationInfo(conversation.id);
           if (info && info.messageCount === 0 && info.metadata.title === "新对话") {
             await app.storage.saveMetadata({ ...info.metadata,
-              title: String(params.text).trim().replace(/\s+/g, " ").slice(0, 48), updatedAt: Date.now() }, { expectedMetadataToken: info.metadataToken }).catch(() => {});
+              title: String(params.text).trim().replace(/\s+/g, " ").slice(0, 48), updatedAt: Date.now() }, { expectedMetadataToken: info.metadataToken })
+              .catch(error => {
+                // 标题已被并发修改时保留对方的修改；其他存储错误照常上报。
+                if ((error as { code?: string }).code !== "REVISION_CONFLICT") throw error;
+              });
           }
         }
         return app.runtime.start(input, undefined, { clientId: session.clientId });
