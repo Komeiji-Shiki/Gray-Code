@@ -6,6 +6,13 @@ import MessageList from '../MessageList.vue'
 import { messageListUiStateByTab } from '../messageListUiState'
 import type { Message } from '../../../types'
 
+// MessageList 挂载时订阅宿主消息（朗读开关与自动朗读）；DOM 用例没有宿主传输层。
+vi.mock('../../../utils/vscode', async importOriginal => ({
+  ...await importOriginal<typeof import('../../../utils/vscode')>(),
+  sendToExtension: vi.fn().mockResolvedValue({}),
+  onMessageFromExtension: vi.fn(() => () => {})
+}))
+
 class ResizeObserverStub {
   observe(): void {}
   disconnect(): void {}
