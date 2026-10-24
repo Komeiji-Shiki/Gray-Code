@@ -1,6 +1,6 @@
 import { nextTick, onBeforeUnmount, ref } from 'vue'
 import type { AppSettings, SpeechSynthesisResult } from '../../../packages/contracts/src'
-import { speechSegments } from '@shared/speech'
+import { SPEECH_FIRST_CHUNK_LIMIT, speechSegments } from '@shared/speech'
 import { onMessageFromExtension, sendToExtension } from '@/utils/vscode'
 import { playClip } from '@/utils/speechPlayback'
 import { t } from '@/i18n'
@@ -64,12 +64,12 @@ function synthesize(text: string): Promise<SpeechSynthesisResult> {
 }
 
 /**
- * 朗读一段文字：按句分段，播放当前段的同时合成下一段，首段合成完就开始出声。
+ * 朗读一段文字：按句分段，播放当前段的同时合成下一段；第一段只有一两句，很快就能出声。
  * 再次朗读或停止会中止上一轮，包括仍在合成中的片段。
  */
 export async function speak(text: string, messageId?: string): Promise<void> {
   stopSpeech()
-  const segments = speechSegments(text)
+  const segments = speechSegments(text, { firstLimit: SPEECH_FIRST_CHUNK_LIMIT })
   if (!segments.length) return
   const controller = new AbortController()
   session = controller

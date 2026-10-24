@@ -1,4 +1,4 @@
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import type { SpeechClip, SpeechCloneInput, SpeechCloneResult, SpeechSettings, SpeechStatus, SpeechSynthesisResult } from '@graycode/contracts';
 import { createProxyFetch } from '../../../../backend/modules/channel/proxyFetch';
 import { SPEECH_MAX_TEXT, speechSegments } from '../../../../shared/speech';
@@ -7,6 +7,8 @@ import { speechSettings } from './settings';
 import { listSystemVoices, synthesizeSystem } from './systemVoice';
 
 const maxAudioBytes = 30 * 1024 * 1024;
+/** 合成结果按 base64 长度计入缓存，重读同一段时不再请求按字计费的提供商。 */
+const cacheLimit = 32 * 1024 * 1024;
 /** Fish 参考录音的解码后上限；控制接口按它推算请求体上限。 */
 export const maxReferenceAudioBytes = 50 * 1024 * 1024;
 const formats = new Set(['mp3', 'wav', 'opus']);
@@ -42,7 +44,32 @@ function clip(text: string, mimeType: string, bytes: Buffer): SpeechClip {
 /** 调用方（界面、RPC 与控制接口）在各自入口确认主人身份，这里只校验参数并调用提供商。 */
 export class SpeechService {
   private voices?: Promise<string[]>;
+  private readonly cache = new Map<string, SpeechClip>();
+  private cacheSize = 0;
   constructor(private readonly app: PlatformApplication) {}
+
+  /** 键包含所有影响声音的设置，改了音色或语速后旧条目自然被淘汰；密钥不影响结果，不参与。 */
+  private cacheKey(settings: SpeechSettings, text: string, voice: string | undefined, speed: number, format: string): string {
+    const identity = [settings.provider, settings.endpoint, settings.model, settings.referenceId, voice, speed, format, text];
+    return createHash('sha256').update(JSON.stringify(identity)).digest('hex');
+  }
+
+  /** Map 按插入顺序迭代：命中时移到末尾，超出上限时从最久未用的开始淘汰。 */
+  private cached(key: string): SpeechClip | undefined {
+    const value = this.cache.get(key);
+    if (value) { this.cache.delete(key); this.cache.set(key, value); }
+    return value;
+  }
+
+  private remember(key: string, value: SpeechClip): void {
+    this.cache.set(key, value);
+    this.cacheSize += value.base64.length;
+    for (const [oldest, entry] of this.cache) {
+      if (this.cacheSize <= cacheLimit) break;
+      this.cache.delete(oldest);
+      this.cacheSize -= entry.base64.length;
+    }
+  }
 
   settings(): SpeechSettings { return speechSettings(this.app.settings.read('speech').speech); }
 
@@ -76,21 +103,27 @@ export class SpeechService {
     const voice = typeof input.voice === 'string' && input.voice.trim() ? input.voice.trim() : settings.voice;
     const speed = input.speed ?? settings.speed!;
     if (!Number.isFinite(speed) || speed < 0.5 || speed > 2) throw new Error('语速必须在 0.5 至 2 之间。');
-    if (settings.provider === 'system') {
-      const items = await synthesizeSystem(texts, voice, speed);
-      return { provider: 'system', voice, clips: items.map(item => clip(item.text, 'audio/wav', item.bytes)) };
-    }
-    const format = input.format ?? settings.format!;
+    const format = settings.provider === 'system' ? 'wav' : input.format ?? settings.format!;
     if (!formats.has(format)) throw new Error('format 只能是 mp3、wav 或 opus。');
     if (settings.provider === 'qwen' && format === 'opus') throw new Error('Qwen-Audio-TTS 不支持 Opus 输出。');
-    const clips: SpeechClip[] = [];
-    for (const text of texts) {
-      const bytes = settings.provider === 'fish' ? await this.fish(settings, text, speed, format)
-        : settings.provider === 'qwen' ? await this.qwen(settings, text, speed, format, voice!)
-        : await this.openai(settings, text, speed, format, voice!);
-      clips.push(clip(text, mimeTypes[format], bytes));
+    const keys = texts.map(text => this.cacheKey(settings, text, voice, speed, format));
+    const clips = keys.map(key => this.cached(key));
+    const missing = texts.flatMap((text, index) => clips[index] ? [] : [index]);
+    if (settings.provider === 'system') {
+      // 本机语音一次 PowerShell 调用合成全部缺失的片段，避免每段都重新加载系统语音。
+      const items = missing.length ? await synthesizeSystem(missing.map(index => texts[index]), voice, speed) : [];
+      items.forEach((item, position) => { clips[missing[position]] = clip(item.text, 'audio/wav', item.bytes); });
+    } else {
+      for (const index of missing) {
+        const text = texts[index];
+        const bytes = settings.provider === 'fish' ? await this.fish(settings, text, speed, format)
+          : settings.provider === 'qwen' ? await this.qwen(settings, text, speed, format, voice!)
+          : await this.openai(settings, text, speed, format, voice!);
+        clips[index] = clip(text, mimeTypes[format], bytes);
+      }
     }
-    return { provider: settings.provider, ...(settings.provider === 'fish' ? {} : { voice }), clips };
+    for (const index of missing) this.remember(keys[index], clips[index]!);
+    return { provider: settings.provider, ...(settings.provider === 'fish' ? {} : { voice }), clips: clips as SpeechClip[] };
   }
 
   private async request(url: string, init: RequestInit, timeout = 120_000): Promise<Response> {

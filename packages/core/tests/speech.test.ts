@@ -130,4 +130,17 @@ describe('speech providers', () => {
     await expect(speechRequest(app, { actorId: 'owner', clientId: 'ui' }, 'speech.credential', { provider: 'fish' })).resolves.toEqual({ token: 'test-key' });
     await expect(speechRequest(app, { actorId: 'owner', clientId: 'ui' }, 'speech.unknown', {})).rejects.toThrow('未知语音操作');
   });
+
+  test('reuses synthesized clips until a voice-affecting setting changes', async () => {
+    const request = jest.fn(async () => new Response(Buffer.from('mp3-data'), { status: 200 }));
+    globalThis.fetch = request as unknown as typeof fetch;
+    const service = new SpeechService(fakeApp(fish));
+    const first = await service.synthesize({ text: '同一句话。' });
+    expect(await service.synthesize({ text: '同一句话。' })).toEqual(first);
+    expect(request).toHaveBeenCalledTimes(1);
+    await service.synthesize({ text: '同一句话。', speed: 1.5 });
+    expect(request).toHaveBeenCalledTimes(2);
+    await service.synthesize({ text: '同一句话。\n新的一句。' });
+    expect(request).toHaveBeenCalledTimes(3);
+  });
 });

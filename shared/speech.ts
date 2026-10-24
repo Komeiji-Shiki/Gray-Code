@@ -4,6 +4,8 @@ import type { SpeechProvider, SpeechSettings } from '../packages/contracts/src/s
 export const SPEECH_MAX_TEXT = 12_000;
 /** 每段送给提供商的字符上限，长回复按句子拼到这个长度以内。 */
 export const SPEECH_CHUNK_LIMIT = 1_200;
+/** 边合成边播放时第一段只拼一两句，尽快出声；后续段在播放期间合成。 */
+export const SPEECH_FIRST_CHUNK_LIMIT = 100;
 
 /** 设置页切换提供商与服务端读取设置共用的默认值；未填写的端点、模型和音色按当前提供商补齐。 */
 export const SPEECH_PROVIDER_DEFAULTS: Record<SpeechProvider, Partial<SpeechSettings>> = {
@@ -56,8 +58,11 @@ function cutPoint(text: string, limit: number): number {
   return code >= 0xd800 && code <= 0xdbff ? limit - 1 : limit;
 }
 
-/** 在句末或换行处分段，再把相邻句子拼到上限以内，减少请求次数又不在句中停顿。 */
-export function splitSpeechText(value: string, limit = SPEECH_CHUNK_LIMIT): string[] {
+/**
+ * 在句末或换行处分段，再把相邻句子拼到上限以内，减少请求次数又不在句中停顿。
+ * firstLimit 只限制第一段拼接多少句；单句超过 limit 时才会被切开。
+ */
+export function splitSpeechText(value: string, limit = SPEECH_CHUNK_LIMIT, firstLimit = limit): string[] {
   const text = value.replace(/\r\n?/g, '\n').replace(/[ \t]+/g, ' ').trim();
   if (!text) return [];
   const chunks: string[] = [];
@@ -73,7 +78,7 @@ export function splitSpeechText(value: string, limit = SPEECH_CHUNK_LIMIT): stri
       if (piece) chunks.push(piece);
       rest = rest.slice(cut);
     }
-    if (current.length + rest.length > limit) flush();
+    if (current.length + rest.length > (chunks.length ? limit : firstLimit)) flush();
     current += rest;
   }
   flush();
@@ -81,6 +86,6 @@ export function splitSpeechText(value: string, limit = SPEECH_CHUNK_LIMIT): stri
 }
 
 /** 朗读前的统一处理：转成纯文字再分段。 */
-export function speechSegments(markdown: string): string[] {
-  return splitSpeechText(speechPlainText(markdown));
+export function speechSegments(markdown: string, options: { firstLimit?: number } = {}): string[] {
+  return splitSpeechText(speechPlainText(markdown), SPEECH_CHUNK_LIMIT, options.firstLimit);
 }

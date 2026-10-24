@@ -70,6 +70,15 @@ describe('朗读分段', () => {
     expect(chunks.join('')).toBe(text);
   });
 
+  test('第一段只拼一两句以便尽快出声，后续段仍按上限拼接', () => {
+    const text = '短句一。短句二。'.repeat(40);
+    const [first, ...rest] = splitSpeechText(text, 200, 10);
+    expect(first).toBe('短句一。短句二。');
+    expect(rest.every(chunk => chunk.length <= 200 && chunk.length > 10)).toBe(true);
+    // 第一句本身超过 firstLimit 时整句保留，只在超过 limit 时才切开。
+    expect(splitSpeechText(`${'长'.repeat(30)}。后面。`, 200, 12)[0]).toBe(`${'长'.repeat(30)}。`);
+  });
+
   test('只有空白或只有代码时没有可读片段', () => {
     expect(splitSpeechText(' \n\t ')).toEqual([]);
     expect(speechSegments('```\ncode\n```')).toEqual([]);
