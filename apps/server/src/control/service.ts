@@ -57,7 +57,7 @@ export class ControlApiService implements ControlApiHost {
     const config = this.configured();
     const port = this.listener.server?.port;
     const lan = config.allowLan && port !== undefined ? lanAddresses()[0] : undefined;
-    return { available: true, state: this.listener.state, enabled: config.enabled, configuredPort: config.port,
+    return { state: this.listener.state, enabled: config.enabled, configuredPort: config.port,
       credentialRef: config.credentialRef, ...(port !== undefined ? { port,
         localAddress: `http://127.0.0.1:${port}`, ...(lan ? { lanAddress: `http://${lan}:${port}` } : {}) } : {}),
       error: this.listener.error };

@@ -9,7 +9,6 @@ export interface ControlApiSettings {
 }
 
 export interface ControlApiStatus {
-  available: boolean;
   state: 'disabled' | 'stopped' | 'starting' | 'listening' | 'stopping' | 'error';
   enabled: boolean;
   configuredPort: number;
