@@ -47,7 +47,8 @@ export function projectChannels(profiles: ProviderDefinition[], channels: Channe
         responsesAsyncToolsEnabled: caps.responsesAsyncTools === true,
         openCodeSessionEnabled: caps.compatibility.openCodeSession,
         deepSeekUserIdEnabled: caps.compatibility.deepSeekUserId, deepSeekVisionEnabled: caps.compatibility.deepSeekVision,
-        pdfAttachmentEnabled: caps.compatibility.nativePdf, sendHistoryThoughtSignatures: caps.reasoningSignature !== 'none',
+        pdfAttachmentEnabled: caps.compatibility.nativePdf, toolMediaUserMessageEnabled: caps.compatibility.toolMediaUserMessage === true,
+        sendHistoryThoughtSignatures: caps.reasoningSignature !== 'none',
         reasoningSignatureMode: caps.reasoningSignature === 'codex' ? 'codex' : caps.reasoningSignature === 'deepseek' ? 'deepseek'
           : caps.reasoningSignature === 'none' && old?.type === 'openai-responses' ? old.reasoningSignatureMode ?? 'official' : 'official',
         providerReasoningContentEnabled: caps.reasoningSignature === 'deepseek',
@@ -91,7 +92,8 @@ export function channelProfile(channel: ChannelConfig, previous?: ProviderDefini
       strictTools: channel.strictToolsEnabled === undefined ? previous?.capabilities.strictTools ?? 'protocol_default' : channel.strictToolsEnabled ? 'enabled' : 'disabled',
       compatibility: { openCodeSession: channel.openCodeSessionEnabled === true,
         deepSeekUserId: (channel as any).deepSeekUserIdEnabled === true, deepSeekVision: (channel as any).deepSeekVisionEnabled === true,
-        nativePdf: (channel as any).pdfAttachmentEnabled === true },
+        nativePdf: (channel as any).pdfAttachmentEnabled === true,
+        toolMediaUserMessage: (channel as any).toolMediaUserMessageEnabled === true },
     },
   };
 }

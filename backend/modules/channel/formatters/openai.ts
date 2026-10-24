@@ -62,6 +62,12 @@ import type {
 
 const DEEPSEEK_USER_ID_PREFIX = 'graycode-conversation-';
 
+interface OpenAIMediaOptions {
+    pdfAttachmentEnabled: boolean;
+    /** 工具附件改为追加 user 消息；按规范 tool 消息只接受文本，严格兼容端点会拒绝其中的图片。 */
+    toolMediaUserMessage: boolean;
+}
+
 /**
  * OpenAI 格式转换器
  *
@@ -135,7 +141,10 @@ export class OpenAIFormatter extends BaseFormatter {
         );
         
         // 转换历史消息为 OpenAI 格式（直接传入原始历史，转换时处理）
-        const messages = this.convertToOpenAIMessages(processedHistory, systemInstruction, toolMode, !!config.pdfAttachmentEnabled);
+        const messages = this.convertToOpenAIMessages(processedHistory, systemInstruction, toolMode, {
+            pdfAttachmentEnabled: !!config.pdfAttachmentEnabled,
+            toolMediaUserMessage: config.toolMediaUserMessageEnabled === true
+        });
         
         // 构建请求体
         const body: any = {
@@ -261,12 +270,12 @@ export class OpenAIFormatter extends BaseFormatter {
      */
     private convertToOpenAIMessages(
         history: Content[],
-        systemInstruction?: string,
-        toolMode: string = 'function_call',
-        pdfAttachmentEnabled: boolean = false
+        systemInstruction: string | undefined,
+        toolMode: string,
+        media: OpenAIMediaOptions
     ): any[] {
         const messages: any[] = [];
-        
+
         // 添加系统指令
         if (systemInstruction) {
             messages.push({
@@ -274,13 +283,13 @@ export class OpenAIFormatter extends BaseFormatter {
                 content: systemInstruction
             });
         }
-        
+
         // 根据模式使用不同的转换策略
         if (toolMode === 'function_call') {
-            this.convertHistoryFunctionCallMode(history, messages, pdfAttachmentEnabled);
+            this.convertHistoryFunctionCallMode(history, messages, media);
         } else {
             // XML 或 JSON 模式
-            this.convertHistoryTextMode(history, messages, toolMode as 'xml' | 'json', pdfAttachmentEnabled);
+            this.convertHistoryTextMode(history, messages, toolMode as 'xml' | 'json', media.pdfAttachmentEnabled);
         }
         
         return messages;
@@ -294,7 +303,8 @@ export class OpenAIFormatter extends BaseFormatter {
      * - 思考内容（thought: true）转换为 reasoning_content
      * - functionResponse 用 role: tool 发送
      */
-    private convertHistoryFunctionCallMode(history: Content[], messages: any[], pdfAttachmentEnabled: boolean = false): void {
+    private convertHistoryFunctionCallMode(history: Content[], messages: any[], media: OpenAIMediaOptions): void {
+        const { pdfAttachmentEnabled } = media;
         // 收集被 rejected 的 functionCall id：其配对 functionResponse（占位拒绝响应）
         // 也一并丢弃，避免「call 被滤掉而 tool 消息残留」的孤儿 tool 消息 400。
         // 主路径 formatHistoryForAPI 已做配对感知处理（成对保留/丢弃），此处是防御层。
@@ -315,9 +325,19 @@ export class OpenAIFormatter extends BaseFormatter {
             }
         }
 
+        // 严格兼容端点的 tool 消息只接受文本：附件推迟到这一段工具结果之后，合并成一条 user 消息，
+        // 不能插在同一批 tool 消息之间打断调用配对。每组附件前标明来源调用，保留归属。
+        const deferredToolMedia: { source: string; parts: ContentPart[] }[] = [];
+        const flushToolMedia = () => {
+            if (!deferredToolMedia.length) return;
+            messages.push({ role: 'user', content: deferredToolMedia.flatMap(({ source, parts }) => this.buildMessageContent(
+                [{ text: `Attachments returned by ${source}:` }], parts, pdfAttachmentEnabled) as any[]) });
+            deferredToolMedia.length = 0;
+        };
+
         for (const content of history) {
             const role = content.role === 'model' ? 'assistant' : content.role;
-            
+
             const textParts: ContentPart[] = [];
             const thoughtParts: ContentPart[] = [];
             const functionCallParts: ContentPart[] = [];
@@ -331,7 +351,9 @@ export class OpenAIFormatter extends BaseFormatter {
                 if (part.functionResponse && !(part.functionResponse.id && rejectedCallIds.has(part.functionResponse.id))) functionResponseParts.push(part);
                 if (part.inlineData || part.fileData) mediaParts.push(part);
             }
-            
+            // 只有紧接着的仍是纯工具结果时，这一段才没有结束。
+            if (functionCallParts.length > 0 || functionResponseParts.length === 0) flushToolMedia();
+
             if (functionCallParts.length > 0) {
                 // assistant 消息包含 tool_calls
                 // 所有 functionCall 放到末尾作为 tool_calls
@@ -365,8 +387,7 @@ export class OpenAIFormatter extends BaseFormatter {
             // 后没有对应 tool 消息 → OpenAI 400 "insufficient tool messages"。
             // 这里改为独立分支，混合形态也能正确拆分出 tool 消息。
             if (functionResponseParts.length > 0) {
-                // 同消息的正文和顶层附件随首条工具结果发送，嵌套附件跟随各自的调用 ID，
-                // 避免把工具图片转成额外的 user 消息而丢失归属。
+                // 同消息的正文和顶层附件归入首条工具结果，嵌套附件跟随各自的调用 ID。
                 const textContent = textParts.map(p => p.text).join('\n');
                 for (const [index, part] of functionResponseParts.entries()) {
                     const resp = part.functionResponse!;
@@ -376,14 +397,19 @@ export class OpenAIFormatter extends BaseFormatter {
                         ...(index === 0 ? mediaParts : []),
                         ...(resp.parts?.filter(p => p.inlineData || p.fileData) ?? [])
                     ];
+                    // 无 id 时生成：计数器+随机后缀保证同消息内多个 tool_result 不重复
+                    // （对齐 anthropic.ts tool_result 的 id 生成；裸 Date.now() 同毫秒会碰撞）
+                    const toolCallId = resp.id || `call_${Date.now()}_${index}_${Math.random().toString(36).slice(2, 8)}`;
                     messages.push({
                         role: 'tool',
-                        // 无 id 时生成：计数器+随机后缀保证同消息内多个 tool_result 不重复
-                        // （对齐 anthropic.ts tool_result 的 id 生成；裸 Date.now() 同毫秒会碰撞）
-                        tool_call_id: resp.id || `call_${Date.now()}_${index}_${Math.random().toString(36).slice(2, 8)}`,
+                        tool_call_id: toolCallId,
                         name: resp.name,  // 工具名称是 OpenAI API 必需的
-                        content: this.buildMessageContent([{ text: toolText }], toolMediaParts, pdfAttachmentEnabled)
+                        content: media.toolMediaUserMessage
+                            ? toolText
+                            : this.buildMessageContent([{ text: toolText }], toolMediaParts, pdfAttachmentEnabled)
                     });
+                    if (media.toolMediaUserMessage && toolMediaParts.length)
+                        deferredToolMedia.push({ source: `${resp.name} (${toolCallId})`, parts: toolMediaParts });
                 }
             }
 
@@ -416,8 +442,9 @@ export class OpenAIFormatter extends BaseFormatter {
                 messages.push(message);
             }
         }
+        flushToolMedia();
     }
-    
+
     /**
      * 构建消息内容（支持多模态）
      *

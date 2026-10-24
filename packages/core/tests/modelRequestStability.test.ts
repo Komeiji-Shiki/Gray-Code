@@ -90,6 +90,8 @@ const variants: Variant[] = [
     compatibility: { deepSeekUserId: true, openCodeSession: true, deepSeekVision: false, nativePdf: true } },
     customBody: { temperature: 0.2, reasoning: { summary: 'auto' } }, customHeaders: { 'x-fixture': 'stable' } },
   { name: 'no thought signatures', capabilities: { reasoningSignature: 'none', outputTokenParameter: 'max_tokens' } },
+  { name: 'tool attachments as user message', capabilities: {
+    compatibility: { deepSeekUserId: false, openCodeSession: false, deepSeekVision: false, nativePdf: false, toolMediaUserMessage: true } } },
 ];
 const protocols = ['openai', 'openai-responses', 'anthropic', 'gemini', 'gemini-interactions'] as const;
 

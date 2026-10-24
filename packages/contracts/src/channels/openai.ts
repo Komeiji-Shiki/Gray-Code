@@ -71,6 +71,14 @@ export interface OpenAIConfig extends BaseChannelConfig {
      */
     pdfAttachmentEnabled?: boolean;
 
+    /**
+     * 工具返回的图片与文档改为在这一批工具结果之后追加一条 user 消息发送。
+     *
+     * 默认关闭：附件直接放进对应 role: "tool" 消息的 content 数组，大部分兼容端点支持；
+     * 规范只允许 tool 消息携带文本，LM Studio 等严格实现会返回 400，此时开启。
+     */
+    toolMediaUserMessageEnabled?: boolean;
+
     /** 可用模型列表 */
     models?: ModelInfo[];
     

@@ -9,7 +9,7 @@
 
 ### Added
 
-  - Chat Completions 原生工具调用支持在 `role: "tool"` 的 `content` 数组中直接返回文字和图片，图片与对应 `tool_call_id` 一起发送，支持内联 Base64 和图片 URL。
+  - Chat Completions 原生工具调用支持在 `role: "tool"` 的 `content` 数组中直接返回文字和图片，图片与对应 `tool_call_id` 一起发送，支持内联 Base64 和图片 URL。只接受文本 tool 消息的严格端点（如 LM Studio）可在渠道设置中开启「工具附件改用 user 消息」，附件改为在这一批工具结果之后合并成一条标明来源调用的 user 消息。
   - 新增外部控制接口：在「设置 → 外部控制」启用后，GrayCode 会在独立端口启动带令牌的本地 HTTP API，提供会话列表与新建、读取历史、发送消息并启动任务、任务状态与事件、取消任务、SSE 事件流和 RPC 透传；事件流支持 `types`、`conversationId` 过滤与 `Last-Event-ID` 断点续传。接口默认只监听回环地址，令牌单独保存，关闭窗口后仍可在后台服务外部应用。
   - 新增语音合成：助手消息支持朗读与自动朗读，设置中可切换 Fish Audio、Qwen-Audio-TTS、OpenAI 兼容接口和 Windows 本机语音。Fish Audio 支持上传参考录音创建私有克隆音色并使用 `drama-3` 情感标签；Qwen 支持 `qwen-audio-3.1-tts-flash` 的 URL 与 base64 音频响应；OpenAI 兼容接口可连接本地部署。长文本按句子切段依次播放，控制接口也提供 `/v1/speech` 与 `/v1/speech/clone`。
 

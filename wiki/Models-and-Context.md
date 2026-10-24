@@ -19,7 +19,7 @@ GrayCode 原生支持主流大模型协议，并在协议层做了深度适配�
 | **Anthropic** | Claude 系列模型 | 官方 Content Blocks（含 tool_use / tool_result 与原生多模态传递） |
 | **Gemini** | Google Gemini 系列多模态模型 | 原生多模态部件与 Function Calling 格式 |
 
-Chat Completions 的原生工具调用会将工具返回的图片直接放入对应 `role: "tool"` 消息的 `content` 数组，文字使用 `text` 块，图片使用 `image_url` 块，支持 Base64 data URL 和图片 URL。工具结果沿用原调用的 `tool_call_id`；纯文本结果仍使用字符串。渠道需支持工具消息中的图片，并开启多模态工具。升级后，已有工具图片在请求中的角色和位置会调整一次；后续追加调用保持已有请求前缀稳定，保存的历史格式不变。
+Chat Completions 的原生工具调用默认将工具返回的图片直接放入对应 `role: "tool"` 消息的 `content` 数组，文字使用 `text` 块，图片使用 `image_url` 块，支持 Base64 data URL 和图片 URL。工具结果沿用原调用的 `tool_call_id`；纯文本结果仍使用字符串。大部分兼容端点支持这种形态，但规范只允许 tool 消息携带文本，LM Studio 等严格实现会返回 400：此时在渠道设置中开启「工具附件改用 user 消息」，tool 消息只保留文字，附件在这一批工具结果之后合并成一条 user 消息，每组附件前标明来源工具与调用 ID。切换这个选项会让已有工具图片在请求中的位置调整一次；之后追加的调用保持已有请求前缀稳定，保存的历史格式不变。
 
 Responses 默认显式发送工具 `strict: false`，保留工具声明中可选参数的语义，避免上游自动严格化后把初次调用的 `cursor` 等参数变成必填。显式启用严格工具模式时，会把可选参数转换为可接受 `null` 的严格 schema；运行器按原声明解释省略值，不要求模型编造占位参数。切换该设置或升级工具声明会改变工具请求前缀，首次请求的缓存命中率可能降低。
 

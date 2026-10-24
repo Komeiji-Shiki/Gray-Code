@@ -113,6 +113,7 @@ export function buildChannelConfig(
     deepSeekVisionEnabled: capability.compatibility.deepSeekVision,
     openCodeSessionEnabled: capability.compatibility.openCodeSession,
     pdfAttachmentEnabled: capability.compatibility.nativePdf,
+    toolMediaUserMessageEnabled: capability.compatibility.toolMediaUserMessage === true,
     // 桌面与 Web 版默认启用多模态工具：渠道设置不再提供该开关，工具图片与文档随结果发送。
     multimodalToolsEnabled: true,
     // Explicitly supplied capabilities override model-name inference in Responses replay.

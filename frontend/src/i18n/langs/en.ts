@@ -3408,6 +3408,11 @@ const en: LanguageMessages = {
                     hint: 'Send PDF attachments as native file content blocks. Only official OpenAI endpoints and compatible endpoints that support the file type work; unsupported endpoints return a 400 error, so enable this only after confirming your endpoint supports it.',
                     toggleHint: 'Send PDF attachments as file content blocks'
                 },
+                toolMediaUserMessage: {
+                    title: 'Tool attachments as user message',
+                    hint: 'By default, images returned by tools are placed directly in the matching tool message, which most compatible endpoints accept. The spec only allows text in tool messages, so strict implementations such as LM Studio return 400; when enabled, attachments are merged into one user message after the batch of tool results, labeled with the originating call. Switching moves existing tool images in the request once.',
+                    toggleHint: 'Send tool attachments in a following user message'
+                },
                 frequencyPenalty: {
                     label: 'Frequency Penalty',
                     hint: '-2.0 - 2.0',

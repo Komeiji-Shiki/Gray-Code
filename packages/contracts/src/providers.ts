@@ -32,6 +32,8 @@ export interface ProviderCapabilities {
     openCodeSession: boolean;
     deepSeekVision: boolean;
     nativePdf: boolean;
+    /** Chat Completions 工具附件改用追加的 user 消息；旧档案缺省按内联发送。 */
+    toolMediaUserMessage?: boolean;
   };
 }
 export interface ProviderModel {

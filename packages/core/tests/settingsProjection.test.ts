@@ -99,6 +99,29 @@ describe('one settings transaction across legacy and platform entry points', () 
     expect(await app.product.channel(id)).toMatchObject({ reasoningSignatureMode: 'official', sendHistoryThoughtSignatures: true });
   });
 
+  test('Chat Completions 工具附件的发送位置在保存、档案投影和重启后保留，旧档案缺省为内联', async () => {
+    const draft = await app.product.draft();
+    const id = await draft.configs.createConfig({ type: 'openai', enabled: true, timeout: 5000,
+      url: 'http://localhost:1234/v1', name: 'Chat', model: 'fixture', apiKey: '' });
+    await app.product.save(draft);
+    const compatibility = () => app.settings.snapshot().settings.providers.find(value => value.id === id)!.capabilities.compatibility;
+    expect(compatibility().toolMediaUserMessage).toBe(false);
+    expect(await app.product.channel(id)).toMatchObject({ toolMediaUserMessageEnabled: false });
+
+    await call('ui.settings.begin');
+    await call('config.updateConfig', { configId: id, updates: { toolMediaUserMessageEnabled: true } });
+    await call('ui.settings.save'); await call('ui.settings.end');
+    expect(compatibility().toolMediaUserMessage).toBe(true);
+    await app.close(); app = await PlatformApplication.open({ dataDirectory: f.data, secretCodec: codec }); router = new ApplicationRouter(app);
+    expect(await call('config.getConfig', { configId: id })).toMatchObject({ toolMediaUserMessageEnabled: true });
+
+    // 本次之前保存的档案没有这个字段，读取时仍按内联发送。
+    const snapshot = app.settings.snapshot();
+    delete snapshot.settings.providers.find(value => value.id === id)!.capabilities.compatibility.toolMediaUserMessage;
+    await app.settings.save({ settings: snapshot.settings, expectedRevision: snapshot.revision });
+    expect(await app.product.channel(id)).toMatchObject({ toolMediaUserMessageEnabled: false });
+  });
+
   test('seals custom payloads and feature credentials with the same revision and restores them on restart', async () => {
     const draft = await app.product.draft();
     const id = await draft.configs.createConfig({ type: 'openai', enabled: true, timeout: 5000, url: 'http://localhost:1234/v1', name: 'Secrets', model: 'fixture',

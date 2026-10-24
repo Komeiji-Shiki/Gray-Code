@@ -139,6 +139,26 @@ function onSendThoughtsChange(e: any) {
         <span class="option-hint">{{ t('components.channels.openai.pdfAttachment.hint') }}</span>
       </div>
     </div>
+
+    <!-- 工具附件改用 user 消息（严格兼容端点） -->
+    <div class="option-section">
+      <div class="option-section-header">
+        <span class="option-section-title">
+          <i class="codicon codicon-file-media"></i>
+          {{ t('components.channels.openai.toolMediaUserMessage.title') }}
+        </span>
+        <CustomSwitch
+          compact
+          :model-value="config.toolMediaUserMessageEnabled ?? false"
+          :title="t('components.channels.openai.toolMediaUserMessage.toggleHint')"
+          :aria-label="t('components.channels.openai.toolMediaUserMessage.toggleHint')"
+          @update:model-value="(value: boolean) => emit('update:field', 'toolMediaUserMessageEnabled', value)"
+        />
+      </div>
+      <div class="option-section-content">
+        <span class="option-hint">{{ t('components.channels.openai.toolMediaUserMessage.hint') }}</span>
+      </div>
+    </div>
     </div>
 
     <!-- 温度 -->

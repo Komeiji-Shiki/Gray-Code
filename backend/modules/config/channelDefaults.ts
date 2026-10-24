@@ -89,6 +89,7 @@ export function getDefaultConfig(type: ChannelType): Record<string, any> {
                 deepSeekUserIdEnabled: false,
                 deepSeekVisionEnabled: false,
                 pdfAttachmentEnabled: false,
+                toolMediaUserMessageEnabled: false,
                 options: {
                     ...baseDefaults.options,
                     temperature: 1.0,

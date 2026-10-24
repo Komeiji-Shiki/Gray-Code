@@ -3410,6 +3410,11 @@ const zhCN = {
                     hint: '将 PDF 附件作为原生 file 内容块发送给 API。仅官方 OpenAI 端点及支持 file 类型的兼容端点可用，不支持的端点会返回 400 错误；请确认端点支持后再开启。',
                     toggleHint: '开启后 PDF 附件将以 file 内容块发送'
                 },
+                toolMediaUserMessage: {
+                    title: '工具附件改用 user 消息',
+                    hint: '默认把工具返回的图片直接放进对应 tool 消息，大部分兼容端点都支持。规范只允许 tool 消息携带文本，LM Studio 等严格实现会返回 400；开启后，附件会在这一批工具结果之后合并成一条 user 消息，并标明来源调用。切换后已有工具图片在请求中的位置会调整一次。',
+                    toggleHint: '开启后工具附件以追加的 user 消息发送'
+                },
                 frequencyPenalty: {
                     label: '频率惩罚 (Frequency Penalty)',
                     hint: '-2.0 - 2.0',
