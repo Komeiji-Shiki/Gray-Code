@@ -46,6 +46,8 @@ describe('外部控制接口驱动真实任务', () => {
     script = [{ role: 'model', parts: [{ functionCall: { id: 'delete-call', name: 'control_fixture', args: { target: 'old.log' } } }] },
       text('清理完成。')];
     const id = await conversation('审批');
+    const controller = new AbortController();
+    const stream = await api(`/v1/events?conversationId=${id}&types=approval.requested,run.completed`, { signal: controller.signal });
     const started = await post(`/v1/conversations/${id}/messages`, { text: '清理日志', agentId: agent.id, wait: 1 });
     expect(started.status).toBe(202);
     const waiting = await json(started);
@@ -61,6 +63,17 @@ describe('外部控制接口驱动真实任务', () => {
       .toMatchObject({ done: true, reply: '清理完成。', run: { status: 'completed' } });
     expect(executions).toBe(1);
     expect((await post(path, { accepted: true })).status).toBe(404);
+
+    // 稳定事件流只推送契约里的任务事件，并按会话过滤。
+    const reader = stream.body!.getReader();
+    const decoder = new TextDecoder();
+    let received = '';
+    while (!received.includes('"run.completed"')) received += decoder.decode((await reader.read()).value);
+    controller.abort();
+    const events = [...received.matchAll(/data: (.+)/g)].map(match => JSON.parse(match[1]));
+    expect(events.map(event => event.type)).toEqual(['approval.requested', 'run.completed']);
+    expect(events[0]).toMatchObject({ runId: waiting.run.id, conversationId: id, status: 'awaiting_approval',
+      payload: { id: approval.id, toolName: 'control_fixture' } });
   });
 
   test('同一个幂等键重发返回同一任务，历史只有一轮且以紧凑形态返回', async () => {

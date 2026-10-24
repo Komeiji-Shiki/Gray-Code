@@ -283,12 +283,15 @@ export function controlRoutes(application: PlatformApplication, options: {
       },
     },
     {
-      method: 'GET', path: '/v1/events', summary: 'SSE 事件流；断线后用 Last-Event-ID 请求头续传，收到 event: reset 时重新读取状态。',
-      query: { types: '逗号分隔的事件类型，如 run.completed,run.failed', conversationId: '只保留该会话的事件', after: '同 Last-Event-ID' },
+      method: 'GET', path: '/v1/events',
+      summary: 'SSE 事件流，默认只推送任务事件（run.*、approval.*、question.*、tool.* 等）与 conversation.changed，'
+        + '形如 { type, runId, conversationId, sequence, timestamp, status?, payload }。断线后用 Last-Event-ID 续传，收到 event: reset 时重新读取状态。',
+      query: { types: '逗号分隔的事件类型，如 run.completed,run.failed,approval.requested', conversationId: '只保留该会话的事件',
+        after: '同 Last-Event-ID', raw: '1 表示改为推送全部内部事件（含流式增量），结构随版本变化，不保证兼容' },
       handle: async context => { options.streamEvents(context); },
     },
     {
-      method: 'POST', path: '/v1/rpc', summary: '调用界面同款 RPC，覆盖尚未封装成 REST 的操作。',
+      method: 'POST', path: '/v1/rpc', summary: '调用界面同款内部 RPC，覆盖尚未封装成 REST 的操作；方法与参数随版本变化，不保证兼容。',
       body: { method: 'RPC 方法名', params: '可选，参数对象' },
       handle: async ({ body }) => {
         const input = await body();

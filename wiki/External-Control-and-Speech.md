@@ -64,7 +64,11 @@ curl -H "Authorization: Bearer <token>" http://127.0.0.1:18766/v1
 ### 发送消息
 
 ```bash
-curl -X POST http://127.0.0.1:18766/v1/conversations/<conversationId>/messages   -H "Authorization: Bearer <token>"   -H "Content-Type: application/json"   -H "Idempotency-Key: review-2026-10-24"   -d '{"text":"检查当前工作区的改动","wait":120}'
+curl -X POST http://127.0.0.1:18766/v1/conversations/<conversationId>/messages \
+  -H "Authorization: Bearer <token>" \
+  -H "Content-Type: application/json" \
+  -H "Idempotency-Key: review-2026-10-24" \
+  -d '{"text":"检查当前工作区的改动","wait":120}'
 ```
 
 可选字段：
@@ -118,11 +122,19 @@ curl -X POST http://127.0.0.1:18766/v1/conversations/<conversationId>/messages  
 ### 事件流
 
 ```bash
-curl -N -H "Authorization: Bearer <token>"   "http://127.0.0.1:18766/v1/events?types=run.completed,run.failed&conversationId=<id>"
+curl -N -H "Authorization: Bearer <token>" \
+  "http://127.0.0.1:18766/v1/events?types=run.completed,run.failed,approval.requested&conversationId=<id>"
 ```
 
-- `types` 用逗号分隔，同时匹配顶层事件与 `event` 内的运行事件。
-- `conversationId` 只保留与该会话有关的事件。
+默认推送稳定形态的任务事件：`run.created`、`run.completed`、`run.failed`、`approval.requested`、`question.asked`、`tool.started` 等契约里的任务事件，以及 `conversation.changed`。每条事件结构为：
+
+```json
+{ "type": "approval.requested", "runId": "<runId>", "conversationId": "<id>", "sequence": 3, "timestamp": 1761300000000, "status": "awaiting_approval", "payload": { } }
+```
+
+- `types` 用逗号分隔，按事件的 `type` 过滤。
+- `conversationId` 只保留该会话的事件。
+- `raw=1` 改为推送全部内部事件（包括流式增量和界面消息），结构随版本变化，只适合调试。`POST /v1/rpc` 同样是内部接口，方法与参数不保证兼容。
 - 断线后五分钟内重连时，把最后一条 `id:` 作为 `Last-Event-ID` 请求头（或 `after` 查询参数），服务会从补发缓冲继续；超过五分钟、缓冲已被淘汰或应用重启后收到 `event: reset`，此时重新读取会话与任务状态。
 
 ### 安全边界

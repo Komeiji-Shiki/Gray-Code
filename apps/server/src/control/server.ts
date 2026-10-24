@@ -5,6 +5,7 @@ import type { PlatformApplication } from '../application';
 import { ApplicationRouter } from '../transport/router';
 import { ControlRequestError, controlRoutes, jsonBodyLimit, session, type ControlRoute, type RouteContext } from './routes';
 import { controlDiscoveryDirectory } from './discovery';
+import { ControlEventProjector, type ControlEvent } from './events';
 
 const replayLimit = 1_000;
 const replayBytesLimit = 8 * 1024 * 1024;
@@ -65,40 +66,56 @@ function compile(route: ControlRoute): CompiledRoute {
 
 export interface ControlServerOptions { port: number; token: string; allowLan: boolean }
 
+/** 原始帧在缓存时编码（按字节计入上限）；稳定形态的帧在第一次有订阅方需要时才编码。 */
+interface BufferedEvent { id: string; raw: Record<string, any>; rawFrame: Buffer; projected?: ControlEvent; projectedFrame?: Buffer }
+
+const sseFrame = (id: string, value: unknown) => Buffer.from(`id: ${id}\ndata: ${JSON.stringify(value)}\n\n`);
+
+function rawMatches(event: Record<string, any>, types: string[], conversationId: string | null): boolean {
+  const eventTypes = [event.type, event.event && typeof event.event === 'object' ? event.event.type : undefined].filter(Boolean);
+  if (types.length && !eventTypes.some(type => types.includes(String(type)))) return false;
+  if (!conversationId) return true;
+  return [event.conversationId, event.run?.conversationId, event.event?.conversationId,
+    event.event?.run?.conversationId, event.event?.payload?.conversationId].includes(conversationId);
+}
+
 export async function startControlServer(application: PlatformApplication, options: ControlServerOptions) {
   let expected = hash(options.token);
   const router = new ApplicationRouter(application);
-  const recent: { id: string; event: Record<string, any>; frame: Buffer }[] = [];
-  const streams = new Map<ServerResponse, (event: Record<string, any>) => boolean>();
+  const recent: BufferedEvent[] = [];
+  /** 每个事件流按自己的模式和过滤条件挑选要写出的帧，不需要时返回 undefined。 */
+  const streams = new Map<ServerResponse, (entry: BufferedEvent) => Buffer | undefined>();
+  const projector = new ControlEventProjector();
   const epoch = randomUUID();
   let sequence = 0;
   let bufferedBytes = 0;
   let lastStreamAt = 0;
   let closing = false;
 
-  const matches = (event: Record<string, any>, url: URL): boolean => {
-    const allowed = url.searchParams.get('types')?.split(',').map(value => value.trim()).filter(Boolean);
-    const eventTypes = [event.type, event.event && typeof event.event === 'object' ? event.event.type : undefined].filter(Boolean);
-    if (allowed?.length && !eventTypes.some(type => allowed.includes(String(type)))) return false;
-    const conversationId = url.searchParams.get('conversationId');
-    if (!conversationId) return true;
-    return [event.conversationId, event.run?.conversationId, event.event?.conversationId,
-      event.event?.run?.conversationId, event.event?.payload?.conversationId].includes(conversationId);
-  };
-
   const streamEvents = ({ request, response, url }: RouteContext) => {
     response.writeHead(200, {
       'Content-Type': 'text/event-stream', 'Cache-Control': 'no-store', Connection: 'keep-alive', 'X-Accel-Buffering': 'no', ...corsHeaders,
     });
     response.write(': connected\n\n');
-    const filter = (event: Record<string, any>) => matches(event, url);
+    const raw = url.searchParams.get('raw') === '1';
+    const types = url.searchParams.get('types')?.split(',').map(value => value.trim()).filter(Boolean) ?? [];
+    const conversationId = url.searchParams.get('conversationId');
+    const select = (entry: BufferedEvent): Buffer | undefined => {
+      if (raw) return rawMatches(entry.raw, types, conversationId) ? entry.rawFrame : undefined;
+      const event = entry.projected;
+      if (!event || (types.length && !types.includes(event.type)) || (conversationId && event.conversationId !== conversationId)) return undefined;
+      return entry.projectedFrame ??= sseFrame(entry.id, event);
+    };
     const cursor = String(request.headers['last-event-id'] ?? url.searchParams.get('after') ?? '');
     if (cursor) {
       const index = recent.findIndex(entry => entry.id === cursor);
       if (index < 0) response.write('event: reset\ndata: {}\n\n');
-      else for (const entry of recent.slice(index + 1)) if (filter(entry.event)) response.write(entry.frame);
+      else for (const entry of recent.slice(index + 1)) {
+        const frame = select(entry);
+        if (frame) response.write(frame);
+      }
     }
-    streams.set(response, filter);
+    streams.set(response, select);
     const heartbeat = setInterval(() => {
       if (!response.destroyed && !response.writableEnded) response.write(': heartbeat\n\n');
     }, 20_000);
@@ -147,24 +164,29 @@ export async function startControlServer(application: PlatformApplication, optio
   });
 
   const unsubscribe = application.subscribe(event => {
+    // 任务与会话的对应关系一直维护，订阅方晚连接时事件也能带上会话 ID。
+    const projected = projector.project(event);
     if (!streams.size && Date.now() - lastStreamAt > resumeWindowMs) {
       if (recent.length) { recent.length = 0; bufferedBytes = 0; }
       return;
     }
     const id = `${epoch}:${++sequence}`;
-    const frame = Buffer.from(`id: ${id}\ndata: ${JSON.stringify(event)}\n\n`);
-    bufferedBytes += frame.length;
-    recent.push({ id, event, frame });
-    while (recent.length > replayLimit || bufferedBytes > replayBytesLimit) bufferedBytes -= recent.shift()!.frame.length;
-    for (const [stream, filter] of streams) {
-      if (stream.destroyed || stream.writableEnded || !filter(event)) continue;
+    const entry: BufferedEvent = { id, raw: event, rawFrame: sseFrame(id, event), projected };
+    bufferedBytes += entry.rawFrame.length;
+    recent.push(entry);
+    while (recent.length > replayLimit || bufferedBytes > replayBytesLimit) bufferedBytes -= recent.shift()!.rawFrame.length;
+    for (const [stream, select] of streams) {
+      if (stream.destroyed || stream.writableEnded) continue;
+      const frame = select(entry);
+      if (!frame) continue;
       // 慢客户端不能无限堆积事件；直接断开，由 Last-Event-ID 从补发缓冲恢复。
       if (stream.writableLength > slowClientBytes) { stream.destroy(); continue; }
       stream.write(frame);
     }
   });
-
   try {
+    // 先订阅再登记已在运行的任务，两者之间创建的任务也不会漏掉会话 ID。
+    projector.track(await application.storage.listRuns({ activeOnly: true }));
     await new Promise<void>((resolve, reject) => {
       server.once('error', reject);
       server.listen(options.port, options.allowLan ? '0.0.0.0' : '127.0.0.1', () => resolve());

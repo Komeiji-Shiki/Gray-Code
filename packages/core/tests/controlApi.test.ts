@@ -54,6 +54,7 @@ function createApp() {
       ] }),
       getRun: async (id: string) => runs.get(id) ?? null,
       readRunEvents: async () => [{ sequence: 1, event: { type: 'run.completed' } }],
+      listRuns: async () => [{ id: 'run-active', conversationId: 'conversation-1' }],
     },
     conversation: async (_actor: string, id: string) => {
       if (id !== conversation.id) throw new Error('Conversation is not accessible.');
@@ -163,29 +164,39 @@ describe('external control API', () => {
     expect(JSON.stringify(raw)).toContain('BASE64_IMAGE');
   }));
 
-  test('streams filtered events, resumes from Last-Event-ID and resets unknown cursors', () => withServer(async (port, app) => {
+  test('streams stable run events with conversation IDs, keeps raw events behind raw=1 and resumes from Last-Event-ID', () => withServer(async (port, app) => {
     const controller = new AbortController();
-    try {
-      const response = await request(port, '/v1/events?types=run.completed', { headers, signal: controller.signal });
+    const decoder = new TextDecoder();
+    const readUntil = async (response: Response, text: string) => {
       const reader = response.body!.getReader();
-      const decoder = new TextDecoder();
-      await reader.read();
-      app.emit({ type: 'run.created', runId: 'run-1' });
-      app.emit({ type: 'run.completed', runId: 'run-1' });
-      const chunk = decoder.decode((await reader.read()).value);
-      expect(chunk).toContain('run.completed');
-      expect(chunk).not.toContain('run.created');
+      let value = '';
+      while (!value.includes(text)) value += decoder.decode((await reader.read()).value);
+      return value;
+    };
+    const runEvent = (runId: string, type: string, sequence: number) =>
+      ({ type: 'event', event: { runId, type, sequence, timestamp: sequence, payload: {} }, status: 'completed' });
+    try {
+      const stable = await request(port, '/v1/events?types=run.completed&conversationId=conversation-1', { headers, signal: controller.signal });
+      const raw = await request(port, '/v1/events?raw=1&types=model.delta', { headers, signal: controller.signal });
+      app.emit({ type: 'run.created', runId: 'run-1', run: { id: 'run-1', conversationId: 'conversation-1', status: 'queued' } });
+      app.emit({ type: 'model.delta', runId: 'run-1', parts: [{ text: '增量' }] });
+      app.emit(runEvent('run-1', 'run.completed', 1));
+      // 监听前已在运行的任务由启动时登记，事件同样带上会话 ID。
+      app.emit(runEvent('run-active', 'run.completed', 2));
+      const chunk = await readUntil(stable, 'run-active');
+      const events = [...chunk.matchAll(/data: (.+)/g)].map(match => JSON.parse(match[1]));
+      expect(events).toEqual([
+        { type: 'run.completed', runId: 'run-1', conversationId: 'conversation-1', sequence: 1, timestamp: 1, status: 'completed', payload: {} },
+        { type: 'run.completed', runId: 'run-active', conversationId: 'conversation-1', sequence: 2, timestamp: 2, status: 'completed', payload: {} },
+      ]);
+      expect(await readUntil(raw, 'model.delta')).toContain('增量');
+
       const id = /id: (\S+)/.exec(chunk)![1];
-      app.emit({ type: 'run.completed', runId: 'run-2' });
-      const resumed = await request(port, '/v1/events', { headers: { ...headers, 'Last-Event-ID': id }, signal: controller.signal });
-      const resumedReader = resumed.body!.getReader();
-      let replay = '';
-      while (!replay.includes('run-2')) replay += decoder.decode((await resumedReader.read()).value);
+      app.emit(runEvent('run-2', 'run.completed', 3));
+      const replay = await readUntil(await request(port, '/v1/events', { headers: { ...headers, 'Last-Event-ID': id }, signal: controller.signal }), 'run-2');
       expect(replay).not.toContain('"runId":"run-1"');
-      const reset = await request(port, '/v1/events', { headers: { ...headers, 'Last-Event-ID': 'gone:1' }, signal: controller.signal });
-      const resetReader = reset.body!.getReader();
-      let resetText = '';
-      while (!resetText.includes('event: reset')) resetText += decoder.decode((await resetReader.read()).value);
+      expect(replay).not.toContain('model.delta');
+      await readUntil(await request(port, '/v1/events', { headers: { ...headers, 'Last-Event-ID': 'gone:1' }, signal: controller.signal }), 'event: reset');
     } finally { controller.abort(); }
   }));
 
