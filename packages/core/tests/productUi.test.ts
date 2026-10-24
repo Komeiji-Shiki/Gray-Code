@@ -417,3 +417,19 @@ test('会话元数据读写通过版本化令牌串行重试，并发更新与�
   } finally { jest.restoreAllMocks(); await app.close(); await f.cleanup(); }
 });
 
+
+test('核心直接写入或替换历史后，界面元数据与批量摘要读取实际消息数，不改写原始元数据', async () => {
+  const f = await fixture(); await f.store.close(); const app = await PlatformApplication.open({ dataDirectory: f.data });
+  try {
+    const created = await app.createConversation('owner', '准确条数');
+    const original = (await app.storage.getConversation(created.id))!;
+    await app.storage.appendHistory(created.id, [{ id: 'pending-user', role: 'user', parts: [{ text: '尚未收到回复的请求' }] }]);
+    expect((await app.conversations.metadata('owner', created.id))?.custom?.messageCount).toBe(1);
+    expect((await app.conversations.summaries('owner', [created.id]))[0]).toMatchObject({ title: '准确条数', messageCount: 1 });
+    // 消息数只是读取时的投影，不写回存储里的元数据。
+    expect((await app.storage.getConversation(created.id))?.custom).toEqual(original.custom);
+    await app.storage.replaceHistory(created.id, []);
+    expect((await app.conversations.metadata('owner', created.id))?.custom?.messageCount).toBe(0);
+    expect(await app.conversations.metadata('owner', 'does-not-exist')).toBeNull();
+  } finally { await app.close(); await f.cleanup(); }
+});

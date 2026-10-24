@@ -11,7 +11,7 @@ import { activePath, switchActivePath, softDeleteNode, restoreNode, renameBranch
 import { assertBranchCapacity, branchMutation, branchNamespace, branchView, groupMessages, materializeBranch, readBranches,
   readBranchPreview, type BranchPreviewState, type BranchState } from './branches';
 import { BRANCH_MESSAGE_PROJECTION, BRANCH_RECORD_PROJECTION } from './branchPreview';
-import { ensureCleanHistory, findMessagePosition, readDisplayMessagesPaged, readMessageMarkers } from './historyView';
+import { findMessagePosition, readDisplayMessagesPaged, readMessageMarkers, readRepairedHistory } from './historyView';
 
 export class ConversationService {
   constructor(private readonly app: PlatformApplication) {}
@@ -140,10 +140,7 @@ export class ConversationService {
     if (!this.app.actor(actorId)) throw new Error('Account is unavailable.');
     const existing = await this.app.findConversation(actorId, id);
     if (!existing) return [];
-    const ensured = await ensureCleanHistory(this.app.storage, id);
-    if (!ensured.exists) return [];
-    if (ensured.messages) return structuredClone(ensured.messages);
-    return (await this.app.storage.readFullHistory(id)).messages as Content[];
+    return await readRepairedHistory(this.app.storage, id) ?? [];
   }
   async messagesPaged(actorId: string, id: string, options: PageOptions = {}): Promise<{ total: number; messages: Content[] }> {
     if (!this.app.actor(actorId)) throw new Error('Account is unavailable.');

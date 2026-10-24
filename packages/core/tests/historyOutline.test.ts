@@ -1,7 +1,5 @@
-import { ConversationManager, MemoryStorageAdapter } from '../../../backend/modules/conversation';
-import type { ConversationHistory } from '../../../backend/modules/conversation';
-import { SqliteStorageAdapter } from '../../../backend/modules/conversation/SqliteStorageAdapter';
 import type { PlatformMessage } from '@graycode/contracts';
+import { findMessagePosition, readDisplayMessagesPaged, readMessageMarkers } from '../../../apps/server/src/conversations/historyView';
 import { fixture, metadata } from './fixtures';
 
 const longText = `  第一条\n\n  用户   消息 ${'很长的正文 '.repeat(40)}`;
@@ -116,34 +114,32 @@ describe('历史导航摘要', () => {
     await expect(f.store.readHistoryOutline('missing')).rejects.toMatchObject({ code: 'NOT_FOUND' });
   });
 
-  test('导航标记、楼层与定位不完整读取历史，结果与内存存储一致', async () => {
-    const storage = new SqliteStorageAdapter(f.store);
-    const manager = new ConversationManager(storage);
-    const reference = new MemoryStorageAdapter();
-    await reference.saveHistory('outline', source as ConversationHistory);
-    const expected = await new ConversationManager(reference).getMessageMarkers('outline');
-
-    const fullReads = jest.spyOn(storage, 'loadHistoryWithStatus');
-    expect(await manager.getMessageMarkers('outline')).toEqual(expected);
-    expect(await manager.getMessagePosition('outline', 'm-3')).toEqual({ index: 3 });
-    expect(await manager.getMessagePosition('outline', 'missing')).toEqual({});
-    const page = await manager.getMessagesPaged('outline', { limit: 2 });
+  test('导航标记、楼层与定位不完整读取历史', async () => {
+    const fullReads = jest.spyOn(f.store, 'readFullHistory');
+    expect(await readMessageMarkers(f.store, 'outline')).toEqual({ total: 5, floorIndices: [0, 1, 3, 4], markers: [
+      { index: 0, id: 'u-0', preview: longText.concat(' 补充').replace(/\s+/g, ' ').trim().slice(0, 80) },
+      { index: 4, id: 'u-4', preview: '继续' },
+    ] });
+    expect(await findMessagePosition(f.store, 'outline', 'm-3')).toEqual({ index: 3 });
+    expect(await findMessagePosition(f.store, 'outline', 'missing')).toEqual({});
+    const page = await readDisplayMessagesPaged(f.store, 'outline', { limit: 2 });
+    expect(page.total).toBe(5);
     expect(page.messages.map(message => message.id)).toEqual(['m-3', 'u-4']);
     expect(fullReads).not.toHaveBeenCalled();
+    expect(await readMessageMarkers(f.store, 'missing')).toEqual({ total: 0, markers: [], floorIndices: [] });
   });
 
   test('悬空调用仍走读取修复，标记索引包含补齐的拒绝响应', async () => {
     await f.store.appendHistory('outline', [{ id: 'm-5', parentId: 'u-4', role: 'model', parts: [
       { functionCall: { id: 'dangling', name: 'read_file', args: {} } },
     ] }, { id: 'u-6', parentId: 'm-5', role: 'user', parts: [{ text: '之后的问题' }] }]);
-    const manager = new ConversationManager(new SqliteStorageAdapter(f.store));
-    const result = await manager.getMessageMarkers('outline');
+    const result = await readMessageMarkers(f.store, 'outline');
     expect(result.total).toBe(8);
     expect(result.markers.map(marker => [marker.index, marker.id])).toEqual([[0, 'u-0'], [4, 'u-4'], [7, 'u-6']]);
     expect(result.floorIndices).toEqual([0, 1, 3, 4, 5, 7]);
     const repaired = (await f.store.readFullHistory('outline')).messages;
     expect(repaired[6]).toMatchObject({ role: 'user', isFunctionResponse: true });
-    expect(await manager.getMessagePosition('outline', 'u-6')).toEqual({ index: 7 });
+    expect(await findMessagePosition(f.store, 'outline', 'u-6')).toEqual({ index: 7 });
   });
 
   test('缺少节点 ID 的旧历史先迁移再返回标记', async () => {
@@ -151,8 +147,7 @@ describe('历史导航摘要', () => {
     await f.store.appendHistory('legacy', [
       { role: 'user', parts: [{ text: '旧消息' }] }, { role: 'model', parts: [{ text: '旧回答' }] },
     ]);
-    const manager = new ConversationManager(new SqliteStorageAdapter(f.store));
-    const result = await manager.getMessageMarkers('legacy');
+    const result = await readMessageMarkers(f.store, 'legacy');
     expect(result.total).toBe(2);
     expect(result.markers).toEqual([{ index: 0, id: expect.any(String), preview: '旧消息' }]);
     const migrated = await f.store.readHistoryOutline('legacy');

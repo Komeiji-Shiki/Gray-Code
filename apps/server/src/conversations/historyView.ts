@@ -175,6 +175,13 @@ export async function ensureCleanHistory(
   return { exists: true, messages: current };
 }
 
+/** 修复后的完整历史；干净历史只多一次轻量扫描。对话不存在时返回 null。 */
+export async function readRepairedHistory(storage: PlatformStorage, conversationId: string): Promise<ConversationHistory | null> {
+  const ensured = await ensureCleanHistory(storage, conversationId);
+  if (!ensured.exists) return null;
+  return ensured.messages ?? (await storage.readFullHistory(conversationId)).messages as ConversationHistory;
+}
+
 export async function readDisplayMessagesPaged(
   storage: PlatformStorage,
   conversationId: string,
