@@ -260,6 +260,34 @@ describe('完整前缀总结与持久笔记换窗口', () => {
     await expect(history.execute({ action: 'read', messageId: hit.messageId, offset: -1 }, context)).rejects.toThrow('offset');
   });
 
+  test('提交时元数据被外部并发修改，保留外部修改并重放本轮改过的全部自定义键', async () => {
+    const draft = await app.product.draft(); await draft.settings.updateSummarizeConfig({ method: 'notes' }); await app.product.save(draft);
+    const seeded = (await app.storage.getConversationInfo('compaction'))!;
+    await app.storage.saveMetadata({ ...seeded.metadata, custom: { ...seeded.metadata.custom,
+      pendingContextWindow: { runId: 'old-run', toolCallId: 'old-call' }, contextReminderWindowId: 'old-window', externalKey: '保留' } },
+    { expectedMetadataToken: seeded.metadataToken });
+    const commit = app.storage.commitConversation.bind(app.storage);
+    let intercepted = false;
+    const spy = jest.spyOn(app.storage, 'commitConversation').mockImplementation(async mutation => {
+      if (!intercepted) {
+        intercepted = true;
+        const latest = (await app.storage.getConversationInfo('compaction'))!;
+        await app.storage.saveMetadata({ ...latest.metadata, title: '并发改名', custom: { ...latest.metadata.custom, concurrentKey: '并发写入' } },
+          { expectedMetadataToken: latest.metadataToken });
+      }
+      return commit(mutation);
+    });
+    try {
+      expect((await app.context.summarizeManually('owner', 'compaction', providerId)).success).toBe(true);
+    } finally { spy.mockRestore(); }
+    expect(intercepted).toBe(true);
+    const metadata = (await app.storage.getConversation('compaction'))!;
+    expect(metadata.title).toBe('并发改名');
+    expect(metadata.custom).toMatchObject({ externalKey: '保留', concurrentKey: '并发写入', trimState: null,
+      pendingContextWindow: null, contextReminderWindowId: null });
+    expect((await app.storage.readFullHistory('compaction')).messages.at(-1)?.contextMethod).toBe('notes');
+  });
+
   test('手动笔记换窗口不调用模型；旧窗口和笔记在应用重新打开后仍然保留', async () => {
     const draft = await app.product.draft(); await draft.settings.updateSummarizeConfig({ method: 'notes' }); await app.product.save(draft);
     await app.storage.putRecord({ namespace: 'context-notes', id: JSON.stringify(['compaction', 'checkpoint']), ownerId: 'compaction', value: { text: '保留精确证据：evidence', updatedAt: Date.now() } });

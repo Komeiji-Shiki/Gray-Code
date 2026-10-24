@@ -69,9 +69,8 @@ export async function prepareContextRequest(app: PlatformApplication, context: M
     const requestRef = stable ? previousRef : `${run.id}:${context.iteration}`;
     rememberModelPrefix(app, requestRef, prefix);
     if (custom?.contextRequestPrefixRef !== requestRef || custom?.contextRequestPrefix !== undefined) {
-      const { contextRequestPrefix: _legacyPrefix, ...metadata } = frame.state.metadata.custom as Record<string, unknown> ?? {};
-      frame.state.metadata.custom = { ...metadata, contextRequestPrefixRef: requestRef };
-      frame.dirty = true;
+      frame.updateCustom('contextRequestPrefix', undefined);
+      frame.updateCustom('contextRequestPrefixRef', requestRef);
     }
   }
   const counter = createContextBudget(input, config, settings.autoSummarizeTokenLimit, options.additionalContextText);

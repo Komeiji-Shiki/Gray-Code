@@ -54,10 +54,10 @@ export class PlatformContextService {
       if ((error as { code?: string }).code !== 'REVISION_CONFLICT') throw error;
       const latest = await this.app.storage.getConversationInfo(state.metadata.id);
       if (!latest || latest.historyRevision !== state.history.revision || latest.metadataToken === state.metadataToken) throw error;
-      // 运行期间仅外部元数据（如标题、思考强度或列表预览）被并发修改时，保留外部修改并合入本轮上下文状态。
+      // 运行期间仅外部元数据（如标题、思考强度或列表预览）被并发修改时，保留外部修改，只重放本轮改过的自定义键。
       const frameCustom = (state.metadata.custom ?? {}) as Record<string, unknown>;
       const latestCustom = { ...((latest.metadata.custom ?? {}) as Record<string, unknown>) };
-      for (const key of ['platformContext', 'trimState'] as const) {
+      for (const key of frame.customChanges) {
         if (Object.hasOwn(frameCustom, key)) latestCustom[key] = frameCustom[key];
         else delete latestCustom[key];
       }
@@ -67,6 +67,7 @@ export class PlatformContextService {
     }
     state.history.revision = result.revision; state.history.total = result.total; state.metadataToken = result.metadataToken;
     frame.dirty = false; frame.historyReplaced = false; frame.messageUpdates.clear(); frame.appendMessages.length = 0;
+    frame.customChanges.clear();
   }
   /** 正式请求和预览共享最终视图、预算和动作决策。 */
   async prepareModel(context: ModelRequestContext, preview = false) {
