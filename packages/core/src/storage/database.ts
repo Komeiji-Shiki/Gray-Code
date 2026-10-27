@@ -2,7 +2,9 @@ import * as fs from 'node:fs';
 import path from 'node:path';
 import type { PlatformConversation, ConversationSummary, PlatformMessage, StorageStatistics, SnapshotMetadata, RecordMutation, ConversationCommit, ConversationCommitResult } from '@graycode/contracts';
 import { assertIdentifier, invalid, PlatformStorageError } from '../errors';
+import type Database from 'better-sqlite3';
 import { openDatabase, SCHEMA_VERSION, type SqliteConnection } from './schema';
+import { acquireOwnership } from './ownership';
 import { ObjectStore } from './objects';
 import { HistoryStore } from './histories';
 import { historyTextMatches } from './historySearch';
@@ -39,6 +41,7 @@ interface MigrationRow {
 export class PlatformDatabase {
   /** 当前进程内的元数据版本，只用于共享存储读缓存的失效，不改变持久格式。 */
   metadataVersion = 0;
+  private readonly owner: Database.Database;
   private readonly db: SqliteConnection;
   private readonly objects: ObjectStore;
   private readonly histories: HistoryStore;
@@ -58,6 +61,7 @@ export class PlatformDatabase {
     const root = fs.realpathSync(directory);
     this.databasePath = path.join(root, 'platform.sqlite');
     this.objectPath = path.join(root, 'objects');
+    this.owner = acquireOwnership(this.databasePath);
     this.db = openDatabase(this.databasePath);
     this.objects = new ObjectStore(this.db, this.objectPath);
     this.histories = new HistoryStore(this.db, this.objects);
@@ -334,7 +338,7 @@ export class PlatformDatabase {
       this.vectorMatrices.invalidate();
       return result;
     } },
-    close: { concurrentRead: false, execute: () => { this.db.close(); } },
+    close: { concurrentRead: false, execute: () => { this.db.close(); this.owner.close(); } },
   };
 
   canRunDuringVectorCalculation<M extends StorageMethod>(method: M, input: StorageOperations[M]['input']): boolean {

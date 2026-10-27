@@ -41,7 +41,6 @@ export function openDatabase(file: string): SqliteConnection {
       throw new PlatformStorageError('UNSUPPORTED_VERSION', `SQLite ${sqlite.version} predates the required WAL fix (3.51.3).`);
     }
     db.pragma('foreign_keys = ON');
-    db.pragma('locking_mode = EXCLUSIVE');
     db.pragma('journal_mode = WAL');
     db.pragma('synchronous = FULL');
     db.pragma('wal_autocheckpoint = 1000');
@@ -58,7 +57,7 @@ export function openDatabase(file: string): SqliteConnection {
         db.pragma(`user_version = ${SCHEMA_VERSION}`);
       }).exclusive();
     } else {
-      // Acquire ownership immediately, not halfway through the first write.
+      // Take the write lock and touch the schema up front, not halfway through the first write.
       db.transaction(() => {
         db.prepare('SELECT count(*) FROM conversations').get();
         if (version < 2) db.exec(RUNTIME_SCHEMA);

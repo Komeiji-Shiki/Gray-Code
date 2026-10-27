@@ -1,4 +1,5 @@
 import * as fs from 'node:fs/promises';
+import { execFileSync } from 'node:child_process';
 import path from 'node:path';
 import { randomBytes } from 'node:crypto';
 import Database from 'better-sqlite3';
@@ -217,6 +218,18 @@ describe('independent SQLite storage worker', () => {
     await expect(PlatformStorage.open(f.data)).rejects.toMatchObject({ code: 'STORAGE_BUSY' });
     await Promise.all([f.store.close(), f.store.close()]);
     await expect(f.store.statistics()).rejects.toMatchObject({ code: 'STORAGE_CLOSED' });
+  });
+
+  test('keeps the database readable for other processes while owned, and frees ownership on close', async () => {
+    await f.store.createConversation(metadata('a'));
+    // 独立进程才能证明跨进程可读；同进程内 SQLite 会自行协调连接，结论不可迁移。
+    const probe = "const db = new (require(process.argv[1]))(process.argv[2], { readonly: true, timeout: 1000 });"
+      + "process.stdout.write(String(db.prepare('SELECT count(*) AS n FROM conversations').get().n));";
+    const read = () => execFileSync(process.execPath, ['-e', probe, require.resolve('better-sqlite3'), path.join(f.data, 'platform.sqlite')], { encoding: 'utf8' });
+    expect(read()).toBe('1');
+    await f.store.close();
+    f.store = await PlatformStorage.open(f.data);
+    expect(read()).toBe('1');
   });
 
   test('preserves unusual JSON keys and UTF-16 code units instead of corrupting legacy text', async () => {

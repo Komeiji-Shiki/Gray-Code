@@ -22,7 +22,7 @@ npm run platform -- --data .tmp/platform-demo verify
 
 - `packages/contracts` 定义宿主无关的会话、消息、分页、快照和迁移结果类型。
 - `PlatformStorage` 将异步请求交给专用 worker，SQLite、正文编码和压缩在 worker 内执行。队列最多保留 64 个请求，超出后明确返回 `STORAGE_BUSY`。
-- SQLite schema v3 使用 WAL、`synchronous=FULL`、事务、准备语句缓存和版本检查，旧 schema v1/v2 自动升级并保留原历史。每个数据库只允许一个存储服务持有，多个客户端通过该服务访问。
+- SQLite schema v3 使用 WAL、`synchronous=FULL`、事务、准备语句缓存和版本检查，旧 schema v1/v2 自动升级并保留原历史。每个数据库只允许一个存储服务持有，多个客户端通过该服务访问；所有权由数据库旁的 `platform.sqlite.owner` 锁库上未提交的 EXCLUSIVE 事务持有（进程退出或崩溃时由系统释放），主库保持普通锁模式，应用运行期间可用 `readonly` 连接只读检查，需要写入的工具必须先退出应用。
 - 消息正文采用 MessagePack，长文本和规范 Base64 附件改为内容对象引用；读取时恢复原有逻辑内容。签名、空白、换行、未知字段、特殊属性名与 UTF-16 码元保持无损。
 - 内容按 SHA-256 去重，拆成 256 KiB 的独立块，按压缩收益选择 Zstandard level 3。小块保存在 SQLite，大且难压缩的对象块使用不可变外部文件。阈值是当前工程起点，尚未经过多种真实工作负载调优。
 - 历史通过共享序列段和范围索引分页。分叉、快照复用前缀，追加与替换不会修改其他历史引用的正文；写入可传 `expectedRevision` 拒绝陈旧修改。
