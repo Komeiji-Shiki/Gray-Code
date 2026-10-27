@@ -96,6 +96,13 @@ describe('Bot 回复合并与发送恢复', () => {
     expect(incoming.references[0].content).toBe(rendered);
     const code = '```md\n' + rendered + '\n```';
     expect(stripDiscordPresentation(code)).toBe(code);
+    // 多轮合计行没有 TTFT，也属于本应用的展示统计；只有同样带 TPS 的整行才会被清理。
+    const total = botTotalStats([{ role: 'model', parts: [] }, { role: 'model', parts: [] }]);
+    expect(total).toMatch(/^-# 共 2 轮 · /);
+    expect(stripDiscordPresentation(`实际正文\n\n${total}`)).toBe('实际正文');
+    expect(stripDiscordPresentation(`${rendered}\n${total}`)).toBe('实际正文');
+    const note = '实际正文\n\n-# 共 2 轮 · 手写备注';
+    expect(stripDiscordPresentation(note)).toBe(note);
   });
 
   test('流式分段收缩只删除自己保存的多余回执，不留下旧正文', async () => {

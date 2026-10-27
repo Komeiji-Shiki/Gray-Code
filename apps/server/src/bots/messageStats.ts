@@ -71,3 +71,8 @@ export function botTotalStats(messages: PlatformMessage[]): string {
     ? values.reduce((total, value) => total + value.output!, 0) / (generation.reduce((total, value) => total + value!, 0) / 1000) : undefined;
   return `-# 共 ${messages.length} 轮 · ${tokens.join(' · ')} · 模型耗时 ${seconds(duration)} · TPS ${rate !== undefined && Number.isFinite(rate) ? rate.toFixed(1) : '—'}${incomplete ? ' · 统计不完整' : ''}`;
 }
+
+/** 与上面三种统计行同源：单轮脚注和逐轮统计带 TTFT，多轮合计没有，引用 Bot 消息时据此还原正文。 */
+export function isBotStatsLine(line: string): boolean {
+  return /^-# /.test(line) && /\bTPS\b/.test(line) && (/\bTTFT\b/.test(line) || /^-# 共 \d+ 轮 · /.test(line));
+}

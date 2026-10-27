@@ -1,5 +1,6 @@
 import type { PlatformApplication } from '../application';
 import type { BotInbound, BotReference } from './gateway';
+import { isBotStatsLine } from './messageStats';
 
 export const botRenderedMessageKey = (botId: string, channelId: string, messageId: string) => JSON.stringify([botId, channelId, messageId]);
 
@@ -15,8 +16,7 @@ export function stripDiscordPresentation(text: string): string {
       return true;
     }
     if (fence) return true;
-    const display = /^\*\*(?:思考完成|已进行思考 \d+(?:\.\d+)? 秒)\*\*\s*$/.test(line)
-      || /^-# /.test(line) && /\bTTFT\b/.test(line) && /\bTPS\b/.test(line);
+    const display = /^\*\*(?:思考完成|已进行思考 \d+(?:\.\d+)? 秒)\*\*\s*$/.test(line) || isBotStatsLine(line);
     if (display) removed = true;
     return !display;
   });
