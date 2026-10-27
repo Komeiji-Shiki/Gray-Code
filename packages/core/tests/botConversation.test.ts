@@ -324,7 +324,7 @@ describe('Bot 频道上下文、附件与定时总结', () => {
     } finally { loader.mockRestore(); unsubscribe(); }
   });
 
-  test('Discord 引用转发消息时保留快照图片和文档，已知正文中的后续引用继续展开', async () => {
+  test('Discord 引用转发消息时保留快照图片和文档', async () => {
     const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jRzUAAAAASUVORK5CYII=', 'base64');
     const requests: string[] = [];
     const discord = new DiscordJsGateway();
@@ -334,15 +334,29 @@ describe('Bot 频道上下文、附件与定时总结', () => {
         embeds: [{ title: '原始图片', fields: [], image: { url: 'https://example.invalid/cat.png', proxyURL: 'https://media.discordapp.net/embedded-cat' } }] }]]) };
     (discord as any).client = { isReady: () => true, channels: { fetch: async (channelId: string) => ({ isTextBased: () => true,
       messages: { fetch: async (id: string) => { requests.push(`${channelId}:${id}`); return forwarded; } } }) } };
-    const hydrated = await discord.hydrate({ ...inbound('quoted'), references: [{ kind: 'reply', id: 'known', content: '已知引用正文',
-      references: [{ kind: 'reply', id: 'forwarded', channelId: '41' }] }] });
+    const hydrated = await discord.hydrate({ ...inbound('quoted'), references: [{ kind: 'reply', id: 'forwarded', channelId: '41' }] });
     const parts = await botInboundParts(hydrated, 'discord', async item => item.url?.includes('embedded-cat') ? png : Buffer.from('# 文档原文\n保留这条约定'),
       (attachment, bytes) => saveBotDocument(app, 'quoted-test', attachment, bytes));
     expect(requests).toEqual(['41:forwarded']); expect(parts.filter(part => part.inlineData)).toHaveLength(1);
     const text = parts.map(part => part.text ?? '').join('\n');
-    for (const expected of ['已知引用正文', '转发者', '快照里的原始文字', 'notes.md', 'bot_read_attachment', '原始图片']) expect(text).toContain(expected);
+    for (const expected of ['转发者', '快照里的原始文字', 'notes.md', 'bot_read_attachment', '原始图片']) expect(text).toContain(expected);
     expect(text).not.toContain('# 文档原文'); expect(text).not.toContain('保留这条约定');
-    expect(hydrated.references?.[0].references?.[0].references?.[0].channelId).toBe('42');
+    expect(hydrated.references?.[0].references?.[0].channelId).toBe('42');
+  });
+
+  test('Discord 回复链只展开直接被回复的那一条，更早的祖先不再读取', async () => {
+    const requests: string[] = [];
+    const messages: Record<string, any> = {
+      parent: { content: '被回复的消息', createdTimestamp: 2, author: { id: '55', displayName: '甲' }, attachments: new Map(), reference: { channelId: '42', messageId: 'grandparent' } },
+      grandparent: { content: '更早的祖先消息', createdTimestamp: 1, author: { id: '56', displayName: '乙' }, attachments: new Map() },
+    };
+    const discord = new DiscordJsGateway();
+    (discord as any).client = { isReady: () => true, channels: { fetch: async () => ({ isTextBased: () => true,
+      messages: { fetch: async (id: string) => { requests.push(id); return messages[id]; } } }) } };
+    const hydrated = await discord.hydrate({ ...inbound('chain'), references: [{ kind: 'reply', id: 'parent', channelId: '42' }] });
+    expect(requests).toEqual(['parent']); expect(hydrated.references?.[0].references).toEqual([]);
+    const text = (await botInboundParts(hydrated, 'discord')).map(part => part.text ?? '').join('\n');
+    expect(text).toContain('被回复的消息'); expect(text).not.toContain('更早的祖先消息'); expect(text).not.toContain('未读取');
   });
 
   test('大文档仅记录本地描述，工具按字符范围读取并隔离其他会话', async () => {
@@ -423,6 +437,19 @@ describe('Bot 频道上下文、附件与定时总结', () => {
     });
     const qq = await botInboundParts(hydrated, 'onebot', async () => png);
     expect(calls).toEqual(['get_msg', 'get_forward_msg']); expect(qq.some(part => part.inlineData)).toBe(true); expect(JSON.stringify(qq)).toContain('原发言人');
+    // 被回复的消息自己又回复了更早的消息：祖先不读取，其后的转发在消息段中仍指向正确的条目。
+    const chained = protocol.inbound({ post_type: 'message', self_id: 900, user_id: 10, group_id: 30, message_type: 'group', message_id: 2,
+      message: [{ type: 'reply', data: { id: 56 } }] }, '900')!;
+    const chainCalls: string[] = [];
+    const chain = await protocol.hydrate(chained, async action => { chainCalls.push(`${action.action}:${(action.params as any).message_id}`);
+      return action.action === 'get_msg' ? { sender: { user_id: 99, nickname: '被回复者' },
+        message: [{ type: 'reply', data: { id: 1 } }, { type: 'text', data: { text: '正文' } }, { type: 'forward', data: { id: 'fwd' } }] }
+        : { messages: [{ sender: { user_id: 88 }, content: [{ type: 'text', data: { text: '转发节点文字' } }] }] };
+    });
+    expect(chainCalls).toEqual(['get_msg:56', 'get_forward_msg:fwd']);
+    expect(chain.references?.[0].references).toHaveLength(1); expect(chain.references?.[0].segments?.filter(segment => segment.type === 'reference')).toEqual([{ type: 'reference', index: 0 }]);
+    const chainText = JSON.stringify(await botInboundParts(chain, 'onebot'));
+    expect(chainText).toContain('转发节点文字'); expect(chainText).toContain('被回复者');
     const unavailable = await botInboundParts({ ...inbound('bad'), attachments: [{ name: 'lost.txt' }] }, 'discord', async () => { throw new Error('附件失效'); });
     expect(JSON.stringify(unavailable)).toContain('未读取，附件失效');
     await expect(downloadBotAttachment({ name: 'x.txt', url: 'http://127.0.0.1/private' }, 'discord')).rejects.toThrow('平台 CDN');

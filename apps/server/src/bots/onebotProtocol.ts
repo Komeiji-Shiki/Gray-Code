@@ -1,5 +1,6 @@
 import type { OneBotSettings } from '@graycode/contracts';
-import type { BotInbound, BotAttachment, BotReference, BotMessageSegment, BotMessageReceipt, BotProcessingTarget, BotReply } from './gateway';
+import { withoutReplyChain, type BotInbound, type BotAttachment, type BotReference, type BotMessageSegment, type BotMessageReceipt,
+  type BotProcessingTarget, type BotReply } from './gateway';
 import { formatBotMention } from '../../../../shared/botMessagePresentation';
 import { oneBotContent } from './onebotContent';
 import { BotDeliveryError } from './deliveryError';
@@ -211,7 +212,7 @@ async function hydrateOneBot(message: BotInbound, version: 11 | 12, call: (actio
             ...oneBotContent(value.message, '', version) };
         } catch (error) { resolved = { ...item, unavailable: `原消息无法读取：${(error as Error).message}` }; }
       }
-      resolved = await withMentionNames(resolved);
+      resolved = withoutReplyChain(await withMentionNames(resolved));
       result.push({ ...resolved, attachments: await Promise.all((resolved.attachments ?? []).map(attachment)),
         references: await refs(resolved.references ?? [], depth + 1) });
     }

@@ -3,7 +3,7 @@ import { ApplicationIntegrationType, ChannelType, Client, Events, GatewayIntentB
 import { discordModal, discordPanel } from './discordComponents';
 import { BotDeliveryError } from './deliveryError';
 
-import type { BotChannel, BotGateway, BotInbound, BotInteraction, BotReply, BotReference } from './gateway';
+import { withoutReplyChain, type BotChannel, type BotGateway, type BotInbound, type BotInteraction, type BotReply, type BotReference } from './gateway';
 export type DiscordInbound = BotInbound;
 export type DiscordGateway = BotGateway;
 
@@ -95,16 +95,17 @@ export class DiscordJsGateway implements DiscordGateway {
         seen.add(key);
         // 快照正文已经随 Gateway 到达，仍需展开其中的引用；不重新读取或覆盖快照原文。
         if (ref.content !== undefined) {
-          result.push({ ...ref, references: await expand(ref.references ?? [], depth + 1) });
+          const known = withoutReplyChain(ref);
+          result.push({ ...known, references: await expand(known.references ?? [], depth + 1) });
           continue;
         }
         try {
           const channel = await this.ready().channels.fetch(ref.channelId ?? message.channelId);
           if (!channel?.isTextBased()) throw new Error('引用频道不可访问');
           const original = await channel.messages.fetch(ref.id);
-          const content = this.messageContent(original);
-          result.push({ ...ref, ...content, authorId: original.author.id, authorName: original.author.displayName,
-            references: await expand(content.references ?? [], depth + 1) });
+          const resolved = withoutReplyChain({ ...ref, ...this.messageContent(original),
+            authorId: original.author.id, authorName: original.author.displayName });
+          result.push({ ...resolved, references: await expand(resolved.references ?? [], depth + 1) });
         } catch { result.push({ ...ref, unavailable: '原消息已删除、Bot 缺少读取权限，或平台请求失败' }); }
       }
       return result;

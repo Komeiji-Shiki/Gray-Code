@@ -22,7 +22,20 @@ export interface BotReference {
   timestamp?: number; attachments?: BotAttachment[]; references?: BotReference[]; unavailable?: string;
   segments?: BotMessageSegment[];
 }
-export interface BotButton { id: string; label: string; style?: 'primary' | 'secondary' | 'danger'; disabled?: boolean }
+/**
+ * 回复天然连成对话链，更早的祖先已在会话上下文里：只展开直接被回复的那条，它携带的转发内容仍照旧展开。
+ * 消息段按下标指向 references，丢弃回复时要同步重排下标，否则后面的转发会指错位置。
+ */
+export function withoutReplyChain<T extends BotReference>(parent: T): T {
+  const references = parent.references;
+  if (parent.kind !== 'reply' || !references?.some(reference => reference.kind === 'reply')) return parent;
+  const kept = new Map<number, number>();
+  references.forEach((reference, index) => { if (reference.kind === 'forward') kept.set(index, kept.size); });
+  return { ...parent, references: references.filter(reference => reference.kind === 'forward'),
+    ...(parent.segments ? { segments: parent.segments.flatMap(segment => segment.type !== 'reference' ? [segment]
+      : kept.has(segment.index) ? [{ ...segment, index: kept.get(segment.index)! }] : []) } : {}) };
+}
+export interface BotButton{ id: string; label: string; style?: 'primary' | 'secondary' | 'danger'; disabled?: boolean }
 export interface BotSelectOption { label: string; value: string; description?: string; selected?: boolean }
 export type BotPanelRow = { buttons: BotButton[] } | { select: { id: string; placeholder: string; options: BotSelectOption[] } };
 export interface BotPanel { content: string; rows?: BotPanelRow[]; files?: Array<{ name: string; data: Uint8Array }> }
