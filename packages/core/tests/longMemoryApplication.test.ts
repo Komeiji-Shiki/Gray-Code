@@ -161,6 +161,21 @@ describe('长期记忆沿聊天、工具和请求视图接入',()=>{
     await run('memory-group','测试代号是什么？');expect(plain(seen.at(-1)!)).toContain('海桥-622');expect(plain(seen.at(-1)!)).not.toContain('溪谷-811');
   });
 
+  test('尚未写入过的群范围读到空目录时，同批工具调用与结果原样保留', async () => {
+    await app.createConversation('owner','空群组',undefined,{},[],{id:'empty-group',records:[{namespace:BOT_CHANNEL_ACCESS,id:'empty-group',value:{version:1,context:{platform:'discord',botId:'fixture-bot',channelId:'empty-channel',direct:false},participants:[{actorId:'owner',platformUserId:'fixture-owner'}]}}]});
+    const scope=(await app.longMemory.access('owner',{conversationId:'empty-group'})).scopes[0];
+    // 范围还没有任何记录时不在已保存列表里，工具读到它的版本是 0；比对时不能把「不在列表」当作版本变化。
+    expect(await app.storage.longMemoryScopes('owner')).not.toContainEqual(expect.objectContaining({ id: scope.id }));
+    const messages:PlatformMessage[]=[{id:'ask',role:'user',isUserInput:true,actorId:'owner',parts:[{text:'整理记忆'}]},
+      {id:'calls',role:'model',parts:[{functionCall:{id:'status-call',name:'context_status',args:{}}},{functionCall:{id:'topics-call',name:'memory_topics',args:{limit:30}}}]},
+      {id:'status',role:'user',isFunctionResponse:true,parts:[{functionResponse:{id:'status-call',name:'context_status',response:{success:true}}}]},
+      {id:'topics',role:'user',isFunctionResponse:true,parts:[{functionResponse:{id:'topics-call',name:'memory_topics',response:{success:true,memoryScopeVersions:[{scopeId:scope.id,invalidation:0}]}}}]}];
+    const view=await app.longMemoryPrompt.history.prepare('owner','empty-group',messages);
+    expect(view.blockedIds.size).toBe(0);
+    expect(view.messages).toEqual(messages);
+    expect(view.messages.some(message=>message.memoryRedacted)).toBe(false);
+  });
+
   test('任务未绑定工作区时不沿用对话中已失效的工作区', async () => {
     const draft = app.settings.snapshot();
     draft.settings.workspaces.push({ id: 'old-workspace', name: '旧工作区', deviceId: 'local', directory: f.root });

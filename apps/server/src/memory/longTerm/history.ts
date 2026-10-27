@@ -80,7 +80,8 @@ export class MemoryHistoryView {
       const blockedIds=new Set([...sourceIds,...known.blockedIds]),calls=new Set<string>(),evaluatedIds=new Set(known.evaluatedIds);
       const invalidDirectory=(message:PlatformMessage)=>message.parts.some(part=>{
         const versions=(part.functionResponse as {response?:{memoryScopeVersions?:Array<{scopeId:string;invalidation:number}>}}|undefined)?.response?.memoryScopeVersions;
-        return Array.isArray(versions)&&versions.some(version=>scopeVersions.get(version.scopeId)!==version.invalidation);
+        // 从未写入过的范围不在已保存列表里，longMemoryState 对它给出的版本是 0；缺席按 0 比对，否则读到空目录的整批工具结果都会被屏蔽。
+        return Array.isArray(versions)&&versions.some(version=>(scopeVersions.get(version.scopeId)??0)!==version.invalidation);
       });
       for (const message of messages) if ((deletedRecords.size > 0
         && memoryReferences(message).some(ref => deletedRecords.has(referenceKey(ref)))) || invalidDirectory(message)) {
