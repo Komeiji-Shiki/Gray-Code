@@ -13,7 +13,13 @@ export function imageMime(bytes: Uint8Array): string | undefined {
   if (buffer.subarray(0, 4).toString() === 'RIFF' && buffer.subarray(8, 12).toString() === 'WEBP') return 'image/webp';
   return undefined;
 }
-/** 收到的图片按内容散列编号，表情包工具据此从会话历史取回原图。 */
+/** 模型输入里的动图只保留第 1 帧：缩到 1024 像素以内并量化为调色板 PNG，帧数多、体积大的 GIF 也只有几十 KB。 */
+async function gifFirstFrame(bytes: Uint8Array): Promise<Buffer> {
+  const { default: sharp } = await import('sharp');
+  return sharp(bytes, { limitInputPixels: 64 * 1024 * 1024, failOn: 'error' })
+    .resize(1024, 1024, { fit: 'inside', withoutEnlargement: true }).png({ palette: true }).toBuffer();
+}
+/** 收到的图片按内容散列编号，表情包工具据此取回原图。 */
 export function botImageId(bytes: Uint8Array): string {
   return createHash('sha256').update(bytes).digest('hex').slice(0, 12);
 }
@@ -88,6 +94,8 @@ export async function botInboundParts(message: BotInbound, platform: 'discord' |
         }
         const mimeType = imageMime(bytes); if (!mimeType) throw new Error('实际文件不是受支持的图片');
         const id = botImageId(bytes);
+        // 动图的整张 GIF 会随历史进入每一轮请求，而模型只看第 1 帧；原文件留在工作区，图片编号仍按原文件计算。
+        const still = mimeType === 'image/gif' ? await gifFirstFrame(bytes) : undefined;
         // 工作区保存失败不影响图片进入本轮上下文；标签会说明未能保存，方便之后排查权限或磁盘问题。
         let location = '';
         if (saveImage) {
@@ -96,7 +104,8 @@ export async function botInboundParts(message: BotInbound, platform: 'discord' |
             if (saved) location = `，工作区路径 ${JSON.stringify(saved.relativePath)}`;
           } catch { location = '，未能保存到工作区'; }
         }
-        return [{ text: `[${label}，图片编号 ${id}${location}]` }, { inlineData: { mimeType, data: Buffer.from(bytes).toString('base64') } }];
+        return [{ text: `[${label}${still ? '，动图只提供第 1 帧' : ''}，图片编号 ${id}${location}]` },
+          { inlineData: { mimeType: still ? 'image/png' : mimeType, data: Buffer.from(still ?? bytes).toString('base64') } }];
       } catch (error) { return [{ text: `[${label}：未读取，${(error as Error).message}]` }]; }
     })(); cached.set(key, work); return work;
   };

@@ -1,10 +1,11 @@
 import path from 'node:path';
 import { createHash } from 'node:crypto';
 import { createReadStream } from 'node:fs';
-import { mkdir, stat, writeFile, readFile } from 'node:fs/promises';
+import { mkdir, readdir, stat, writeFile, readFile } from 'node:fs/promises';
 import type { RuntimeTool } from '@graycode/core';
 import type { PlatformApplication } from '../application';
 import type { BotAttachment } from './gateway';
+import { botImageId, imageMime } from './media';
 import { FileReadAccess } from '../workspace/readAccess';
 import { BOT_IMAGE_DIRECTORY } from '../../../../shared/botConversation';
 
@@ -73,6 +74,13 @@ export interface BotImageFile {
 }
 const imageExtension = { 'image/png': 'png', 'image/jpeg': 'jpg', 'image/webp': 'webp', 'image/gif': 'gif' } as const;
 
+async function botImageDirectory(app: PlatformApplication, conversationId: string): Promise<string | undefined> {
+  const conversation = await app.storage.getConversation(conversationId);
+  const workspaceId = typeof conversation?.workspaceId === 'string' ? conversation.workspaceId : undefined;
+  const workspace = workspaceId ? app.settings.find('workspaces', workspaceId) : undefined;
+  return workspace?.directory ? path.join(workspace.directory, BOT_IMAGE_DIRECTORY) : undefined;
+}
+
 /**
  * 收到的图片按内容散列复制到会话工作区。图片编号和文件散列一致，
  * 同一张图重复出现时复用已有文件；名称只用于阅读，路径始终限制在图片目录内。
@@ -81,11 +89,9 @@ export async function saveBotImage(app: PlatformApplication, conversationId: str
   attachment: BotAttachment, bytes: Uint8Array, mimeType: string): Promise<BotImageFile | undefined> {
   const extension = imageExtension[mimeType as keyof typeof imageExtension];
   if (!extension) throw new Error('工作区图片格式不受支持');
-  const conversation = await app.storage.getConversation(conversationId);
-  const workspaceId = typeof conversation?.workspaceId === 'string' ? conversation.workspaceId : undefined;
-  const workspace = workspaceId ? app.settings.find('workspaces', workspaceId) : undefined;
+  const directory = await botImageDirectory(app, conversationId);
   // 没有绑定工作区时只把图片留在历史和模型输入里，不伪造一个模型无法访问的路径。
-  if (!workspace?.directory) return undefined;
+  if (!directory) return undefined;
   const id = createHash('sha256').update(bytes).digest('hex').slice(0, 12);
   const base = attachment.name
     .replace(/\.[^./\\]*$/, '')
@@ -93,13 +99,27 @@ export async function saveBotImage(app: PlatformApplication, conversationId: str
     .replace(/^[. ]+|[. ]+$/g, '')
     .slice(0, 80) || 'image';
   const filename = `${id}-${base}.${extension}`;
-  const directory = path.join(workspace.directory, BOT_IMAGE_DIRECTORY);
   const file = path.join(directory, filename);
   await mkdir(directory, { recursive: true });
   await writeFile(file, bytes, { flag: 'wx' }).catch(error => {
     if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error;
   });
   return { id, name: attachment.name, path: file, relativePath: `${BOT_IMAGE_DIRECTORY}/${filename}`, sizeBytes: bytes.byteLength, mimeType };
+}
+
+/** 按图片编号取回 saveBotImage 保存的原图：动图在历史里只有第 1 帧，完整 GIF 只在这里；文件名前缀之外再核对内容散列。 */
+export async function readSavedBotImage(app: PlatformApplication, conversationId: string, id: string): Promise<{ data: Buffer; mimeType: string } | undefined> {
+  const directory = await botImageDirectory(app, conversationId);
+  if (!directory) return undefined;
+  const names = (await readdir(directory).catch(() => [] as string[])).filter(name => name.startsWith(`${id}-`));
+  for (const name of names) {
+    const file = path.join(directory, name);
+    if ((await stat(file).catch(() => undefined))?.isFile() !== true) continue;
+    const data = await readFile(file);
+    const mimeType = imageMime(data);
+    if (mimeType && botImageId(data) === id) return { data, mimeType };
+  }
+  return undefined;
 }
 
 export function botDocumentTools(app: PlatformApplication): RuntimeTool[] {

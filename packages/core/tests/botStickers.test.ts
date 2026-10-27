@@ -1,5 +1,6 @@
 import path from 'node:path';
-import { access, mkdir, writeFile } from 'node:fs/promises';
+import { access, mkdir, readFile, writeFile } from 'node:fs/promises';
+import sharp from 'sharp';
 import type { PlatformApplication } from '../../../apps/server/src/application';
 import { botImageId, botInboundParts, isPublicAddress } from '../../../apps/server/src/bots/media';
 import { saveBotImage } from '../../../apps/server/src/bots/documents';
@@ -74,6 +75,30 @@ describe('Bot 表情包', () => {
     const label = parts.map(part => part.text).find(text => typeof text === 'string' && text.startsWith('[附件'));
     expect(label).toContain(`工作区路径 "${saved!.relativePath}"`);
     expect(parts.some(part => part.inlineData)).toBe(true);
+  });
+
+  test('动图只把第 1 帧交给模型，完整 GIF 留在工作区并可按编号收藏', async () => {
+    const solid = (color: number[]) => Buffer.concat(Array.from({ length: 16 * 16 }, () => Buffer.from(color)));
+    const gif = await sharp(Buffer.concat([solid([255, 0, 0]), solid([0, 0, 255])]), { raw: { width: 16, height: 32, channels: 3, pageHeight: 16 } })
+      .gif({ delay: [100, 100], loop: 0 }).toBuffer();
+    expect((await sharp(gif, { animated: true }).metadata()).pages).toBe(2);
+    const inbound = { id: 'm', authorId: '10', channelId: '30', direct: false, mentioned: false, content: '',
+      attachments: [{ name: '转圈.gif', url: 'https://cdn.discordapp.com/a', contentType: 'image/gif' }] };
+    const parts = await botInboundParts(inbound, 'discord', async () => gif, undefined,
+      (attachment, bytes, mimeType) => saveBotImage(app, 'conversation', attachment, bytes, mimeType));
+    const label = parts.map(part => part.text).find(text => typeof text === 'string' && text.startsWith('[附件'));
+    expect(label).toContain('动图只提供第 1 帧'); expect(label).toContain(`图片编号 ${botImageId(gif)}`);
+    expect(label).toContain(`工作区路径 "${BOT_IMAGE_DIRECTORY}/${botImageId(gif)}-转圈.gif"`);
+    const image = parts.find(part => part.inlineData)!.inlineData as { mimeType: string; data: string };
+    expect(image.mimeType).toBe('image/png');
+    const still = Buffer.from(image.data, 'base64');
+    expect((await sharp(still, { animated: true }).metadata())).toMatchObject({ format: 'png', width: 16, height: 16 });
+    const pixel = await sharp(still).removeAlpha().raw().toBuffer();
+    expect(pixel[0]).toBeGreaterThan(200); expect(pixel[2]).toBeLessThan(60);
+    await expect(readFile(path.join(f.root, BOT_IMAGE_DIRECTORY, `${botImageId(gif)}-转圈.gif`))).resolves.toEqual(gif);
+    // 历史里没有这个编号的原图（只有第 1 帧），收藏取工作区保存的完整 GIF。
+    await expect(botStickerTool(app).execute({ action: 'save', name: '转圈', image: botImageId(gif) }, context())).resolves.toMatchObject({ name: '转圈' });
+    await expect(readFile(path.join(root, '转圈.gif'))).resolves.toEqual(gif);
   });
 
   test('网页图片只下载公网 HTTPS，重定向到内网会被拒绝', async () => {

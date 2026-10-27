@@ -6,6 +6,7 @@ import type { RunRecord } from '@graycode/contracts';
 import type { RuntimeTool } from '@graycode/core';
 import type { PlatformApplication } from '../application';
 import type { BotReply } from './gateway';
+import { readSavedBotImage } from './documents';
 import { botImageId, imageMime, isPublicAddress, readLimited } from './media';
 
 /** 表情包放在会话工作区的固定目录；去掉扩展名的相对路径就是引用名，子目录用来分类。 */
@@ -88,6 +89,9 @@ export async function botStickerReplies(app: PlatformApplication, run: Pick<RunR
 }
 
 async function historyImage(app: PlatformApplication, conversationId: string, id: string): Promise<{ data: Buffer; mimeType: string } | undefined> {
+  // 动图在历史里只有第 1 帧，收藏必须取工作区保存的完整原图。
+  const saved = await readSavedBotImage(app, conversationId, id);
+  if (saved) return saved;
   let beforeIndex: number | undefined;
   // 从最新消息往前找，最多翻 2000 条；图片编号来自消息中的标注。
   for (let page = 0; page < 20; page++) {
