@@ -3,7 +3,7 @@ import { ApplicationIntegrationType, ChannelType, Client, Events, GatewayIntentB
 import { discordModal, discordPanel } from './discordComponents';
 import { BotDeliveryError } from './deliveryError';
 
-import { withoutReplyChain, type BotChannel, type BotGateway, type BotInbound, type BotInteraction, type BotReply, type BotReference } from './gateway';
+import { withoutReplyChain, type BotAttachment, type BotChannel, type BotGateway, type BotInbound, type BotInteraction, type BotReply, type BotReference } from './gateway';
 export type DiscordInbound = BotInbound;
 export type DiscordGateway = BotGateway;
 
@@ -12,6 +12,10 @@ function allowedMentions(content?: string) {
   const users = [...new Set(Array.from(content?.matchAll(/<@!?(\d{1,20})>/g) ?? [], match => match[1]))].slice(0, 100);
   return { parse: [] as const, repliedUser: false, ...(users.length ? { users } : {}) };
 }
+
+/** 自定义表情在正文里只有名称和编号，模型看不到画面；当作图片附件直接提供，同一枚表情只取一次，单条消息最多取前几枚。 */
+const CUSTOM_EMOJI = /<a?:(\w{2,32}):(\d{17,20})>/g;
+const MAX_EMOJI_IMAGES = 8;
 
 /** Only authenticated Gateway events reach the application identity resolver. */
 export class DiscordJsGateway implements DiscordGateway {
@@ -71,7 +75,7 @@ export class DiscordJsGateway implements DiscordGateway {
         channelId: message.reference?.channelId, ...this.messageContent(snapshot) });
     } else if (message.reference?.messageId) references.push({ kind: message.reference.type === 1 ? 'forward' : 'reply',
       id: message.reference.messageId, channelId: message.reference.channelId });
-    const attachments = [...message.attachments.values()].map(file => ({ name: file.name, url: file.url, contentType: file.contentType ?? undefined, size: file.size }));
+    const attachments: BotAttachment[] = [...message.attachments.values()].map(file => ({ name: file.name, url: file.url, contentType: file.contentType ?? undefined, size: file.size }));
     const text = [message.content];
     // 粘贴的图片链接与转发卡片可能只出现在 embeds 中，沿用平台代理地址读取。
     for (const [index, embed] of (message.embeds ?? []).entries()) {
@@ -83,6 +87,11 @@ export class DiscordJsGateway implements DiscordGateway {
         if (url && !attachments.some(item => item.url === url)) attachments.push({ name: `嵌入图片 ${index + 1}`, url, contentType: 'image/*', size: 0 });
       }
     }
+    const emojis = new Map<string, string>();
+    for (const [, name, id] of (message.content ?? '').matchAll(CUSTOM_EMOJI)) emojis.set(id, name);
+    for (const [id, name] of [...emojis].slice(0, MAX_EMOJI_IMAGES))
+      attachments.push({ name: `${name}.png`, url: `https://cdn.discordapp.com/emojis/${id}.png?size=64`,
+        contentType: 'image/png', size: 0, sticker: true, summary: `:${name}:` });
     return { content: text.filter(Boolean).join('\n'), timestamp: message.createdTimestamp, attachments, references };
   }
   async hydrate(message: BotInbound): Promise<BotInbound> {

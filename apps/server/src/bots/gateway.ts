@@ -15,7 +15,7 @@ export interface BotInbound {
 /** 下标引用兼容原有附件和引用读取路径，同时保留平台消息段的顺序。 */
 export type BotMessageSegment = { type: 'text'; text: string } | { type: 'mention'; id: string; name?: string }
   | { type: 'attachment' | 'reference'; index: number };
-/** sticker 表示平台自己标记的表情包（QQ 的表情图片与商城表情），summary 是平台给出的表情名称。 */
+/** sticker 表示平台自己标记的表情（QQ 的表情图片与商城表情、Discord 的自定义表情），summary 是平台给出的表情名称。 */
 export interface BotAttachment { name: string; url?: string; fileId?: string; contentType?: string; size?: number; sticker?: boolean; summary?: string }
 export interface BotReference {
   kind: 'reply' | 'forward'; id: string; channelId?: string; authorId?: string; authorName?: string; content?: string;

@@ -419,6 +419,24 @@ describe('Bot 频道上下文、附件与定时总结', () => {
     expect((await app.storage.readFullHistory(id)).messages.filter(message => message.isSummary)).toHaveLength(1);
   });
 
+  test('Discord 自定义表情直接作为图片提供给模型，重复表情只取一次，数量有上限', async () => {
+    const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jRzUAAAAASUVORK5CYII=', 'base64');
+    const discord = new DiscordJsGateway();
+    const emoji = (name: string, id: string) => `<:${name}:${id}>`;
+    const content = (discord as any).messageContent({ content: `${emoji('yuantou', '1467871971512680460')} 你好 <a:wave:1467871971512680461> ${emoji('yuantou', '1467871971512680460')}`,
+      createdTimestamp: 1, attachments: new Map([['file', { name: 'real.png', url: 'https://cdn.discordapp.com/real', contentType: 'image/png' }]]), embeds: [] });
+    expect(content.attachments.map((item: any) => item.name)).toEqual(['real.png', 'yuantou.png', 'wave.png']);
+    expect(content.attachments[1]).toMatchObject({ url: 'https://cdn.discordapp.com/emojis/1467871971512680460.png?size=64', sticker: true, summary: ':yuantou:' });
+    const many = (discord as any).messageContent({ content: Array.from({ length: 12 }, (_, index) => emoji('e' + index, `146787197151268${10000 + index}`)).join(''),
+      createdTimestamp: 1, attachments: new Map(), embeds: [] });
+    expect(many.attachments).toHaveLength(8);
+    const requested: string[] = [];
+    const parts = await botInboundParts({ ...inbound('emoji'), ...content }, 'discord', async item => { requested.push(item.url!); return png; });
+    expect(parts.filter(part => part.inlineData)).toHaveLength(3);
+    expect(requested).toContain('https://cdn.discordapp.com/emojis/1467871971512680460.png?size=64');
+    expect(parts.map(part => part.text ?? '').join('\n')).toContain('Discord 自定义表情 :yuantou:');
+  });
+
   test('Discord 转发快照和 OneBot 引用中的图片、文本附件进入内容，无法读取时保留来源', async () => {
     const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jRzUAAAAASUVORK5CYII=', 'base64');
     const discord = new DiscordJsGateway();
