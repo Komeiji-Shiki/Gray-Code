@@ -2374,8 +2374,8 @@ const en: LanguageMessages = {
                     },
                     MEMORY: {
                         name: 'Memory System',
-                        description: 'Instructions for the permanent memory system (OptMem), telling the AI how to record and recall information across sessions.',
-                        requiresConfig: 'Customizable in Settings → Memory'
+                        description: 'Guidance for file-based memory, telling the AI how to read and write the Markdown index and memory files of each scope under memory/ in the data directory with the file tools. Generated from the memory scopes and file tools available to the conversation.',
+                        requiresConfig: 'Enabled in Settings → Memory'
                     }
                 },
                 entriesEditor: {

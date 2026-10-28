@@ -2374,8 +2374,8 @@ const ja: LanguageMessages = {
                     },
                     MEMORY: {
                         name: '記憶システム',
-                        description: '永続記憶システム（OptMem）の使い方ガイド。セッションをまたいで情報を記録・想起する方法を AI に伝えます。設定 → 記憶 でカスタマイズできます。',
-                        requiresConfig: '設定 → 記憶 でカスタマイズできます'
+                        description: 'ファイル記憶の使い方ガイド。データディレクトリの memory/ にある各範囲の Markdown 索引と記憶ファイルをファイルツールで読み書きする方法を AI に伝えます。現在の会話で利用できる記憶範囲とファイルツールに応じて生成されます。',
+                        requiresConfig: '設定 → 記憶 で長期記憶を有効にします'
                     }
                 },
                 entriesEditor: {

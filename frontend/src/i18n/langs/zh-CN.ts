@@ -2376,8 +2376,8 @@ const zhCN = {
                     },
                     MEMORY: {
                         name: '记忆系统',
-                        description: '永久记忆系统（OptMem）的使用说明，告诉 AI 如何跨会话记录和回忆信息。可在 设置 → 记忆 中自定义内容。',
-                        requiresConfig: '设置 → 记忆 中可自定义此提示词'
+                        description: '文件记忆的使用指引，告诉 AI 如何用文件工具读写数据目录 memory/ 下各范围的 Markdown 索引与记忆文件。内容按当前会话可用的记忆范围与读写工具生成。',
+                        requiresConfig: '在 设置 → 记忆 中启用长期记忆'
                     }
                 },
                 entriesEditor: {

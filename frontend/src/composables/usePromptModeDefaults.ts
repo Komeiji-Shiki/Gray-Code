@@ -88,9 +88,10 @@ Additional tools from MCP servers:
 
 MEMORY
 
-Engineering log memory
+Persistent memory lives in markdown files accessed with normal file tools. Each directory holds MEMORY.md, an index with one line per memory (\`- [Title](file.md) — one-line hook\`), and one file per memory with frontmatter: name (short slug), description (one-line relevance cue), and type (user | feedback | project | reference).
 
-memory_wake loads project conventions and lessons saved in earlier sessions...`,
+- global: <数据目录>/memory/global
+- project: <数据目录>/memory/projects/<目录名>-<hash12>`,
       requiresConfig: t('components.settings.promptSettings.modules.MEMORY.requiresConfig')
     }
   ])
