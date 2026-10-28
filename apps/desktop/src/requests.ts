@@ -16,6 +16,7 @@ import type { DesktopSaveAll } from './saveAll';
 import type { DesktopStorageLocation } from './storageLocation';
 import type { DesktopUpdates } from './updates';
 import { openOfficeFile, openWorkspaceInExplorer, revealWorkspaceFile } from './workspaceExplorer';
+import { memoryDirectory } from '../../server/src/memory/files';
 
 type Params = Record<string, any>;
 interface RequestPolicy {
@@ -188,7 +189,8 @@ export class DesktopRequests {
             if (selected.canceled || !selected.filePath) return { success: false, cancelled: true };
             await writeFile(selected.filePath, params.content, 'utf8'); return { success: true, filePath: selected.filePath };
           } },
-          'storagePath.getConfig': { uiRequest: true, execute: () => storageLocation.getConfig() },
+          'storagePath.getConfig': { uiRequest: true, execute: () => ({ ...storageLocation.getConfig(),
+            memoryDirectory: memoryDirectory(application.storage.directory) }) },
           'storagePath.validate': { uiRequest: true, execute: params => storageLocation.validate(params.path) },
           'storagePath.migrate': { uiRequest: true, execute: params => scheduleStorage(params.path) },
           'storagePath.reset': { uiRequest: true, execute: () => scheduleStorage(storageLocation.defaultPath) },
@@ -198,7 +200,7 @@ export class DesktopRequests {
           } },
           'storagePath.openInExplorer': { uiRequest: true, execute: async params => {
             if (params.subdirectory === 'memory') {
-              const directory = path.join(application.storage.directory, 'memory');
+              const directory = memoryDirectory(application.storage.directory);
               await mkdir(directory, { recursive: true });
               return openDataDirectory(directory);
             }

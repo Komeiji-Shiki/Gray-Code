@@ -37,6 +37,7 @@ import { validateDecisionProvider } from '../model/decisionReviewer';
 import type { WorkspaceDiff } from '../workspace/diffs';
 import type { UiRequestHandlers, UiStartupSnapshot } from '@graycode/contracts';
 import { speechRequest } from '../speech/requests';
+import { memoryDirectory } from '../memory/files';
 
 interface UiSession { mode?: 'chat' | 'code' | 'character'; preferences: ProductSettingsDraft; editing: boolean; workspaceId?: string }
 export class ProductUi {
@@ -664,7 +665,8 @@ export class ProductUi {
         return this.app.terminals.has(data.taskId)
         ? this.app.terminals.kill(client.actorId, data.taskId) : this.app.subagents.cancelTask(client.actorId, data.taskId);
       case 'storagePath.getConfig': return { config: ui.preferences.settings.getStoragePathConfig(),
-        defaultPath: this.app.storage.directory, effectivePath: this.app.storage.directory };
+        defaultPath: this.app.storage.directory, effectivePath: this.app.storage.directory,
+        memoryDirectory: memoryDirectory(this.app.storage.directory) };
       case 'getWorkspaceUri': return uri;
       case 'chatInput.focusState': return { success: true };
       case 'chatStream': return this.chat.start(client, data, ui.preferences, 'send', signal);

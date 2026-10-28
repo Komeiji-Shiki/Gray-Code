@@ -26,10 +26,10 @@ onMounted(async () => {
   try {
     const [response, storage] = await Promise.all([
       sendToExtension<{ settings: { toolsConfig: { memory: { enabled: boolean } } } }>('getSettings', {}),
-      sendToExtension<{ effectivePath: string }>('storagePath.getConfig', {}),
+      sendToExtension<{ memoryDirectory: string }>('storagePath.getConfig', {}),
     ])
     enabled.value = response.settings.toolsConfig.memory.enabled
-    memoryDirectory.value = storage.effectivePath.replace(/[\\/]$/, '') + '/memory'
+    memoryDirectory.value = storage.memoryDirectory
     ready.value = true
   } catch (cause) { error.value = (cause as Error).message }
 })

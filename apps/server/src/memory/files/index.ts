@@ -11,11 +11,14 @@ import { inside, resolveWorkspacePath } from '../../workspace/paths';
 import { paths } from '../../workspace/writeAccess';
 import { GENERAL_FILE_WRITE_TOOLS } from '../../../../../backend/modules/settings/modeToolsPolicy';
 
+/** 文件记忆的根目录；记忆根与设置页显示的位置共用这一处定义。 */
+export const memoryDirectory = (storageDirectory: string) => path.join(storageDirectory, 'memory');
+
 export async function memoryRoots(
   app: PlatformApplication, actorId: string, conversationId: string | undefined, workspace?: WorkspaceDefinition,
 ): Promise<Array<{ label: 'global' | 'project' | 'channel' | 'story'; directory: string }>> {
   if (!app.product.runtimeSettings().isMemoryEnabled()) return [];
-  const base = path.join(app.storage.directory, 'memory');
+  const base = memoryDirectory(app.storage.directory);
   if (conversationId) {
     const rootId = app.subagents.rootConversationId(conversationId);
     const access = await app.storage.getRecord(BOT_CHANNEL_ACCESS, rootId) as BotChannelAccess | null;
@@ -78,7 +81,7 @@ export async function readMemoryIndex(roots: Array<{ label: string; directory: s
 
 /** 数据目录中已有的记忆范围目录（相对路径，使用 /），备份按范围整体保留或替换。 */
 export async function memoryScopeDirectories(storageDirectory: string): Promise<string[]> {
-  const base = path.join(storageDirectory, 'memory');
+  const base = memoryDirectory(storageDirectory);
   const entries = async (relative: string) => (await readdir(path.join(base, relative), { withFileTypes: true }).catch(error => {
     if ((error as NodeJS.ErrnoException).code === 'ENOENT') return [];
     throw error;
