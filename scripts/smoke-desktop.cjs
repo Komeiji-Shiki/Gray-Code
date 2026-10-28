@@ -180,6 +180,54 @@ async function verifyRegexCancellation(rpc) {
   assert.deepEqual(edits, []);
   assert.equal(await fs.readFile(file, 'utf8'), text);
 }
+async function verifyMemoryFiles({ window, rpc, ui, evaluate, chat }) {
+  const created = await ui('ui.mode.new', { mode: 'chat', automaticWorkspace: false });
+  const conversationId = created.conversationId;
+  const target = path.join(output, 'data', 'memory', 'global', 'desktop-smoke-memory.md');
+  const text = 'Desktop memory files verified without review.';
+  await evaluate(`window.__memoryFilesFocus = '';
+    window.__memoryFilesDispose = window.graycode.subscribe(event => {
+      if (event.type === 'ui.conversation.focused') window.__memoryFilesFocus = event.conversationId;
+    }); undefined`);
+  try {
+    await ui('tools.updateApplyDiffConfig', { config: { autoSave: false, autoApplyWithoutDiffView: false } });
+    await rpc('ui.command', { command: 'platform.openModeConversation', data: { conversationId } });
+    await until(() => evaluate(`window.__memoryFilesFocus === ${JSON.stringify(conversationId)}`), 'memory conversation focused');
+    const metadata = await ui('conversation.getConversationMetadata', { conversationId });
+    assert.equal(metadata.workspaceId, undefined);
+    await until(() => chat('!!document.querySelector(".input-editor")'), 'memory conversation input');
+    await chat(`const editor = document.querySelector('.input-editor'); editor.focus(); editor.textContent = 'memory-files-desktop-smoke';
+      editor.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertText', data: editor.textContent }));`);
+    await until(() => chat('!!document.querySelector(".send-button:not([disabled])")'), 'memory send enabled');
+    await chat('document.querySelector(".send-button").click()');
+    const run = await until(async () => {
+      const current = (await rpc('runs.list', { conversationId }))[0];
+      if (current?.status === 'failed') throw new Error(current.error);
+      if (current?.status === 'awaiting_approval') throw new Error('Memory write unexpectedly required review.');
+      return current?.status === 'completed' && current;
+    }, 'memory write completed without review');
+    assert.equal(run.workspaceId, undefined);
+    assert.equal(await fs.readFile(target, 'utf8'), text);
+    assert(!(await rpc('runs.events', { id: run.id })).some(event => event.type === 'diff.review.requested'));
+    const diffs = await rpc('workspace.diffs.list', { workspaceId: 'memory:global' });
+    assert.equal(diffs.length, 1); assert.equal(diffs[0].status, 'accepted');
+    await until(() => chat('!!document.querySelector(".tool-item .tool-action-buttons button .codicon-diff")'),
+      'memory tool card preview action');
+    await chat('document.querySelector(".tool-item .tool-action-buttons button .codicon-diff").closest("button").click()');
+    await until(() => evaluate('document.querySelector(".diff-panel .review-breadcrumb")?.textContent.includes("desktop-smoke-memory.md")'),
+      'memory diff panel opened from tool card');
+    await until(() => evaluate(`Array.from(document.querySelectorAll('.diff-panel .diff-editor .view-lines'))
+      .some(node => node.textContent.replace(/\\s+/g, ' ').includes(${JSON.stringify(text)}))`),
+      'memory diff content rendered');
+    assert(await evaluate('!!document.querySelector(".diff-panel .diff-status.status-accepted")'));
+    assert(!await evaluate('Array.from(document.querySelectorAll(".diff-panel .diff-error")).some(node => node.textContent.trim())'));
+    await fs.writeFile(path.join(output, 'memory-files.png'), (await window.webContents.capturePage()).toPNG());
+    return { conversationId, noWorkspace: true, noReviewWithAutoSaveDisabled: true, previewFromToolCard: true, screenshot: 'memory-files.png' };
+  } finally {
+    await ui('tools.updateApplyDiffConfig', { config: { autoSave: true, autoApplyWithoutDiffView: true } });
+    await evaluate('window.__memoryFilesDispose(); delete window.__memoryFilesDispose; delete window.__memoryFilesFocus; undefined');
+  }
+}
 async function verifyLatestFileFocus(evaluate) {
   const target = await fs.realpath(path.join(output, 'project', 'slow-open.ts'));
   const originalOpen = fs.open;
@@ -381,6 +429,17 @@ async function main() {
       return;
     }
     const lastUserMessage = body.messages.findLast(message => message.role === 'user');
+    if (JSON.stringify(lastUserMessage?.content ?? '').includes('memory-files-desktop-smoke')) {
+      const completed = body.messages.some(message => message.role === 'tool' && message.tool_call_id === 'memory-files-write');
+      const tool = { id: 'memory-files-write', type: 'function', function: { name: 'write_file', arguments: JSON.stringify({
+        path: path.join(output, 'data', 'memory', 'global', 'desktop-smoke-memory.md'),
+        content: 'Desktop memory files verified without review.',
+      }) } };
+      res.setHeader('Content-Type', 'application/json');
+      res.end(JSON.stringify({ choices: [{ message: { role: 'assistant', content: completed ? '文件记忆已直接保存。' : null,
+        ...(!completed ? { tool_calls: [tool] } : {}) }, finish_reason: completed ? 'stop' : 'tool_calls' }] }));
+      return;
+    }
     if (JSON.stringify(lastUserMessage?.content ?? '').includes('workspace-switch-')) {
       projectSwitchRequests.push(body);
       const reading = JSON.stringify(lastUserMessage.content).includes('workspace-switch-read-smoke');
@@ -494,6 +553,7 @@ async function main() {
     getRequests: () => projectSwitchRequests });
   const shellShortcuts = await workflowSmoke.verifyShellShortcuts({ window, rpc, evaluate, chat, until,
     projectConversationId: projectSwitchWorkflow.projectConversationId });
+  const memoryFiles = await verifyMemoryFiles({ window, rpc, ui, evaluate, chat });
   await until(() => evaluate('Array.from(document.querySelectorAll(".navigation-project-select")).some(node => node.textContent.includes("桌面验证项目"))'), 'project navigation');
   // 工作区切换已覆盖自动创建；后续工具循环使用另一条空白项目对话。
   await evaluate('window.__smokeProjectFocused = false; window.graycode.subscribe(event => { if (event.type === "ui.conversation.focused" && event.workspaceId === "smoke" && event.conversationId) window.__smokeProjectFocused = true; }); undefined');
@@ -659,7 +719,8 @@ async function main() {
   assert.deepEqual(errors, [], 'Desktop smoke must not contain renderer errors.');
   const report = { ok: true, electron: process.versions.electron, node: process.versions.node, requests, regexSearchVerified: true, editorFlowVerified: true,
     startupCommandsVerified, documentOpenRaceVerified, languageWorkspaceEditVerified,
-    chatLayout, rendererPerformance, pets: petSmoke, workflows: { companion: companionWorkflow, projectSwitch: projectSwitchWorkflow, shellShortcuts, inputToolbar,
+    chatLayout, rendererPerformance, pets: petSmoke, workflows: { companion: companionWorkflow, projectSwitch: projectSwitchWorkflow,
+      memoryFiles, shellShortcuts, inputToolbar,
       settings: { screenshots: ['settings-context.png', 'settings-context-prompts.png', 'settings-context-count.png', 'settings-companion.png'],
         unifiedContextAndCompanion: true, nativeMenuLanguageSwitch: true, nativeMenuRetainedForOtherSettings: true,
         quitDialogLanguages: quitLanguages.map(item => item.language) } },

@@ -80,9 +80,9 @@ describe('平台模式按配置与会话阶段选择工具', () => {
     for (const name of MODE_ONLY_TOOLS) expect(sent).not.toContain(name);
   });
 
-  test('默认对话使用完整的 25 项内置清单，保留 MCP 并追加上下文工具', async () => {
+  test('默认对话使用完整的 22 项内置清单，保留 MCP 并追加上下文工具', async () => {
     const sent = await send([], 'code', { platformMode: 'chat' });
-    expect(DEFAULT_CHAT_MODE_TOOL_NAMES).toHaveLength(25);
+    expect(DEFAULT_CHAT_MODE_TOOL_NAMES).toHaveLength(22);
     for (const name of ['read_file', 'write_file', 'ask_user', 'memory_search', 'web_search', 'web_fetch', mcpTool, 'context_status', 'context_history']) {
       expect(sent).toContain(name);
     }

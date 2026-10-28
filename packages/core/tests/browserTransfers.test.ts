@@ -32,7 +32,7 @@ describe('browser retained downloads', () => {
       expect(await readFile(changes[0].sourceFile, 'utf8')).toBe('fixture download');
     });
     const application = { storage: f.store, publish: jest.fn(), changes: { write },
-      product: { runtimeSettings: () => ({ getWriteFileConfig: () => ({ outsideWorkspaceAccess: 'deny' }) }) },
+      product: { runtimeSettings: () => ({ isMemoryEnabled: () => false, getWriteFileConfig: () => ({ outsideWorkspaceAccess: 'deny' }) }) },
       files: { resolve: async (_workspace, file) => path.resolve(f.source, file), resolveAbsolute: async file => file,
         transaction: async (_workspace, operation) => operation({ capture: async () => ({ bytes: null, hash: null }) }) },
     } as unknown as PlatformApplication;

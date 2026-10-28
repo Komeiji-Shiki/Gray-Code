@@ -15,7 +15,7 @@ export function createLanguageToolFixture(name: string) {
         actor: () => ({ role: 'owner' }),
         workspace: () => workspace,
         settings: { read: () => ({}) },
-        product: { runtimeSettings: () => ({ getReadFileConfig: () => ({ outsideWorkspaceAccess: 'deny' }) }) }
+        product: { runtimeSettings: () => ({ isMemoryEnabled: () => false, getReadFileConfig: () => ({ outsideWorkspaceAccess: 'deny' }) }) }
     } as unknown as PlatformApplication;
     const languages = new LanguageServices(app);
     Object.assign(app, { languages });

@@ -1,6 +1,6 @@
 import path from 'node:path';
 import os from 'node:os';
-import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { copyFile, mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { pathToFileURL } from 'node:url';
 import type { ToolContext } from '../src/runtime/tools';
 import type { PlatformApplication } from '../../../apps/server/src/application';
@@ -13,7 +13,7 @@ const provider = jest.fn();
 const actor = jest.fn(() => ({ role: 'owner' }));
 const app = {
   languages: { toolRequest: provider }, actor,
-  product: { runtimeSettings: () => ({ getReadFileConfig: () => ({ outsideWorkspaceAccess: 'deny' }) }) }
+  product: { runtimeSettings: () => ({ isMemoryEnabled: () => false, getReadFileConfig: () => ({ outsideWorkspaceAccess: 'deny' }) }) }
 } as unknown as PlatformApplication;
 let directory: string;
 let context: ToolContext;
@@ -100,7 +100,12 @@ test('平台超长单条明确标记contentTruncated，读取最后一条时仍�
 });
 
 test('引用不可读仍占一条分页位置，不绕过文件读取策略，也不造成空页死循环', async () => {
-  provider.mockResolvedValue([reference('../outside.ts', 0), reference('a.ts', 0)]);
+  const workspaceDirectory = path.join(directory, 'project');
+  await mkdir(workspaceDirectory);
+  await Promise.all(['main.ts', 'a.ts'].map(file => copyFile(path.join(directory, file), path.join(workspaceDirectory, file))));
+  await writeFile(path.join(directory, 'outside.ts'), 'const outside = 1;');
+  context.workspace!.directory = workspaceDirectory;
+  provider.mockResolvedValue([reference('outside.ts', 0), reference('project/a.ts', 0)]);
   const first = await call({ maxResults: 1 });
   expect(first.data).toMatchObject({ returnedCount: 1, nextOffset: 1, totalCount: 2 });
   expect(first.data.references[0].references[0].content).toContain('不允许访问工作区外');

@@ -36,7 +36,7 @@ describe('Bot 回复合并与发送恢复', () => {
     await writeFile(path.join(f.root, 'result.txt'), '生成或选择的本地文件');
     const run = jest.spyOn(f.store, 'getRun').mockResolvedValue({ id: 'run', actorId: 'owner' } as any);
     const tools = botDocumentTools({ ...app, actor: () => ({ id: 'owner', role: 'owner' }),
-      product: { runtimeSettings: () => ({ getReadFileConfig: () => ({ outsideWorkspaceAccess: 'deny' }) }) },
+      product: { runtimeSettings: () => ({ isMemoryEnabled: () => false, getReadFileConfig: () => ({ outsideWorkspaceAccess: 'deny' }) }) },
       discord: { sessions: { routeForRun: async () => route, admitted: async () => true }, outbox } } as unknown as PlatformApplication);
     const tool = tools.find(value => value.declaration.name === 'bot_send_attachment')!;
     const context = { runId: 'run', actorId: 'owner', conversationId: 'conversation', toolCallId: 'send-file',

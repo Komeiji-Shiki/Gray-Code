@@ -27,7 +27,7 @@ test.each(['owner', 'member'] as const)('通过目录联接登记的工作区允
   const actor: ActorIdentity = { id: role, displayName: role, role, effects: ['workspace_read'], workspaceIds: ['project'] };
   const workspace: WorkspaceDefinition = { id: 'project', name: '工程', directory: linked, deviceId: 'local' };
   const app = { actor: () => actor,
-    product: { runtimeSettings: () => ({ getReadFileConfig: () => ({ outsideWorkspaceAccess: 'deny' }) }) },
+    product: { runtimeSettings: () => ({ isMemoryEnabled: () => false, getReadFileConfig: () => ({ outsideWorkspaceAccess: 'deny' }) }) },
   } as unknown as PlatformApplication;
   const context: ToolContext = { runId: 'read', actorId: role, actor, workspace, signal: new AbortController().signal,
     requestApproval: jest.fn(async () => true), progress() {}, askUser: async () => { throw new Error('unused'); } };
@@ -39,7 +39,7 @@ test.each(['owner', 'member'] as const)('通过目录联接登记的工作区允
   expect(Buffer.from(await host.readFile(host.resolveUriWithInfo('inside.txt').uri!)).toString()).toBe('工作区正文');
   // 根目录的逻辑别名与真实路径都有效，但其中指向外部的链接不能沿用根目录授权。
   await expect(access.resolve('escape/secret.txt')).rejects.toThrow('工作区外');
-  await expect(access.resolve(path.join(outside, 'missing.txt'))).rejects.toThrow('工作区外');
+  await expect(access.resolve(path.join(outside, 'missing.txt'))).rejects.toMatchObject({ code: 'ENOENT' });
   expect(context.requestApproval).not.toHaveBeenCalled();
   workspace.roots = [{ name: 'linked', directory: linked }, { name: 'other', directory: outside }];
   const multi = new FileReadAccess(app, context);

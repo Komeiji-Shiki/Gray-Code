@@ -78,6 +78,7 @@ beforeEach(async () => {
   files = new WorkspaceFiles();
   propose.mockReset().mockResolvedValue({ status: 'accepted', id: 'proposal' });
   app = { files, diffs: { propose }, actor: () => ({ id: 'owner', role: 'owner' }), product: { runtimeSettings: () => ({
+    isMemoryEnabled: () => false,
     getFindFilesConfig: () => ({ excludePatterns: [] }), getListFilesConfig: () => ({ ignorePatterns: [] }),
     getReadFileConfig: () => ({ outsideWorkspaceAccess: 'deny' }),
   }) } } as unknown as PlatformApplication;

@@ -56,8 +56,8 @@ test('单独保存名称保留世界书正文草稿，关闭仍提示未保存',
 
 test('打开桌宠检查记忆设置草稿，放弃后先关闭原窗口再跳转', async () => {
   const events: string[] = [], wrapper = await open({ initialTab: 'memory', onClose: () => events.push('close'), onPets: () => events.push('pets') });
-  await button(wrapper, '整理方式').trigger('click');
-  await wrapper.find('input[aria-label="最多引用条数"]').setValue(8);
+  await button(wrapper, '摘要与检索').trigger('click');
+  await wrapper.find('input[aria-label="摘要输出上限"]').setValue(16000);
   await button(wrapper, '桌宠与 Live2D').trigger('click'); expect(events).toEqual([]);
   await button(wrapper, '放弃更改并继续').trigger('click'); await flushPromises(); expect(events).toEqual(['close', 'pets']);
 });

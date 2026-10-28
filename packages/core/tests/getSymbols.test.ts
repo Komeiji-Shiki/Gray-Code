@@ -17,7 +17,7 @@ const provider = jest.fn();
 const app = {
   languages: { toolRequest: provider },
   actor: () => ({ role: 'owner' }),
-  product: { runtimeSettings: () => ({ getReadFileConfig: () => ({ outsideWorkspaceAccess: 'deny' }) }) }
+  product: { runtimeSettings: () => ({ isMemoryEnabled: () => false, getReadFileConfig: () => ({ outsideWorkspaceAccess: 'deny' }) }) }
 } as unknown as PlatformApplication;
 let directory: string;
 let context: ToolContext;

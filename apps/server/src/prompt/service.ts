@@ -106,7 +106,7 @@ export class PlatformPromptService {
         + '\n' + roots.map(root => `- ${root.label}: ${root.directory}`).join('\n');
     }
     if (settings.isMemoryEnabled() && toolNames.includes('memory_search')
-      && (await conversationMemoryScopes(this.app, input.actor, conversation, input.workspace, input.preview)).length) {
+      && (await conversationMemoryScopes(this.app, input.actor, input.workspace)).length) {
       memoryGuidance += (memoryGuidance ? '\n\n' : '') + LONG_MEMORY_GUIDANCE;
     }
     let memoryIndexText = '';

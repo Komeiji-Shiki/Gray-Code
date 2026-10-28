@@ -39,7 +39,7 @@ export class PlatformLongMemory {
     const workspaceId=run?run.workspaceId:options.workspaceId??(typeof conversation?.workspaceId==='string'?conversation.workspaceId:undefined);
     const workspace=workspaceId?this.app.settings.find('workspaces',workspaceId):undefined;
     if(workspaceId&&!workspace)throw new Error('Workspace or account is unavailable.');
-    const scopes=await conversationMemoryScopes(this.app,actor,conversation,workspace,draft);
+    const scopes=await conversationMemoryScopes(this.app,actor,workspace);
     return {actor,scopes,conversation,workspace};
   }
   select(access:MemoryAccess,id?:string):LongMemoryScope[] {
