@@ -122,7 +122,8 @@ export class BotStreams {
     }).catch(() => {});
   }
   private preview(state: StreamState) {
-    const thought = state.route.output?.showThoughts && state.thoughts
+    // 只有空白的思考增量同样不算可见思考，不进入完成态标题。
+    const thought = state.route.output?.showThoughts && state.thoughts.trim()
       ? state.thinkingDuration !== undefined || state.bodyLength > 0
         ? `**${thinkingComplete(state.thinkingDuration)}**\n\n`
         : `**思考内容**\n${clipBotText(state.thoughts, 650)}\n\n` : '';

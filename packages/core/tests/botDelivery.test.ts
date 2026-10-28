@@ -3,7 +3,7 @@ import type { BotGateway, BotReply } from '../../../apps/server/src/bots/gateway
 import { BotOutbox } from '../../../apps/server/src/bots/outbox';
 import { BotStreams, botFinalReplies } from '../../../apps/server/src/bots/streaming';
 import { botStatsFooter, botTotalStats } from '../../../apps/server/src/bots/messageStats';
-import { botRoundText, botRunMessages, botRunReply } from '../../../apps/server/src/bots/rounds';
+import { botPlainRoundText, botRoundText, botRunMessages, botRunReply } from '../../../apps/server/src/bots/rounds';
 import { BotSessions, type BotRoute } from '../../../apps/server/src/bots/sessions';
 import { botProfile, discordProfile } from '../../../apps/server/src/bots/config';
 import { inlineBotArguments, splitBotText } from '../../../apps/server/src/bots/text';
@@ -228,6 +228,10 @@ describe('Bot 回复合并与发送恢复', () => {
     expect(Buffer.from(file.files![0].data).toString().endsWith(footer)).toBe(true);
     const missing = { role: 'model', parts: [{ thought: true, text: '思考' }, { text: '回答' }] };
     expect(botRoundText(missing, finalRoute, 1)).toMatch(/^\*\*思考完成\*\*\n\n回答\n\n-# 第 1 轮 · TTFT — · 耗时 — · TPS —/);
+    // 无摘要推理只留下空的 thought 段，没有可见思考文本也没有耗时不显示思考标题。
+    const silent = { role: 'model', parts: [{ thought: true }, { thought: true, text: '   ' }, { functionCall: { name: 'read_file', args: { path: 'README.md' } } }] };
+    expect(botRoundText(silent, finalRoute, 1)).toMatch(/^-# 第 1 轮 · 调用「read_file」 `\{"path":"README.md"\}` · TTFT —/);
+    expect(botPlainRoundText(silent, finalRoute)).toBe('调用工具：「read_file」');
     expect(botStatsFooter(missing)).toBe('-# TTFT — · 耗时 — · TPS —');
     expect(botRoundText(message, { ...finalRoute, output: { ...finalRoute.output!, showThoughts: false } }, 1)).toMatch(/^最终正文\n\n-# 第 1 轮/);
   });

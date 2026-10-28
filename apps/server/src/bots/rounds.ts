@@ -18,10 +18,16 @@ export async function botRunMessages(app: PlatformApplication, run: RunRecord): 
   return rounds;
 }
 
+/** 供应商会给无摘要推理返回只有 thought 标记的空段（签名、摘要占位），这些不算可见思考。 */
+function visibleThoughts(parts: PlatformMessage['parts']): string {
+  return parts.filter(part => part.thought && typeof part.text === 'string').map(part => String(part.text)).join('');
+}
+
 export function botRoundText(message: PlatformMessage, route: BotRoute, iteration: number): string {
   const parts = Array.isArray(message.characterDisplayParts) ? message.characterDisplayParts as PlatformMessage['parts'] : message.parts;
   const body = parts.filter(part => !part.thought && typeof part.text === 'string').map(part => part.text).join('');
-  const considered = route.output?.showThoughts && (parts.some(part => part.thought) || milliseconds(message.thinkingDuration) !== undefined);
+  const duration = milliseconds(message.thinkingDuration);
+  const considered = route.output?.showThoughts && (!!visibleThoughts(parts).trim() || (duration !== undefined && duration > 0));
   const tools = route.output?.showToolStatus ? message.parts.flatMap(part => {
     const call = part.functionCall as { name?: string; args?: unknown } | undefined;
     return typeof call?.name === 'string' ? [{ name: call.name, args: call.args }] : [];
@@ -42,8 +48,8 @@ export function botPlainRoundText(message: PlatformMessage, route: BotRoute): st
   const parts = Array.isArray(message.characterDisplayParts) ? message.characterDisplayParts as PlatformMessage['parts'] : message.parts;
   const blocks: string[] = [];
   // QQ 是非流式渠道，直接发送完整的思维链正文，而不是等待耗时。
-  const thoughts = route.output?.showThoughts ? parts.filter(part => part.thought && typeof part.text === 'string').map(part => part.text).join('') : '';
-  if (thoughts) blocks.push(thoughts);
+  const thoughts = route.output?.showThoughts ? visibleThoughts(parts) : '';
+  if (thoughts.trim()) blocks.push(thoughts);
   let body = '';
   const flush = () => { if (body) { blocks.push(body); body = ''; } };
   for (const part of parts) {
