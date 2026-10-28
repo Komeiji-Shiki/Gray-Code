@@ -26,10 +26,12 @@ export class MemoryBackground {
     const app=this.service.app;
     while(this.scopes.size&&!this.closed){
       const [id,scope]=this.scopes.entries().next().value!;this.scopes.delete(id);
-      const jobs=(await app.storage.longMemoryJobs({scopes:[scope],status:'pending'})).filter(job=>job.kind!=='extract');
+      const jobs=await app.storage.longMemoryJobs({scopes:[scope],status:'pending'});
       if(!jobs.length)continue;
       const next=jobs.sort((a,b)=>a.createdAt-b.createdAt||a.id.localeCompare(b.id))[0];
-      await this.execute(scope,next);
+      // 自动抽取已经移除，旧版本留下或被重试的抽取任务直接取消，不在队列里长期挂起。
+      if(next.kind==='extract')await app.storage.longMemoryJobTransition({scope,id:next.id,action:'cancel'});
+      else await this.execute(scope,next);
       this.scopes.set(id,scope);
     }
   }

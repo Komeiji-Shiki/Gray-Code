@@ -31,4 +31,16 @@ describe('记忆后台任务与真实嵌入 HTTP 接口',()=>{
     const actual=await app.longMemory.search(access,{text:'语义测试',asOf:Date.now()+2*86400000});expect(actual.method).toBe('hybrid');expect(actual.hits[0].record.id).toBe(record.id);expect(requests.at(-1)?.input).toEqual(['Q:语义测试']);
     const cached=await app.longMemory.query(access,{text:'语义测试'},undefined,true);expect(cached.vector).toBeDefined();expect(requests).toHaveLength(before+1);
   });
+  test('旧版本留下的待处理抽取任务被取消，不调用模型', async () => {
+    await configure();
+    const now = Date.now();
+    await app.storage.longMemoryWrite({ scope, sources: [{ id: 'legacy-source', expectedVersion: 0, origin: 'user', text: '我喜欢薄荷茶。',
+      recordedAt: now, reference: { conversationId: 'memory-background' } }] });
+    await app.storage.longMemoryEnqueue({ scope, job: { id: 'legacy-extract', scopeId: scope.id, actorId: 'owner', conversationId: 'memory-background',
+      kind: 'extract', status: 'pending', dependencies: [{ kind: 'source', id: 'legacy-source', version: 1 }], providerId, model: 'fixture', createdAt: now, updatedAt: now, attempts: 0 } });
+    app.longMemory.background.kick(scope);
+    await app.longMemory.background.wait();
+    expect((await app.storage.longMemoryJobs({ scopes: [scope] })).find(job => job.id === 'legacy-extract')?.status).toBe('cancelled');
+    expect(calls).toHaveLength(0);
+  });
 });
