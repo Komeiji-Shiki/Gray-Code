@@ -13,7 +13,8 @@ export function discordAdmitted(config: DiscordSettings, source: Pick<BotInbound
   return source.direct ? actor.role === 'owner' && config.directMessages?.enabled !== false : config.allowedChannelIds.includes(source.channelId);
 }
 export function discordTriggered(config: DiscordSettings | OneBotSettings, source: BotInbound, text: string): boolean {
-  if (source.direct || /^\/gray(?:\s|$)/i.test(text)) return true;
+  // 指令始终放行；QQ 里没有斜杠命令补全，主人仍需能直接输入 /summarize。
+  if (source.direct || /^\/(?:gray(?:\s|$)|summarize$)/i.test(text.trim())) return true;
   switch (discordTrigger(config, source.channelId)) {
     case 'mention': return source.mentioned;
     case 'reply': return source.repliedToBot === true;

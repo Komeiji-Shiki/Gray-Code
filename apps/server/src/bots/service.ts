@@ -42,6 +42,7 @@ export class BoundBotService {
     this.sessions = new BotSessions(app);
     this.sessions.inbox.observe = (context, stage, reason, conversationId, runId) => this.diagnostics.update(context.id, stage, reason, conversationId, runId);
     this.summaries = new BotSummaries(app, platform, this.sessions);
+    this.sessions.summarizer = context => this.summaries.manual(context);
     this.outbox = new BotOutbox(app, platform, () => this.gateway && this.current.status === 'connected' && this.current.botId
       ? { gateway: this.gateway, botId: this.current.botId } : undefined, route => this.admitted(route));
     this.streams = new BotStreams(app, platform, this.sessions, this.outbox);
@@ -211,7 +212,7 @@ export class BoundBotService {
       await this.receiveOne(context, message, text, receivedAt);
     };
     // 控制指令仍走会话事务和实时授权，但不等待前一条消息的网络附件读取。
-    const priority = ['status', 'cancel', 'answer', 'approval', 'interrupt', 'help', 'source', 'workspaces'].includes(parseBotAction(text).kind);
+    const priority = ['status', 'cancel', 'answer', 'approval', 'interrupt', 'help', 'source', 'workspaces', 'summarize'].includes(parseBotAction(text).kind);
     const work = (priority ? process() : (this.inbound.get(key) ?? Promise.resolve()).catch(() => {}).then(process))
       .catch(error => { this.current.error = (error as Error).message; this.diagnostics.update(message.id, 'failed', this.current.error); });
     this.receiving.set(message.id, work);

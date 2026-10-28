@@ -1,8 +1,9 @@
 import type { PlatformApplication } from '../application';
 import { DEFAULT_BOT_AUTO_SUMMARY } from '../../../../shared/botConversation';
 import { botInboxStateNamespace, type BotInboxState } from './inbox';
-import type { BotPlatform, BotSessions } from './sessions';
+import type { BotContext, BotPlatform, BotSessions } from './sessions';
 import type { BotAutoSummarySettings } from '@graycode/contracts';
+import { publicBotError } from './errorSummary';
 
 function summarySignature(settings: BotAutoSummarySettings, providerId?: string | null, model?: string | null) {
   const normalized = { ...settings, method: settings.method ?? 'time' };
@@ -14,7 +15,7 @@ function matchesSummarySignature(saved: string | undefined, expected: string) {
   catch { return false; }
 }
 
-/** 定时只检查已保存状态；未开启、没有新消息或任务未完成时，不发起模型请求。 */
+/** 手动总结与定时总结共用认领和状态回写；区别只在手动请求不看定时开关、间隔与设置签名。 */
 export class BotSummaries {
   private timer?: ReturnType<typeof setInterval>;
   private running?: Promise<void>;
@@ -69,32 +70,63 @@ export class BotSummaries {
     const baseline = settings.trigger === 'idle' ? value.lastActivityAt : value.summaryAttemptAt ?? conversation.createdAt;
     if (now - baseline < delay || (await this.app.storage.listRuns({ conversationId: id, activeOnly: true })).length) return;
     if ((await this.app.storage.listRecords('bot-inbox-pending', id)).length) { await this.sessions.inbox.flush(id, value.context); return; }
-    const claimed = await this.sessions.serial(value.context, async () => {
+    const outcome = await this.run(value.context, id, now, { settings, providerId, model, signature, delay, expectedSequence: value.sequence, expectedAttemptAt: value.summaryAttemptAt });
+    if (outcome && this.enabled) await this.sessions.inbox.flush(id, value.context);
+  }
+  /** 手动总结不看定时开关与间隔；任务运行中或已有总结进行时，返回可以直接展示给用户的固定文案。 */
+  async manual(context: BotContext, now = Date.now()): Promise<string> {
+    const loaded = await this.sessions.load(context, true);
+    const id = loaded.value.conversationId;
+    if (!id) throw new Error('这个频道还没有对话，先用 /gray 发一条消息再总结。');
+    if (this.app.context.isSummarizing(id) || this.conversationId === id) throw new Error('当前对话已经在总结，请等这一次完成。');
+    if ((await this.app.storage.listRuns({ conversationId: id, activeOnly: true })).length) throw new Error('请等待当前任务完成后再总结。');
+    // 排队中的消息还没写进历史，先交给收件箱按原顺序补齐，避免总结看不到最新发言。
+    if ((await this.app.storage.listRecords('bot-inbox-pending', id)).length) return '还有排队中的消息，请等它们进入对话后再总结。';
+    const settings = loaded.profile.autoSummary ?? DEFAULT_BOT_AUTO_SUMMARY;
+    const agent = this.app.settings.find('agents', loaded.profile.agentId);
+    const providerId = loaded.profile.providerId ?? agent?.providerId;
+    // 指令本身已经在频道事务里执行，这里再排队会等自己，所以直接复用外层事务。
+    const outcome = await this.run(context, id, now, { settings, providerId, model: loaded.profile.modelId ?? agent?.modelId, exclusive: false });
+    if (!outcome) throw new Error('这个频道还没有可总结的对话内容，先发一条消息再总结。');
+    if (outcome.error) throw new Error(publicBotError(outcome.error) ?? `总结没有完成：${outcome.error}`);
+    return `已总结 ${outcome.summarizedMessageCount ?? 0} 条历史，原文仍保留在对话里，可以随时恢复。`;
+  }
+  /** 认领发生在频道事务里；模型调用耗时较长，必须放在事务之外，结束后再按最新版本回写状态。 */
+  private async run(context: BotContext, id: string, now: number, input: { settings: BotAutoSummarySettings; providerId?: string;
+    model?: string; signature?: string; delay?: number; expectedSequence?: number; expectedAttemptAt?: number; exclusive?: boolean }) {
+    const delay = input.delay ?? input.settings.minutes * 60000;
+    const locked = <T>(operation: () => Promise<T>) => input.exclusive === false ? operation() : this.sessions.serial(context, operation);
+    const claimed = await locked(async () => {
       const latest = await this.app.storage.getVersionedRecord(botInboxStateNamespace, id);
       const current = latest.value as BotInboxState | null;
-      if (!current || current.sequence !== value.sequence || current.summaryAttemptAt !== value.summaryAttemptAt) return false;
-      // 尝试和完成分别记录；意外退出或临时失败后，同一批历史仍可按原间隔重试。
+      if (!current) return undefined;
+      // 定时路径比较发现时的版本；手动路径只要求没有别的总结正在写状态。
+      if (input.expectedSequence !== undefined && (current.sequence !== input.expectedSequence || current.summaryAttemptAt !== input.expectedAttemptAt)) return undefined;
       await this.app.storage.commitRecords([{ namespace: botInboxStateNamespace, id, expectedRevision: latest.revision,
-        value: { ...current, summaryAttemptAt: now, summarySequence: undefined, summarySignature: signature, summaryRetryAt: now + delay } }]);
-      return true;
+        value: { ...current, summaryAttemptAt: now, summarySequence: undefined, ...(input.signature ? { summarySignature: input.signature } : {}),
+          summaryRetryAt: now + delay } }]);
+      return current.sequence;
     });
-    if (!claimed || !this.enabled) return;
+    if (claimed === undefined) return undefined;
     this.conversationId = id;
-    let error: string | undefined;
+    let error: string | undefined; let summarizedMessageCount: number | undefined;
     try {
-      if (!providerId) throw new Error('Bot 没有可用的总结模型渠道。');
-      const result = await this.app.context.summarizeManually(this.sessions.owner().id, id, providerId, model, settings);
-      if (!result.success) error = result.error?.message || '上下文总结未完成。';
+      if (!input.providerId) throw new Error('Bot 没有可用的总结模型渠道。');
+      const result = await this.app.context.summarizeManually(this.sessions.owner().id, id, input.providerId, input.model, input.settings);
+      if ('summarizedMessageCount' in result) summarizedMessageCount = result.summarizedMessageCount;
+      else error = result.error?.message || '上下文总结未完成。';
     } catch (cause) { error = (cause as Error).message; }
     finally { this.conversationId = undefined; }
-    await this.sessions.serial(value.context, async () => {
+    await locked(async () => {
       const latest = await this.app.storage.getVersionedRecord(botInboxStateNamespace, id);
-      if (latest.value) await this.app.storage.commitRecords([{ namespace: botInboxStateNamespace, id, expectedRevision: latest.revision,
-        value: { ...latest.value as BotInboxState, summaryError: error, summarySignature: signature,
-          summarySequence: error ? undefined : value.sequence, summaryRetryAt: error ? now + delay : undefined } }]);
+      if (!latest.value) return;
+      await this.app.storage.commitRecords([{ namespace: botInboxStateNamespace, id, expectedRevision: latest.revision,
+        value: { ...latest.value as BotInboxState, summaryError: error, ...(input.signature ? { summarySignature: input.signature } : {}),
+          summarySequence: error ? undefined : claimed, summaryRetryAt: error ? now + delay : undefined } }]);
     });
-    this.app.publish({ type: 'bot.summary.finished', platform: this.platform, conversationId: id, ...(error ? { error, retryAt: now + delay } : {}) });
-    if (this.enabled) await this.sessions.inbox.flush(id, value.context);
+    const retryAt = now + delay;
+    this.app.publish({ type: 'bot.summary.finished', platform: this.platform, conversationId: id, ...(error ? { error, retryAt } : {}) });
+    return { error, summarizedMessageCount };
   }
   async stop() {
     this.enabled = false; if (this.timer) clearInterval(this.timer); this.timer = undefined;
