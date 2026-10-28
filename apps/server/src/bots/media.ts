@@ -142,12 +142,13 @@ export async function botInboundParts(message: BotInbound, platform: 'discord' |
   };
   const references = async (values: BotReference[], depth: number): Promise<void> => {
     for (const ref of values.slice(0, 40)) {
-      // 被引用消息只需要知道是谁说的；发送时间对理解引用没有帮助。
-      parts.push({ text: formatBotSourceHeader(`${ref.kind === 'forward' ? '转发' : '引用'}消息`, { displayName: ref.authorName }).slice(0, -1) + '，以下是原来源内容]' });
+      // 被引用消息只需要知道是谁说的；发送时间和“以下是原文”之类的说明对理解引用没有帮助，起止括号配对即可。
+      const label = ref.kind === 'forward' ? '转发' : '引用';
+      parts.push({ text: formatBotSourceHeader(label, { displayName: ref.authorName }) });
       if (ref.unavailable) parts.push({ text: `[未读取：${ref.unavailable}]` });
       else if (depth <= 4) await content(ref, depth + 1);
       else parts.push({ text: '[嵌套引用超过 4 层，后续未读取]' });
-      parts.push({ text: '[原来源内容结束]' });
+      parts.push({ text: `[${label}结束]` });
     }
     if (values.length > 40) parts.push({ text: '[转发条目超过 40 条，后续未读取]' });
   };
