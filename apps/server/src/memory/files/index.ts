@@ -1,6 +1,6 @@
 import path from 'node:path';
 import { createHash } from 'node:crypto';
-import { mkdir } from 'node:fs/promises';
+import { mkdir, readdir } from 'node:fs/promises';
 import type { WorkspaceDefinition } from '@graycode/contracts';
 import type { ToolContext } from '@graycode/core';
 import type { PlatformApplication } from '../../application';
@@ -38,6 +38,21 @@ export async function memoryRoots(
     roots.push({ label: 'project', directory: path.join(base, 'projects', name) });
   }
   return roots;
+}
+
+/** 数据目录中已有的记忆范围目录（相对路径，使用 /），备份按范围整体保留或替换。 */
+export async function memoryScopeDirectories(storageDirectory: string): Promise<string[]> {
+  const base = path.join(storageDirectory, 'memory');
+  const entries = async (relative: string) => (await readdir(path.join(base, relative), { withFileTypes: true }).catch(error => {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return [];
+    throw error;
+  })).filter(entry => entry.isDirectory()).map(entry => entry.name);
+  const top = await entries('');
+  const names = top.includes('global') ? ['memory/global'] : [];
+  for (const group of ['projects', 'bots', 'characters']) {
+    if (top.includes(group)) names.push(...(await entries(group)).map(name => `memory/${group}/${name}`));
+  }
+  return names;
 }
 
 export async function prepareMemoryWorkspace(app: PlatformApplication, context: ToolContext, name: string, args: Record<string, unknown>): Promise<void> {

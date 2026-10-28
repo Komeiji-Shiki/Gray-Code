@@ -10,7 +10,8 @@ const ready = computed(() => !!props.pending.selection || !props.pending.require
 const restored = computed(() => props.pending.selection?.items?.filter(item => item.action === 'restore') ?? [])
 const kept = computed(() => props.pending.selection?.items?.filter(item => item.action === 'keep') ?? [])
 const categoryName = (id: BackupCategoryId) => props.pending.preview?.categories.find(category => category.id === id)?.name ?? id
-const directoryName = (name: string) => ({ skills: '本地技能文件', 'user-skills': '用户技能文件', 'skill-resources': '导入技能资源' })[name] ?? name
+const directoryName = (name: string) => name.startsWith('memory/') ? `记忆文件（${name.slice('memory/'.length)}）`
+  : ({ skills: '本地技能文件', 'user-skills': '用户技能文件', 'skill-resources': '导入技能资源' })[name] ?? name
 watch(() => props.pending.id, () => {
   mode.value = props.pending.selection?.mode ?? ''
   selectedCategories.value = props.pending.selection?.categories?.map(category => category.id) ?? []
@@ -47,7 +48,7 @@ function prepare() {
       <button :disabled="busy || !mode || mode === 'selective' && (!selectedCategories.length || !conflictPolicy)" @click="prepare">准备恢复并查看最终预览</button>
     </template>
     <template v-else-if="ready">
-      <p v-if="pending.selection?.mode === 'selective'">本次恢复 {{ restored.length }} 个对象，保留 {{ kept.length }} 个已有对象，并处理 {{ pending.selection.directories.length }} 个技能目录。未选择的数据在实际恢复时从当前库保留。</p>
+      <p v-if="pending.selection?.mode === 'selective'">本次恢复 {{ restored.length }} 个对象，保留 {{ kept.length }} 个已有对象，并处理 {{ pending.selection.directories.length }} 个文件目录。未选择的数据在实际恢复时从当前库保留。</p>
       <p v-else>本次使用备份中的完整程序数据。</p>
       <ul v-if="restored.length" class="restore-items"><li v-for="(item, index) in restored" :key="index">{{ categoryName(item.category) }}：{{ item.name }}<span v-if="item.dependency">（所需依赖）</span></li></ul>
       <p v-for="directory in pending.selection?.directories" :key="directory.name">{{ directoryName(directory.name) }}：{{ directory.conflict === 'keep' ? '已有目录保持不变' : '使用备份目录替换' }}</p>

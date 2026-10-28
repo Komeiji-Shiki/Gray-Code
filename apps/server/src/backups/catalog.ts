@@ -4,11 +4,12 @@ import { createReadStream, promises as fs } from 'node:fs';
 import type { PlatformStorage } from '@graycode/core';
 import type { BackupCategoryId, BackupMergeGroup, BackupRestorePreview, BackupRestoreSelection, BackupRestoreSelectionPlan, BackupUnit } from '@graycode/contracts';
 import { MEMORY_IMPORT_NAMESPACE, MEMORY_IMPORT_FILE_NAMESPACE, MEMORY_IMPORT_POLICY_NAMESPACE, type MemoryImportDataset } from '@graycode/contracts';
+import { memoryScopeDirectories } from '../memory/files';
 
 export const backupCategories: Array<{ id: BackupCategoryId; name: string; description: string }> = [
   { id: 'conversations', name: '对话与任务', description: '完整会话、附件、分支、检查点、角色配置和关联自动任务。相同会话作为一个整体处理。' },
   { id: 'settings', name: '设置与连接凭据', description: '账号权限、工作区配置、模型渠道、预设和连接凭据。项目源码不在恢复范围内。' },
-  { id: 'memories', name: '长期记忆', description: '按账号和范围恢复事实、来源、修订、摘要与检索数据，保留当前删除记录。' },
+  { id: 'memories', name: '长期记忆', description: '按账号和范围恢复事实、来源、修订、摘要与检索数据，保留当前删除记录。记忆文件按范围目录整体处理。' },
   { id: 'devices', name: '执行设备', description: '设备身份和配对作为一个整体恢复。替换会移除当前配对配置；恢复后需手动启用，已撤销设备继续保持撤销。' },
   { id: 'pets', name: '桌宠与 Live2D', description: '模型、图集、动作、悬浮设置，以及备份中已有的本地 Core。资源按模型整体处理。' },
   { id: 'screen', name: '屏幕感知设置', description: '单独恢复采集配置与发送记录。恢复后不会自动采集，原窗口可能需要重新选择。' },
@@ -16,6 +17,11 @@ export const backupCategories: Array<{ id: BackupCategoryId; name: string; descr
   { id: 'other', name: '其他程序记录', description: '使用情况、电脑操作记录与其他资源，按记录所属类别保留。' },
 ];
 export const skillDirectories = ['skills', 'user-skills', 'skill-resources'];
+/** 选择性恢复按目录整体保留或替换：技能目录固定，记忆文件按范围目录列出。 */
+export async function restorableDirectories(directory: string): Promise<Array<{ name: string; category: BackupCategoryId }>> {
+  return [...skillDirectories.map(name => ({ name, category: 'skills' as const })),
+    ...(await memoryScopeDirectories(directory)).map(name => ({ name, category: 'memories' as const }))];
+}
 const digest = (value: unknown) => createHash('sha256').update(JSON.stringify(value)).digest('hex');
 const nodeUnit = (unit: BackupUnit) => unit.kind === 'record' && (unit.namespace === 'execution-node' || unit.namespace!.startsWith('node-'));
 export const deviceFingerprint = (units: BackupUnit[]) => digest(units.filter(nodeUnit).map(unit => [unit.key, unit.fingerprint]));
@@ -25,7 +31,7 @@ export async function directoryFingerprint(directory: string): Promise<string | 
   const files: Array<[string, string]> = [];
   const visit = async (relative: string) => {
     for (const entry of (await fs.readdir(path.join(directory, relative), { withFileTypes: true })).sort((a, b) => a.name.localeCompare(b.name))) {
-      if (entry.isSymbolicLink()) throw new Error('技能备份不跟随符号链接。');
+      if (entry.isSymbolicLink()) throw new Error('目录备份不跟随符号链接。');
       const file = path.join(relative, entry.name);
       if (entry.isDirectory()) { files.push([file.replaceAll('\\', '/') + '/', 'directory']); await visit(file); }
       else { const hash = createHash('sha256'); for await (const chunk of createReadStream(path.join(directory, file))) hash.update(chunk); files.push([file.replaceAll('\\', '/'), hash.digest('hex')]); }
@@ -34,7 +40,10 @@ export async function directoryFingerprint(directory: string): Promise<string | 
   await visit(''); return digest(files);
 }
 interface Item { id: string; name: string; category: BackupCategoryId; units: BackupUnit[]; requires: string[] }
-export interface RestoreCatalog { preview: BackupRestorePreview; items: Item[]; current: BackupUnit[]; directories: Array<{ name: string; source: string; expected: string | null }> }
+export interface RestoreCatalog {
+  preview: BackupRestorePreview; items: Item[]; current: BackupUnit[];
+  directories: Array<{ name: string; category: BackupCategoryId; source: string; expected: string | null }>;
+}
 
 export async function restoreCatalog(source: PlatformStorage, current: PlatformStorage, migrations: string[] = [], unavailableCredentials: string[] = []): Promise<RestoreCatalog> {
   const [units, currentUnits] = await Promise.all([source.backupInventory(), current.backupInventory()]);
@@ -94,16 +103,17 @@ export async function restoreCatalog(source: PlatformStorage, current: PlatformS
     }
     item.requires = [...dependencies];
   }
-  const directories = (await Promise.all(skillDirectories.map(async name => {
+  const directories = (await Promise.all((await restorableDirectories(source.directory)).map(async ({ name, category }) => {
     const [sourceHash, expected] = await Promise.all([directoryFingerprint(path.join(source.directory, name)), directoryFingerprint(path.join(current.directory, name))]);
-    return sourceHash ? { name, source: sourceHash, expected } : null;
+    return sourceHash ? { name, category, source: sourceHash, expected } : null;
   }))).filter((item): item is NonNullable<typeof item> => !!item);
   const categories = backupCategories.map(category => {
     const own = items.filter(item => item.category === category.id);
     const conflicts = own.filter(item => item.units.some(unit => currentByKey.has(unit.key)));
     const dependencies = new Map<BackupCategoryId, string>();
     for (const item of own) for (const id of item.requires) { const required = itemsById.get(id); if (required && required.category !== category.id) dependencies.set(required.category, `包含所依赖的${backupCategories.find(value => value.id === required.category)!.name}对象，准备恢复时会列出实际范围。`); }
-    return { ...category, count: own.length + (category.id === 'skills' ? directories.length : 0), conflicts: conflicts.length + (category.id === 'skills' ? directories.filter(item => item.expected).length : 0),
+    const ownDirectories = directories.filter(item => item.category === category.id);
+    return { ...category, count: own.length + ownDirectories.length, conflicts: conflicts.length + ownDirectories.filter(item => item.expected).length,
       dependencies: [...dependencies].map(([id, reason]) => ({ id, reason })), examples: own.slice(0, 20).map(item => ({ name: item.name, conflict: conflicts.includes(item) })) };
   });
   return { items, current: currentUnits, directories, preview: { fingerprint: digest({ source: units.map(unit => [unit.key, unit.fingerprint]), directories: directories.map(item => [item.name, item.source]) }), createdAt: Date.now(), categories, migrations, unavailableCredentials } };
@@ -139,8 +149,10 @@ export function selectBackupRestore(catalog: RestoreCatalog, selection: BackupRe
     return { id, conflict, units: item.units, remove, source: Object.fromEntries(item.units.map(unit => [unit.key, unit.fingerprint])),
       expected: Object.fromEntries([...item.units, ...remove].map(unit => [unit.key, currentByKey.get(unit.key)?.fingerprint ?? null])) };
   });
-  const skills = selection.categories.find(category => category.id === 'skills');
-  return { ...selection, groups, directories: skills ? catalog.directories.map(directory => ({ ...directory, conflict: skills.conflict })) : [],
+  const conflicts = new Map(selection.categories.map(category => [category.id, category.conflict]));
+  const directories = catalog.directories.filter(directory => conflicts.has(directory.category))
+    .map(({ category, ...directory }) => ({ ...directory, conflict: conflicts.get(category)! }));
+  return { ...selection, groups, directories,
     items: [...selected].map(([id, conflict]) => { const item = itemsById.get(id)!; return { name: item.name, category: item.category,
       action: conflict === 'keep' && item.units.some(unit => currentByKey.has(unit.key)) ? 'keep' as const : 'restore' as const,
       dependency: !selection.categories!.some(category => category.id === item.category) }; }),

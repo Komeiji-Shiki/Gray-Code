@@ -158,6 +158,36 @@ describe('application data backup and restore', () => {
     } finally { await target.close(); }
   });
 
+  test('选择性恢复带上当前记忆文件，并按范围目录保留或恢复备份中的记忆', async () => {
+    const write = async (directory: string, relative: string, text: string) => {
+      const file = path.join(directory, 'memory', relative);
+      await fs.mkdir(path.dirname(file), { recursive: true });
+      await fs.writeFile(file, text);
+    };
+    const read = (directory: string, relative: string) => fs.readFile(path.join(directory, 'memory', relative), 'utf8');
+    await write(f.store.directory, 'global/MEMORY.md', '备份全局');
+    await write(f.store.directory, 'projects/demo-0123456789ab/MEMORY.md', '备份项目');
+    const backup = new ApplicationBackups(f.store, { appVersion: '2.0.0-pre', secretCodec: codec('same'), notify() {} });
+    const file = path.join(f.root, 'memory.graycode-backup');
+    await backup.export(file);
+    const targetPath = path.join(f.root, 'target');
+    const target = await PlatformStorage.open(targetPath);
+    await write(targetPath, 'global/MEMORY.md', '当前全局');
+    await write(targetPath, 'bots/discord-channel/MEMORY.md', '当前频道');
+    const importer = new ApplicationBackups(target, { appVersion: '2.0.0-pre', secretCodec: codec('same'), notify() {} });
+    const preview = await importer.prepareRestore(file, undefined, { previewOnly: true });
+    const selected = await importer.selectRestore({ mode: 'selective', categories: [{ id: 'memories', conflict: 'keep' }],
+      expectedPreview: preview.pending.preview!.fingerprint });
+    expect(selected.pending.selection!.directories.map(directory => directory.name).sort())
+      .toEqual(['memory/global', 'memory/projects/demo-0123456789ab']);
+    await importer.confirmRestore(selected.pending);
+    await target.close();
+    await importer.restore.apply();
+    expect(await read(targetPath, 'global/MEMORY.md')).toBe('当前全局');
+    expect(await read(targetPath, 'bots/discord-channel/MEMORY.md')).toBe('当前频道');
+    expect(await read(targetPath, 'projects/demo-0123456789ab/MEMORY.md')).toBe('备份项目');
+  });
+
   test('最终预览后修改所选对象时不切换数据，保留原库并返回重新选择', async () => {
     await f.store.createConversation(metadata('alpha')); await f.store.appendHistory('alpha', [message(0, '备份版本')]);
     const backups = new ApplicationBackups(f.store, { appVersion: '2.0.0-pre', secretCodec: codec('same'), notify() {} });

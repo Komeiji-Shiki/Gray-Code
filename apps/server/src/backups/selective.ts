@@ -4,7 +4,7 @@ import { promises as fs } from 'node:fs';
 import { PlatformStorage } from '@graycode/core';
 import type { BackupRestoreSelectionPlan } from '@graycode/contracts';
 import { captureDirectory } from '../migration/directoryCapture';
-import { deviceFingerprint, directoryFingerprint, skillDirectories } from './catalog';
+import { deviceFingerprint, directoryFingerprint, restorableDirectories, skillDirectories } from './catalog';
 import { preferRestoredSettings, validateBackupResources } from './resources';
 
 const exists = async (directory: string) => fs.lstat(directory).then(() => true, error => { if (error.code === 'ENOENT') return false; throw error; });
@@ -14,13 +14,15 @@ export async function buildSelectiveRestore(currentDirectory: string, importedDi
   const signal = new AbortController().signal;
   try {
     if (selection.expectedDevices && deviceFingerprint(await current.backupInventory()) !== selection.expectedDevices) throw new Error('设备配置在最终预览后发生了变化，请重新预览。');
+    const restorable = new Set((await restorableDirectories(importedDirectory)).map(directory => directory.name));
     for (const directory of selection.directories) {
-      if (!skillDirectories.includes(directory.name)) throw new Error('技能恢复目录无效。');
-      if (await directoryFingerprint(path.join(importedDirectory, directory.name)) !== directory.source) throw new Error('备份中的技能目录已经变化，请重新校验备份。');
-      if (directory.conflict === 'replace' && await directoryFingerprint(path.join(currentDirectory, directory.name)) !== directory.expected) throw new Error('技能目录在最终预览后发生了变化，请重新预览。');
+      if (!restorable.has(directory.name)) throw new Error('恢复目录无效。');
+      if (await directoryFingerprint(path.join(importedDirectory, directory.name)) !== directory.source) throw new Error('备份中的目录已经变化，请重新校验备份。');
+      if (directory.conflict === 'replace' && await directoryFingerprint(path.join(currentDirectory, directory.name)) !== directory.expected) throw new Error('目录在最终预览后发生了变化，请重新预览。');
     }
     const captured = await current.backupSnapshot(); snapshot = captured.directory;
-    for (const name of ['bot-documents', ...skillDirectories]) if (await exists(path.join(currentDirectory, name)))
+    // 暂存副本会整体替换数据目录；未选择的文件目录必须从当前数据带过去。
+    for (const name of ['bot-documents', 'memory', ...skillDirectories]) if (await exists(path.join(currentDirectory, name)))
       await captureDirectory(path.join(currentDirectory, name), path.join(snapshot, name), signal);
   } catch (error) {
     if (snapshot) await fs.rm(snapshot, { recursive: true, force: true }); throw error;
