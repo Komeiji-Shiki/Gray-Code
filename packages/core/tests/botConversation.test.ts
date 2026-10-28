@@ -333,7 +333,10 @@ describe('Bot 频道上下文、附件与定时总结', () => {
         attachments: new Map([['md', { name: 'notes.md', url: 'https://cdn.discordapp.com/notes' }]]),
         embeds: [{ title: '原始图片', fields: [], image: { url: 'https://example.invalid/cat.png', proxyURL: 'https://media.discordapp.net/embedded-cat' } }] }]]) };
     (discord as any).client = { isReady: () => true, channels: { fetch: async (channelId: string) => ({ isTextBased: () => true,
-      messages: { fetch: async (id: string) => { requests.push(`${channelId}:${id}`); return forwarded; } } }) } };
+      messages: { fetch: async (id: string | object) => {
+        if (typeof id !== 'string') return { firstKey: () => undefined };
+        requests.push(`${channelId}:${id}`); return forwarded;
+      } } }) } };
     const hydrated = await discord.hydrate({ ...inbound('quoted'), references: [{ kind: 'reply', id: 'forwarded', channelId: '41' }] });
     const parts = await botInboundParts(hydrated, 'discord', async item => item.url?.includes('embedded-cat') ? png : Buffer.from('# 文档原文\n保留这条约定'),
       (attachment, bytes) => saveBotDocument(app, 'quoted-test', attachment, bytes));
@@ -352,11 +355,37 @@ describe('Bot 频道上下文、附件与定时总结', () => {
     };
     const discord = new DiscordJsGateway();
     (discord as any).client = { isReady: () => true, channels: { fetch: async () => ({ isTextBased: () => true,
-      messages: { fetch: async (id: string) => { requests.push(id); return messages[id]; } } }) } };
+      messages: { fetch: async (id: string | object) => {
+        if (typeof id !== 'string') return { firstKey: () => undefined };
+        requests.push(id); return messages[id];
+      } } }) } };
     const hydrated = await discord.hydrate({ ...inbound('chain'), references: [{ kind: 'reply', id: 'parent', channelId: '42' }] });
     expect(requests).toEqual(['parent']); expect(hydrated.references?.[0].references).toEqual([]);
     const text = (await botInboundParts(hydrated, 'discord')).map(part => part.text ?? '').join('\n');
     expect(text).toContain('被回复的消息'); expect(text).not.toContain('更早的祖先消息'); expect(text).not.toContain('未读取');
+  });
+
+  test('Discord 回复紧挨着的上一条消息时不再展开引用，回复更早的消息或读取失败时照常展开', async () => {
+    const requests: unknown[] = [];
+    let previous: () => string | undefined = () => 'latest';
+    const messages: Record<string, any> = {
+      latest: { content: '紧挨着的上一条', createdTimestamp: 2, author: { id: '55', displayName: '甲' }, attachments: new Map() },
+      older: { content: '更早的消息', createdTimestamp: 1, author: { id: '56', displayName: '乙' }, attachments: new Map() },
+    };
+    const discord = new DiscordJsGateway();
+    (discord as any).client = { isReady: () => true, channels: { fetch: async () => ({ isTextBased: () => true,
+      messages: { fetch: async (query: string | object) => { requests.push(query); return typeof query === 'string' ? messages[query] : { firstKey: previous }; } } }) } };
+    const reply = (id: string) => ({ ...inbound('now'), references: [{ kind: 'reply' as const, id, channelId: '42' }] });
+    const direct = await discord.hydrate(reply('latest'));
+    expect(direct.references).toEqual([]); expect(requests).toEqual([{ before: 'now', limit: 1 }]);
+    requests.length = 0;
+    const older = await discord.hydrate(reply('older'));
+    expect(older.references?.[0]).toMatchObject({ id: 'older', content: '更早的消息' }); expect(requests).toEqual([{ before: 'now', limit: 1 }, 'older']);
+    previous = () => { throw new Error('读取失败'); };
+    expect((await discord.hydrate(reply('latest'))).references?.[0]).toMatchObject({ id: 'latest', content: '紧挨着的上一条' });
+    // 转发即使恰好是上一条也不是“继续话题”，内容是新带进来的，必须展开。
+    previous = () => 'latest';
+    expect((await discord.hydrate({ ...inbound('now'), references: [{ kind: 'forward', id: 'latest', channelId: '42' }] })).references).toHaveLength(1);
   });
 
   test('大文档仅记录本地描述，工具按字符范围读取并隔离其他会话', async () => {

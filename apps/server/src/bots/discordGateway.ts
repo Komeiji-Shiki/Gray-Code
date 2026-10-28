@@ -119,7 +119,17 @@ export class DiscordJsGateway implements DiscordGateway {
       }
       return result;
     };
-    return { ...message, references: await expand(message.references ?? [], 0) };
+    // 回复的正是频道里紧挨着的上一条时，模型上下文的末尾已经是它，引用只会重复一遍。
+    const previous = message.references?.some(ref => ref.kind === 'reply') ? await this.previousMessageId(message) : undefined;
+    const references = (message.references ?? []).filter(ref => ref.kind !== 'reply' || ref.id !== previous);
+    return { ...message, references: await expand(references, 0) };
+  }
+  /** 读取失败时返回 undefined，引用照常展开。 */
+  private async previousMessageId(message: BotInbound): Promise<string | undefined> {
+    try {
+      const channel = await this.ready().channels.fetch(message.channelId);
+      return channel?.isTextBased() ? (await channel.messages.fetch({ before: message.id, limit: 1 })).firstKey() : undefined;
+    } catch { return undefined; }
   }
   async send(channelId: string, content: string): Promise<void> {
     await this.sendReply(channelId, { content });
