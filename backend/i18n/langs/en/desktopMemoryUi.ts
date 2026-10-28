@@ -1,4 +1,7 @@
 export default {
+    "uiMemoryFilesEnabled": "Enable long-term memory",
+    "uiMemoryFilesOpenDirectory": "Open memory directory",
+    "uiMemoryFilesLocation": "Memory is stored in {path} and read or edited with the file tools.",
     "uiMemoryGraphFact": "Fact",
     "uiMemoryGraphPreference": "Preference",
     "uiMemoryGraphLesson": "Lesson",
@@ -46,20 +49,17 @@ export default {
     "uiMemoryImportsImportedLibrary": "Separate imported library",
     "uiMemoryImportsVerifyBeforeUse": "Verify first, then use in chats",
     "uiMemoryImportsImportedLibraryHelp":
-        "The library keeps all original files. Editable memories and original files are stored separately, and verificati" +
-        "on status can be changed per entry. When enabled, only verified, valid entries are recalled. Group chats and cha" +
-        "racter stories do not use this private library.",
+        "The library keeps all original files. Editable memories and original files are stored separately, and verification status can be changed per entry. Once enabled, the model can search verified, valid entries on demand. Group chats and character stories do not use this private library.",
     "uiMemoryImportsLoadingLibrary": "Loading library…",
     "uiMemoryImportsNoImportedLibrary": "No library has been imported yet. It will appear here after migration with the LifeBook import command.",
     "uiMemoryImportsViewEditMemories": "View and edit memories",
     "uiMemoryImportsOriginalFiles": "Original files",
     "uiMemoryImportsInitialImportEntries": "Entries from the initial import",
     "uiMemoryImportsTotalArchiveSize": "Total archive size",
-    "uiMemoryImportsEnableVerifiedRecall": "Verified; allow automatic recall in private chats",
+    "uiMemoryImportsEnableVerifiedRecall": "Verified; allow the model to search in private chats",
     "uiMemoryImportsEnabledLibraryHelp":
-        "The library is enabled. Unverified and disputed entries are still excluded from automatic recall. The global mem" +
-        "ory switch and per-turn budget still apply.",
-    "uiMemoryImportsDisabledLibraryHelp": "Currently available for browsing and editing only. The model does not read this library automatically.",
+        "The library is enabled. The model can use the memory search tools to find verified, valid entries on demand. The global memory switch still applies.",
+    "uiMemoryImportsDisabledLibraryHelp": "Currently available for browsing and editing only. The model cannot search this library.",
     "uiMemoryImportsMigrationGraphSummary": "Migration notes and graph counts",
     "uiMemoryImportsGraphLabel": "Graph: ",
     "uiMemoryImportsEntityCountSuffix": "entities, ",
@@ -100,7 +100,6 @@ export default {
     "uiMemoryLibraryConnectedDimensionsPrefix": "Connected. Actual dimensions: ",
     "uiMemoryLibraryRebuildScheduledPrefix": "Index rebuilds scheduled for ",
     "uiMemoryLibraryRebuildScheduledSuffix": " memory versions.",
-    "uiMemoryLibraryRecentTurnsQueued": "User statements and tool results from recent turns have been queued for organization.",
     "uiMemoryLibrarySavingPleaseWait": "Saving. Please wait.",
     "uiMemoryLibraryLongTermMemory": "Long-term memory",
     "uiMemoryLibraryRange": "Range",
@@ -108,7 +107,7 @@ export default {
     "uiMemoryLibraryMemoryManagement": "Memory management",
     "uiMemoryLibraryBrowseAndEdit": "Browse and edit",
     "uiMemoryLibraryImportedLibrary": "Imported library",
-    "uiMemoryLibraryOrganizationSettings": "Organization settings",
+    "uiMemoryLibraryOrganizationSettings": "Summaries and search",
     "uiMemoryLibraryBackgroundTasks": "Background tasks",
     "uiMemoryLibraryUnsavedChangesHelp": "There are unsaved changes. Keep your current edits, or discard them and continue.",
     "uiMemoryLibraryKeepCurrentEdits": "Keep current edits",
@@ -222,46 +221,16 @@ export default {
     "uiMemoryLibraryViewRevision": "View this revision",
     "uiMemoryLibraryRelatedMemoriesPrefix": "Related memories (",
     "uiMemoryLibraryViewRelatedPrefix": "View related ·",
-    "uiMemoryLibraryMemoryOrganizationSettings": "Memory organization settings",
-    "uiMemoryLibraryDefaultBudgetSuggestion": "Start with 5 entries and 1200 tokens",
-    "uiMemoryLibraryMemoryBudgetHelp":
-        "Both the entry limit and budget apply. Memories stop being added when either limit is reached. Personal preferen" +
-        "ces usually need only a few entries; complex projects can use 8–12 entries and 2000–4000 tokens. A larger budget" +
-        " uses more model context and may increase input costs.",
-    "uiMemoryLibraryTurnRecall": "Recall for this turn",
-    "uiMemoryLibraryAutomaticRecall": "Automatically reference a few relevant memories while chatting",
-    "uiMemoryLibraryMaxReferencedEntries": "Maximum referenced entries",
-    "uiMemoryLibraryMaxReferencedEntriesHelp":
-        "Maximum relevant memories automatically included per turn; default: 5. If entries are short but cover many topic" +
-        "s, try increasing the count first. The actual count is also limited by the token budget.",
-    "uiMemoryLibraryMemoryContextBudgetTokens": "Memory context budget (estimated tokens)",
-    "uiMemoryLibraryMemoryContextBudget": "Memory context budget",
-    "uiMemoryLibraryMemoryContextBudgetHelp":
-        "Default: 1200, including the estimated total for memory text and descriptions. Lower it to save context, or incr" +
-        "ease it if detailed entries do not fit. The model can still expand sources on demand using memory tools.",
-    "uiMemoryLibraryTurnSelectionReuseHelp":
-        "Tool loops reuse this turn's selection. Corrections, deletions, and permission changes promptly remove invalid e" +
-        "vidence from requests.",
-    "uiMemoryLibraryBackgroundOrganization": "Background organization",
-    "uiMemoryLibraryAutomaticExtraction": "Extract automatically after chats finish",
-    "uiMemoryLibraryPersonal": "Personal",
-    "uiMemoryLibraryCurrentProject": "Current project",
-    "uiMemoryLibraryLinkedGroup": "Linked group",
-    "uiMemoryLibraryOrganizationChannel": "Organization channel",
+    "uiMemoryLibraryMemoryOrganizationSettings": "Summary and search settings",
+    "uiMemoryLibraryBackgroundOrganization": "Hierarchical summaries",
+    "uiMemoryLibraryOrganizationChannel": "Summary channel",
     "uiMemoryLibrarySelectOrganizationChannel": "Select a configured channel",
-    "uiMemoryLibraryOrganizationModel": "Organization model",
+    "uiMemoryLibraryOrganizationModel": "Summary model",
     "uiMemoryLibraryOrganizationModelPlaceholder": "Select or enter a model name",
-    "uiMemoryLibraryOutputLimitIncludingReasoning": "Output limit per request (including reasoning)",
-    "uiMemoryLibraryOutputLimit": "Output limit per request",
+    "uiMemoryLibraryOutputLimitIncludingReasoning": "Summary output limit (including reasoning)",
+    "uiMemoryLibraryOutputLimit": "Summary output limit",
     "uiMemoryLibraryOutputLimitHelp":
-        "Default: 12288. This is the organization request's output limit, including reasoning counted by the channel. A l" +
-        "ower value constrains output, but may truncate structured results if too low. Check and increase it if organizat" +
-        "ion fails for long sources or reasoning models.",
-    "uiMemoryLibraryAutomaticExtractionHelp":
-        "Automatic extraction calls the organization model for selected scopes after a chat finishes, creating additional" +
-        " requests. It is separate from automatic memory references during chats. Personal scope covers preferences and e" +
-        "xperiences; project scope covers knowledge for the current workspace; group scope covers shared information in t" +
-        "he linked group. Failures and interruptions are not retried repeatedly. View actual usage in background tasks.",
+        "Defaults to 12288 tokens per summary request, including reasoning counted by the channel. A low limit may truncate structured output; check and increase it if long sources or reasoning models fail to produce a summary.",
     "uiMemoryLibrarySemanticSearch": "Semantic search",
     "uiMemoryLibraryEmbeddingSearch": "Use an embedding service and merge with keyword results",
     "uiMemoryLibraryEmbeddingEndpoint": "Full embedding endpoint URL",
@@ -294,12 +263,11 @@ export default {
     "uiMemoryLibrarySaveOrganizationSettings": "Save organization settings",
     "uiMemoryLibraryTestEmbeddingConnection": "Test embedding connection",
     "uiMemoryLibraryRebuildScopeIndex": "Rebuild current scope index",
-    "uiMemoryLibraryOrganizeRecentTurns": "Organize recent turns",
     "uiMemoryLibraryMemoryBackgroundTasks": "Memory background tasks",
     "uiMemoryLibraryBackgroundTaskUsageHelp":
         "Results are committed against source versions. Reasoning tokens are included in output. Usage not returned by th" +
         "e service is shown as unknown.",
-    "uiMemoryLibraryNoBackgroundTasks": "No background tasks yet. Select a model in “Organization settings”, then organize recent turns.",
+    "uiMemoryLibraryNoBackgroundTasks": "No background tasks. Generate a hierarchical summary or rebuild the vector index to view progress here.",
     "uiMemoryLibraryVectorIndex": "Vector index",
     "uiMemoryLibrarySourceExtraction": "Source extraction",
     "uiMemoryLibraryAttemptLabel": "· Attempt",

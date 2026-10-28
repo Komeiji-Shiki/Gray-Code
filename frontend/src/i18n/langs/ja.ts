@@ -1799,9 +1799,6 @@ const ja: LanguageMessages = {
                 },
             },
             workspaceFeatureLinks: {
-                memoryTitle: "階層型長期メモリとインポート資料",
-                memoryHint: "事実、好み、出典、関連図、インポート資料は長期メモリで管理します。「整理方法」で想起件数、トークン予算、埋め込みを設定できます。この下は独立したログ型メモリの設定です。",
-                openMemory: "長期メモリを開く",
                 companionsTitle: "ペット、Live2D と画面認識",
                 companionsHint: "ペット設定ではモデル、モーション、パラメーター範囲、拡大率、動きの軽減を調整します。画面認識ではキャプチャ対象、間隔、送信方法を別々に設定します。開いても現在の設定の下書きは保持されます。",
                 openPets: "ペットと Live2D を設定",
@@ -2602,78 +2599,7 @@ const ja: LanguageMessages = {
                     mcpServers: ' 件の MCP サーバー',
                     skills: ' 件のスキル'
                 },
-                memory: {
-                    loading: '記憶設定を読み込み中...',
-                    globalOnlyHint: 'グローバル設定です。「グローバル記憶」タブでのみ変更できます。',
-                    enabled: {
-                        label: "ログ型メモリを有効化",
-                        description: 'AI がセッションをまたいで長期情報を記憶・参照できるようにします。',
-                        disabledNotice: '記憶プロンプトとツールは無効です。既存の記憶と設定は、下で引き続き表示・編集できます。'
-                    },
-                    saved: '保存しました',
-                    saving: '保存中...',
-                    save: '設定を保存',
-                    reset: 'デフォルトに戻す',
-                    systemPrompt: {
-                        title: 'カスタムプロンプト',
-                        description: '上に表示されているプロンプトが現在有効です。直接編集できます。「デフォルトに戻す」で組み込みのデフォルトに戻せます。変更は次のセッションで有効になります。',
-                        placeholder: ''
-                    },
-                    runtime: {
-                        title: '実行時パラメータ',
-                        description: '作業記憶ログの読み出し、1 件の容量、ページ分割を設定します。階層型の長期記憶は「長期記憶 → 整理方法」で別途設定し、予算も独立しています。',
-                        wakeLines: {
-                            label: 'Wake 出力行数',
-                            description: '既定は 96 行です。増やすと要約より元の詳細を多く残せますが、入力トークンも増えます。安定したプロジェクトでは減らし、過去の取り決めを詳しく参照するときは増やせます。',
-                            unit: '行'
-                        },
-                        entryChars: {
-                            label: 'エントリ最大バイト',
-                            description: '既定は UTF-8 で 280 バイトです。一般的な日本語文字は 3 バイトです。超過すると保存は拒否されるため、内容を短くするか上限を増やしてください。1 件に 1 つの持続的な事実を記録します。',
-                            unit: 'バイト'
-                        },
-                        partChars: {
-                            label: 'ページ最大文字数',
-                            description: '既定は 1 ページ 20000 文字です。小さくすると一度のツール応答を抑えられますが、全体の読み出し回数は増えます。総内容量は変わりません。',
-                            unit: '文字'
-                        },
-                        partLines: {
-                            label: 'ページ最大行数',
-                            description: '既定は 1 ページ 500 行です。文字数と行数のうち、先に上限に達した時点で分割します。短い行が多い場合は増やせますが、長い記録では文字数上限に先に達します。',
-                            unit: '行'
-                        }
-                    },
-                    info: {
-                        title: '永久記憶について',
-                        text: '記憶システム（OptMem）を使用すると、AI は各セッションの開始時に過去の合意、決定、知識を自動的に思い出すことができます。AI は作業中に重要なことを記録し、古い記憶はトークンを節約するためにインテリジェントに要約に圧縮されます。'
-                    },
-                    rawEntries: {
-                        title: '生の記憶エントリ',
-                        description: '生の記憶エントリを表示・編集します。編集すると関連する要約がクリアされます（次回の圧縮時に再構築されます）。',
-                        empty: 'まだ記憶エントリがありません。',
-                        addPlaceholder: '記憶したい内容を入力し「記憶を追加」をクリックすると、手動で長期記憶に書き込まれます（AI の memory_note と同等）。Ctrl+Enter / Cmd+Enter でも送信できます。',
-                        add: '記憶を追加',
-                        added: '記憶 #{id} を追加しました',
-                        addEmpty: '内容が空です。追加できません。',
-                        addTooLong: '内容が 1 件あたりの上限（{limit} バイト）を超えています。',
-                        truncatedNotice: '記憶が {limit} 件を超えています。リストには最初の {limit} 件のみ表示されます（残りはチャットで memory_recall を使って検索できます）。',
-                        deleteConfirmTitle: '記憶エントリを削除',
-                        deleteConfirmMessage: 'この生の記憶エントリ（#{id}）を削除しますか？削除後、後続の記憶は番号が繰り上がり、関連する要約はクリアされて次回の圧縮時に再構築されます。',
-                        selectAll: 'すべて選択',
-                        deleteSelected: '選択した {count} 件を削除',
-                        deletedBatch: '{count} 件の記憶を削除しました。',
-                        batchDeleteConfirmTitle: '記憶エントリを一括削除',
-                        batchDeleteConfirmMessage: '選択した {count} 件の生の記憶エントリを削除しますか？削除後、残りの記憶は番号が繰り上がり、関連する要約はクリアされて次回の圧縮時に再構築されます。',
-                        scopeGlobal: 'グローバル記憶',
-                        scopeGlobalHint: 'すべてのワークスペースで共有される既定の記憶です。ワークスペースのコンテキストがない場合、AI はグローバル記憶を使用します。',
-                        scopeWorkspace: 'ワークスペース記憶',
-                        scopeWorkspaceHint: 'ワークスペースごとに独立して保存される記憶で、他のワークスペースやグローバル記憶とは互いに影響しません。',
-                        selectScopeWorkspace: 'ワークスペースを選択…',
-                        workspaceNone: '現在利用可能なワークスペースがありません。VS Code でフォルダーを開いてから再試行してください。',
-                        workspaceMemoryEmpty: 'このワークスペースにはまだ記憶がありません。このセクションで追加した記憶は、このワークスペースにのみ表示されます。',
-                        newlineNotAllowed: '記憶は 1 行で記述する必要があります。改行を削除して再試行してください。'
-                    }
-                },
+                memory: sharedJa.components.settings.settingsPanel.memory,
 
             },
             toolSettings: {

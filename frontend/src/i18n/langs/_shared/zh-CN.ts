@@ -356,6 +356,13 @@ const sharedZhCN = {
                     execution: "执行与权限",
                     models: "模型与提示",
                 },
+                memory: {
+                    enabled: {
+                        label: "启用长期记忆",
+                    },
+                    location: "记忆保存在 {path}，由文件工具读取和编辑。",
+                    openDirectory: "打开记忆目录",
+                },
                 sections: {
                     context: {
                         description: "统一配置上下文处理方式、保留策略、触发阈值、总结提示词和可选的精确计数。",

@@ -504,12 +504,6 @@ async function rebuildIndex() {
   section.value = 'jobs';
   await reload();
 }
-async function extractCurrent() {
-  await rpc('memory.extract', { scopeId: scopeId.value });
-  notice.value = t('uiMemoryLibraryRecentTurnsQueued');
-  section.value = 'jobs';
-  await reload();
-}
 function requestClose(): boolean {
   if (busy.value) {
     notice.value = t('uiMemoryLibrarySavingPleaseWait');
@@ -1010,49 +1004,9 @@ onUnmounted(() => {
     </div>
     <MemoryImports v-if="section === 'imports'" @browse="browseImport" />
     <section v-show="section === 'organize'" class="memory-organization" :aria-label="t('uiMemoryLibraryMemoryOrganizationSettings')">
-      <div class="settings-guide">
-        <strong>{{ t('uiMemoryLibraryDefaultBudgetSuggestion') }}</strong>
-        <p>{{ t('uiMemoryLibraryMemoryBudgetHelp') }}</p>
-      </div>
       <div class="memory-form-grid">
         <fieldset>
-          <legend>{{ t('uiMemoryLibraryTurnRecall') }}</legend>
-          <label class="memory-check">
-            <input v-model="policy.enabled" type="checkbox" />
-            {{ t('uiMemoryLibraryAutomaticRecall') }}
-          </label>
-          <label>
-            {{ t('uiMemoryLibraryMaxReferencedEntries') }}
-            <input v-model.number="policy.recallLimit" type="number" min="1" max="50" :aria-label="t('uiMemoryLibraryMaxReferencedEntries')" />
-            <small class="settings-help">{{ t('uiMemoryLibraryMaxReferencedEntriesHelp') }}</small>
-          </label>
-          <label>
-            {{ t('uiMemoryLibraryMemoryContextBudgetTokens') }}
-            <input v-model.number="policy.recallTokens" type="number" min="256" max="16000" :aria-label="t('uiMemoryLibraryMemoryContextBudget')" />
-            <small class="settings-help">{{ t('uiMemoryLibraryMemoryContextBudgetHelp') }}</small>
-          </label>
-          <p class="memory-muted">{{ t('uiMemoryLibraryTurnSelectionReuseHelp') }}</p>
-        </fieldset>
-        <fieldset>
           <legend>{{ t('uiMemoryLibraryBackgroundOrganization') }}</legend>
-          <label class="memory-check">
-            <input v-model="policy.automaticExtraction" type="checkbox" />
-            {{ t('uiMemoryLibraryAutomaticExtraction') }}
-          </label>
-          <div class="memory-scope-checks">
-            <label
-              v-for="(label, key) in {
-                personal: t('uiMemoryLibraryPersonal'),
-                workspace: t('uiMemoryLibraryCurrentProject'),
-                group: t('uiMemoryLibraryLinkedGroup'),
-              }"
-              :key="key"
-              class="memory-check"
-            >
-              <input v-model="policy.automaticScopes" type="checkbox" :value="key" />
-              {{ label }}
-            </label>
-          </div>
           <label>
             {{ t('uiMemoryLibraryOrganizationChannel') }}
             <select v-model="policy.providerId" @change="policy.model = provider?.model || ''">
@@ -1070,7 +1024,6 @@ onUnmounted(() => {
             <input v-model.number="policy.extractionOutputTokens" type="number" min="1024" max="32768" :aria-label="t('uiMemoryLibraryOutputLimit')" />
             <small class="settings-help">{{ t('uiMemoryLibraryOutputLimitHelp') }}</small>
           </label>
-          <p class="memory-muted">{{ t('uiMemoryLibraryAutomaticExtractionHelp') }}</p>
         </fieldset>
       </div>
       <fieldset>
@@ -1126,9 +1079,6 @@ onUnmounted(() => {
         <button :disabled="busy || !policyDirty" @click="perform(savePolicy)">{{ t('uiMemoryLibrarySaveOrganizationSettings') }}</button>
         <button :disabled="busy || policyDirty || !embeddingEnabled" @click="perform(testEmbedding)">{{ t('uiMemoryLibraryTestEmbeddingConnection') }}</button>
         <button :disabled="busy || policyDirty || !embeddingEnabled" @click="perform(rebuildIndex)">{{ t('uiMemoryLibraryRebuildScopeIndex') }}</button>
-        <button :disabled="busy || policyDirty || !state.conversationId || !policy.providerId" @click="perform(extractCurrent)">
-          {{ t('uiMemoryLibraryOrganizeRecentTurns') }}
-        </button>
       </div>
     </section>
     <section v-show="section === 'jobs'" class="memory-jobs" :aria-label="t('uiMemoryLibraryMemoryBackgroundTasks')">

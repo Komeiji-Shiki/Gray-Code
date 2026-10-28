@@ -97,7 +97,7 @@ export class ApplicationBackups {
           }
           await captured.checkpoint();
         } finally { await captured.close(); }
-        for (const name of ['skills', 'user-skills', 'skill-resources']) {
+        for (const name of ['skills', 'user-skills', 'skill-resources', 'memory']) {
           const source = path.join(this.storage.directory, name);
           if (await exists(source)) await captureDirectory(source, path.join(snapshot.directory, name), signal);
         }

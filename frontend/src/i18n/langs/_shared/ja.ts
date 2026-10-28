@@ -356,6 +356,13 @@ const sharedJa = {
                     execution: "実行と権限",
                     models: "モデルとプロンプト",
                 },
+                memory: {
+                    enabled: {
+                        label: "長期記憶を有効化",
+                    },
+                    location: "記憶は {path} に保存し、ファイルツールで読み書きします。",
+                    openDirectory: "記憶ディレクトリを開く",
+                },
                 sections: {
                     context: {
                         description: "コンテキストの管理方式、保持方針、開始しきい値、要約プロンプト、任意の正確なトークン計数をまとめて設定します。",

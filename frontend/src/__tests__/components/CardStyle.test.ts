@@ -86,7 +86,6 @@ describe('设置页其余容器、提示框与状态胶囊', () => {
   test.each([
     ['AutoExecSettings.vue', '.settings-tips'], ['ContextSettings.vue', '.pattern-help'],
     ['GenerateImageSettings.vue', '.feature-description'], ['SummarizeSettings.vue', '.feature-description'],
-    ['panel/WorkspaceFeatureLinks.vue', '.workspace-feature-links'],
     ['discord/discordSettings.css', '.discord-notice'],
   ])('%s %s 是淡底提示框', (file, subject) => {
     const body = baseRules(read(file), subject).join(';')

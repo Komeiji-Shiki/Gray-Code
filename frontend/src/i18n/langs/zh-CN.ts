@@ -1801,9 +1801,6 @@ const zhCN = {
                 },
             },
             workspaceFeatureLinks: {
-                memoryTitle: "分层长期记忆与导入资料",
-                memoryHint: "事实、偏好、来源、关系图和导入资料在长期记忆中管理。打开后可在“整理方式”配置召回条数、Token 预算和嵌入服务。本页下方是独立的日志式记忆设置。",
-                openMemory: "打开长期记忆",
                 companionsTitle: "桌宠、Live2D 与屏幕感知",
                 companionsHint: "桌宠设置包含模型、动作、参数范围、缩放和减少动态效果；屏幕感知单独配置采集对象、间隔和发送方式。打开这些面板会保留当前设置草稿。",
                 openPets: "配置桌宠与 Live2D",
@@ -2604,78 +2601,7 @@ const zhCN = {
                     mcpServers: '个 MCP 服务器',
                     skills: '个 Skills'
                 },
-                memory: {
-                    loading: '正在加载记忆配置...',
-                    globalOnlyHint: '全局设置，仅「全局记忆」tab 可修改。',
-                    enabled: {
-                        label: "启用日志式记忆",
-                        description: '允许 AI 跨会话回忆和记录长期信息。',
-                        disabledNotice: '记忆提示词与工具已关闭。已有记忆和配置仍可在下方查看和编辑。'
-                    },
-                    saved: '保存成功',
-                    saving: '正在保存...',
-                    save: '保存配置',
-                    reset: '恢复默认',
-                    systemPrompt: {
-                        title: '自定义提示词',
-                        description: '上方为当前生效的提示词，可直接编辑。点击「恢复默认」可还原为内置默认值。修改后在下一次会话生效。',
-                        placeholder: ''
-                    },
-                    runtime: {
-                        title: '运行时参数',
-                        description: '工程记忆日志的唤醒、单条容量与分页设置。新的分层长期记忆在“长期记忆 → 整理方式”中配置；两者用途和预算独立。',
-                        wakeLines: {
-                            label: '唤醒输出行数',
-                            description: '默认 96 行。增大可保留更多原始细节，减少摘要，但会增加唤醒输入量；稳定项目可降低，需要追溯较多约定时可提高。',
-                            unit: '行'
-                        },
-                        entryChars: {
-                            label: '单条记忆最大字节',
-                            description: '默认 280 字节，按 UTF-8 计量，常见汉字通常占 3 字节。超过上限会拒绝保存，需缩短条目或调大容量。适合每条只记录一个持久事实。',
-                            unit: '字节'
-                        },
-                        partChars: {
-                            label: '分页最大字符数',
-                            description: '默认每页 20000 字符。较小的分页便于控制单次工具结果，但完整读取需要更多次调用；分页不会减少总内容。',
-                            unit: '字符'
-                        },
-                        partLines: {
-                            label: '分页最大行数',
-                            description: '默认每页 500 行，与字符上限同时生效，先达到哪个就分页。多行短记录可适当提高；长记录通常先达到字符上限。',
-                            unit: '行'
-                        }
-                    },
-                    info: {
-                        title: '关于永久记忆',
-                        text: '记忆系统（OptMem）让 AI 在每次会话开始时自动回忆之前的约定、决策和知识。AI 会在工作过程中自动记录重要事项，旧记忆会被智能压缩为摘要以节省 token。'
-                    },
-                    rawEntries: {
-                        title: '原始记忆条目',
-                        description: '查看和编辑原始记忆条目。编辑会清除相关摘要（下次压缩时重新构建）。',
-                        empty: '暂无记忆条目。',
-                        addPlaceholder: '输入要记住的内容，点击「添加记忆」手动写入长期记忆（与 AI 的 memory_note 等效）。支持 Ctrl+Enter / Cmd+Enter 快捷提交。',
-                        add: '添加记忆',
-                        added: '已添加记忆 #{id}',
-                        addEmpty: '内容为空，无法添加记忆。',
-                        addTooLong: '内容超过单条记忆上限（{limit} 字节）。',
-                        truncatedNotice: '记忆超过 {limit} 条，列表仅展示前 {limit} 条（其余可在对话中通过 memory_recall 检索）。',
-                        deleteConfirmTitle: '删除记忆条目',
-                        deleteConfirmMessage: '确定删除这条原始记忆（#{id}）？删除后其后的记忆编号将前移，相关摘要会清空并在下次压缩时重建。',
-                        selectAll: '全选',
-                        deleteSelected: '删除所选（{count}）',
-                        deletedBatch: '已删除 {count} 条记忆。',
-                        batchDeleteConfirmTitle: '批量删除记忆条目',
-                        batchDeleteConfirmMessage: '确定删除选中的 {count} 条原始记忆？删除后剩余记忆编号将前移，相关摘要会清空并在下次压缩时重建。',
-                        scopeGlobal: '全局记忆',
-                        scopeGlobalHint: '所有工作区共享的默认记忆。AI 在无工作区上下文时使用全局记忆。',
-                        scopeWorkspace: '工作区记忆',
-                        scopeWorkspaceHint: '每个工作区独立保存的记忆，与其他工作区及全局记忆互不影响。',
-                        selectScopeWorkspace: '选择工作区…',
-                        workspaceNone: '当前没有可选的工作区。请在 VS Code 中打开一个文件夹后重试。',
-                        workspaceMemoryEmpty: '该工作区还没有记忆。在此分区添加的记忆仅对该工作区可见。',
-                        newlineNotAllowed: '记忆必须为单行文本。请删除换行后重试。'
-                    }
-                },
+                memory: sharedZhCN.components.settings.settingsPanel.memory,
 
             },
             toolSettings: {

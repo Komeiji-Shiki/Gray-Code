@@ -1799,9 +1799,6 @@ const en: LanguageMessages = {
                 },
             },
             workspaceFeatureLinks: {
-                memoryTitle: "Structured memory and imported libraries",
-                memoryHint: "Manage facts, preferences, sources, relationships and imports in Long-term Memory. Its Organization tab configures recall count, token budget and embeddings. The separate settings below manage journal memory.",
-                openMemory: "Open long-term memory",
                 companionsTitle: "Pets, Live2D and screen awareness",
                 companionsHint: "Pet settings cover models, motions, parameter ranges, scale and reduced motion. Screen awareness separately controls capture targets, intervals and delivery. Opening these panels preserves this settings draft.",
                 openPets: "Configure pets and Live2D",
@@ -2602,78 +2599,7 @@ const en: LanguageMessages = {
                     mcpServers: ' MCP server(s)',
                     skills: ' skill(s)'
                 },
-                memory: {
-                    loading: 'Loading memory config...',
-                    globalOnlyHint: 'Global setting. Only editable in the "Global Memory" tab.',
-                    enabled: {
-                        label: "Enable journal memory",
-                        description: 'Allow the AI to recall and record long-term information across sessions.',
-                        disabledNotice: 'Memory prompts and tools are off. Existing memories and settings remain available to view and edit below.'
-                    },
-                    saved: 'Saved',
-                    saving: 'Saving...',
-                    save: 'Save Config',
-                    reset: 'Reset to Default',
-                    systemPrompt: {
-                        title: 'Custom Prompt',
-                        description: 'The prompt shown above is currently active and can be edited directly. Click "Reset to Default" to restore the built-in default. Changes take effect in the next session.',
-                        placeholder: ''
-                    },
-                    runtime: {
-                        title: 'Runtime Parameters',
-                        description: 'Wake, entry capacity, and pagination for the engineering memory log. Configure the separate layered memory system in Long-term memory → Organization; their budgets are independent.',
-                        wakeLines: {
-                            label: 'Wake Output Lines',
-                            description: 'Default: 96 lines. Increase to retain more original detail instead of summaries, at a higher input cost. Lower for stable projects; raise when more past agreements matter.',
-                            unit: 'lines'
-                        },
-                        entryChars: {
-                            label: 'Max Entry Bytes',
-                            description: 'Default: 280 UTF-8 bytes. A common Chinese character uses 3 bytes. Oversized entries are rejected; shorten the entry or raise the limit. Keep one lasting fact per entry.',
-                            unit: 'bytes'
-                        },
-                        partChars: {
-                            label: 'Part Max Characters',
-                            description: 'Default: 20000 characters per page. Smaller pages limit individual tool responses but need more calls to read everything; pagination does not reduce total content.',
-                            unit: 'chars'
-                        },
-                        partLines: {
-                            label: 'Part Max Lines',
-                            description: 'Default: 500 lines per page. Both page limits apply; whichever is reached first splits the output. Raise for many short lines; long entries usually reach the character limit first.',
-                            unit: 'lines'
-                        }
-                    },
-                    info: {
-                        title: 'About Permanent Memory',
-                        text: 'The memory system (OptMem) lets the AI automatically recall past agreements, decisions, and knowledge at the start of each session. The AI records important things as it works, and older memories are intelligently compressed into summaries to save tokens.'
-                    },
-                    rawEntries: {
-                        title: 'Raw Memory Entries',
-                        description: 'View and edit raw memory entries. Edit clears related summaries (they will be rebuilt on next compress).',
-                        empty: 'No memory entries yet.',
-                        addPlaceholder: 'Type what you want to remember and click "Add Memory" to write it to permanent memory manually (equivalent to the AI memory_note tool). Ctrl+Enter / Cmd+Enter submits.',
-                        add: 'Add Memory',
-                        added: 'Memory #{id} added',
-                        addEmpty: 'The content is empty. Nothing to add.',
-                        addTooLong: 'Content exceeds the per-entry limit ({limit} bytes).',
-                        truncatedNotice: 'More than {limit} memories: only the first {limit} are shown here (use memory_recall in chat to search the rest).',
-                        deleteConfirmTitle: 'Delete memory entry',
-                        deleteConfirmMessage: 'Delete this raw memory entry (#{id})? Entries after it will be renumbered and their summaries cleared (rebuilt on next compress).',
-                        selectAll: 'Select All',
-                        deleteSelected: 'Delete Selected ({count})',
-                        deletedBatch: 'Deleted {count} memories.',
-                        batchDeleteConfirmTitle: 'Delete memory entries',
-                        batchDeleteConfirmMessage: 'Delete the {count} selected raw memory entries? Remaining entries will be renumbered and their summaries cleared (rebuilt on next compress).',
-                        scopeGlobal: 'Global Memory',
-                        scopeGlobalHint: 'Default memory shared by all workspaces. The AI uses global memory when there is no workspace context.',
-                        scopeWorkspace: 'Workspace Memory',
-                        scopeWorkspaceHint: 'Memory stored independently per workspace, isolated from other workspaces and from global memory.',
-                        selectScopeWorkspace: 'Select a workspace…',
-                        workspaceNone: 'No workspace is currently available. Open a folder in VS Code and try again.',
-                        workspaceMemoryEmpty: 'This workspace has no memories yet. Memories added in this section are only visible to this workspace.',
-                        newlineNotAllowed: 'A memory must be a single line. Remove line breaks and try again.'
-                    }
-                },
+                memory: sharedEn.components.settings.settingsPanel.memory,
 
             },
             toolSettings: {

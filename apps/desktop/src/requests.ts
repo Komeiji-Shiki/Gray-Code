@@ -1,5 +1,5 @@
 import { app, clipboard, ClipboardItem, dialog, Menu, nativeImage, shell, type BrowserWindow } from 'electron';
-import { copyFile, readFile, writeFile } from 'node:fs/promises';
+import { copyFile, mkdir, readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { t } from '../../../backend/i18n';
 import type { DistributionInfo } from '../../../shared/distribution';
@@ -196,7 +196,14 @@ export class DesktopRequests {
             const selected = await dialog.showOpenDialog(host.getWindow()!, { title: '选择数据目录', properties: ['openDirectory', 'createDirectory'] });
             return { path: selected.canceled ? null : selected.filePaths[0] };
           } },
-          'storagePath.openInExplorer': { uiRequest: true, execute: params => openDataDirectory(params.path ? String(params.path) : host.dataDirectory) },
+          'storagePath.openInExplorer': { uiRequest: true, execute: async params => {
+            if (params.subdirectory === 'memory') {
+              const directory = path.join(application.storage.directory, 'memory');
+              await mkdir(directory, { recursive: true });
+              return openDataDirectory(directory);
+            }
+            return openDataDirectory(params.path ? String(params.path) : host.dataDirectory);
+          } },
           'conversation.revealInExplorer': { uiRequest: true, execute: async params => {
             await application.conversation(client.actorId, params.conversationId);
             return openDataDirectory(host.dataDirectory);

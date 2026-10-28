@@ -616,10 +616,6 @@ export function settingsSearchIndex(isDesktopHost: boolean, supportsFileAssociat
     anchor: '[data-search-anchor="splash-animation"]'
   },
   ...(isDesktopHost ? [
-    { key: 'memory-library', tab: 'memory' as const,
-      labelKey: 'components.settings.workspaceFeatureLinks.memoryTitle',
-      keywords: ['长期记忆', '向量', '嵌入', '召回', '预算', '导入资料', '来源', '记忆图谱', 'embedding', 'recall', 'memory library', '長期メモリ'],
-      anchor: '[data-search-anchor="long-memory-settings"]' },
     { key: 'companion-features', tab: 'companion' as const,
       labelKey: 'components.settings.companionSettings.title',
       keywords: ['陪伴', 'Live2D', '桌宠', '缩放', '屏幕感知', 'pet', 'screen awareness', 'ペット', '画面認識'],
@@ -645,26 +641,14 @@ export function settingsSearchIndex(isDesktopHost: boolean, supportsFileAssociat
   {
     key: 'memory-toggle', tab: 'memory',
     labelKey: 'components.settings.settingsPanel.memory.enabled.label',
-    keywords: ['启用', 'enabled', '有効', '日志式记忆', '工程记忆', 'journal memory'],
+    keywords: ['启用', 'enabled', '有効', '长期记忆', 'memory files'],
     anchor: '[data-search-anchor="memory-toggle"]'
   },
   {
-    key: 'memory-custom-prompt', tab: 'memory',
-    labelKey: 'components.settings.settingsPanel.memory.systemPrompt.title',
-    keywords: ['自定义提示词', 'system prompt', 'プロンプト', '提示词', '记忆'],
-    anchor: '[data-search-anchor="memory-custom-prompt"]'
-  },
-  {
-    key: 'memory-runtime', tab: 'memory',
-    labelKey: 'components.settings.settingsPanel.memory.runtime.title',
-    keywords: ['运行时参数', 'runtime', '実行時', '唤醒', 'wake', '字节', '分页', '行数'],
-    anchor: '[data-search-anchor="memory-runtime"]'
-  },
-  {
-    key: 'memory-raw-entries', tab: 'memory',
-    labelKey: 'components.settings.settingsPanel.memory.rawEntries.title',
-    keywords: ['原始记忆', 'entries', '条目', '编辑', '删除', '记忆记录'],
-    anchor: '[data-search-anchor="memory-raw-entries"]'
+    key: 'memory-directory', tab: 'memory',
+    labelKey: 'components.settings.settingsPanel.memory.openDirectory',
+    keywords: ['记忆目录', 'memory directory', 'markdown', 'MEMORY.md', '記憶ディレクトリ'],
+    anchor: '[data-search-anchor="memory-directory"]'
   },
   {
     key: 'general', tab: 'general',

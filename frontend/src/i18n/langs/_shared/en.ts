@@ -356,6 +356,13 @@ const sharedEn = {
                     execution: "Execution and permissions",
                     models: "Models and prompts",
                 },
+                memory: {
+                    enabled: {
+                        label: "Enable long-term memory",
+                    },
+                    location: "Memory is stored in {path} and read or edited with the file tools.",
+                    openDirectory: "Open memory directory",
+                },
                 sections: {
                     context: {
                         description: "Configure context management, retention, trigger thresholds, summary prompts, and optional exact token counting in one place.",
