@@ -40,6 +40,7 @@ import { CharacterPipeline, type CharacterTurn } from './characters/pipeline';
 import { CharacterResources } from './characters/resources';
 import { ApplicationAutomations } from './automations/service';
 import { prepareExternalWrite } from './workspace/writeAccess';
+import { prepareMemoryWorkspace } from './memory/files';
 import { PlatformSkills } from './skills/service';
 import { PlatformTerminals } from './terminal/service';
 import { terminalTaskTool } from './terminal/tool';
@@ -246,7 +247,7 @@ export class PlatformApplication {
     this.fileActions = new WorkspaceFileActions(this);
     this.git = new WorkspaceGit(this.files);
     this.workspaceSearch = new WorkspaceSearch(this);
-    this.changes = new WorkspaceChanges(storage, this.files);
+    this.changes = new WorkspaceChanges(storage, this.files, this);
     this.diffs = new WorkspaceDiffs(this);
     this.checkpoints = new WorkspaceCheckpoints(this);
     this.checkpointLifecycle = new CheckpointLifecycle(this);
@@ -359,7 +360,8 @@ export class PlatformApplication {
         if (run) await this.nodes.checkRun(run, effects);
         if (run) await this.subagents.boundary(run, context.signal);
         await prepareExternalWrite(this, context, name, args);
-        return this.checkpointLifecycle.beforeTool(context, name, args, effects);
+        await this.checkpointLifecycle.beforeTool(context, name, args, effects);
+        await prepareMemoryWorkspace(this, context, name, args);
       },
       afterTools: async (run, workspace, signal, message) => {
         await this.checkpointLifecycle.afterTools(run, workspace, signal, message);

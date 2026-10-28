@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import path from 'node:path';
 import type { ToolContext } from '@graycode/core';
 import type { PlatformApplication } from '../application';
 import { DiffReviewSession } from '../../../../backend/tools/file/DiffReviewSession';
@@ -7,6 +8,8 @@ import { countDeletedLines } from '../../../../backend/core/services/diff/diffAl
 import { splitLines } from '../../../../backend/core/services/diff/lineId';
 import { t } from '../../../../backend/i18n';
 import { getErrorDisplayMetadata, type ToolErrorDisplayMetadata } from '../../../../shared/toolErrorMetadata';
+import { memoryRoots } from '../memory/files';
+import { inside } from './paths';
 
 export interface WorkspaceDiff extends ToolErrorDisplayMetadata {
   runId?: string;
@@ -59,7 +62,7 @@ export class WorkspaceDiffs {
   }
   async list(actorId: string, workspaceId: string, includeId?: string): Promise<WorkspaceDiffSummary[]> {
     if (includeId !== undefined && (typeof includeId !== 'string' || !includeId)) throw new Error(t('modules.diff.previewNotFound'));
-    this.app.workspace(actorId, workspaceId, ['workspace_read']);
+    if (!workspaceId.startsWith('memory:')) this.app.workspace(actorId, workspaceId, ['workspace_read']);
     let recent: WorkspaceDiffSummary[] = [], included: WorkspaceDiffSummary | undefined, afterId: string | undefined;
     const conversations = new Set<string>();
     for (;;) {
@@ -71,7 +74,12 @@ export class WorkspaceDiffs {
         const value = entry.value as WorkspaceDiffSummary;
         if (value.workspaceId !== workspaceId) continue;
         if (!conversations.has(value.conversationId)) {
-          await this.app.conversation(actorId, value.conversationId); conversations.add(value.conversationId);
+          await this.app.conversation(actorId, value.conversationId);
+          if (workspaceId.startsWith('memory:') && !(await memoryRoots(this.app, actorId, value.conversationId))
+            .some(root => workspaceId === `memory:${path.basename(root.directory)}`)) {
+            throw new Error('记忆目录不属于当前会话。');
+          }
+          conversations.add(value.conversationId);
         }
         if (value.id === includeId) included = value;
         recent.push(value);
@@ -113,7 +121,11 @@ export class WorkspaceDiffs {
       if (originalLines.length && value.diffGuardDeletePercent >= config.diffGuardThreshold)
         value.diffGuardWarning = `本次修改删除或替换了 ${removed}/${originalLines.length} 行（${value.diffGuardDeletePercent}%），达到设置的 ${config.diffGuardThreshold}% 警戒值。`;
     }
-    const session = DiffReviewSession.create({ id: value.id, filePath: file, absolutePath: await this.app.files.resolveGranted(context.workspace, file, context.fileWriteGrants),
+    const absolutePath = await this.app.files.resolveGranted(context.workspace, file, context.fileWriteGrants);
+    const memories = await Promise.all((await memoryRoots(this.app, context.actorId, context.conversationId, context.workspace))
+      .map(root => this.app.files.resolveAbsolute(root.directory)));
+    const memoryWrite = memories.some(root => inside(root, absolutePath));
+    const session = DiffReviewSession.create({ id: value.id, filePath: file, absolutePath,
       originalContent: originalText, newContent: proposedText, toolCallId: context.toolCallId,
       diffGuardWarning: value.diffGuardWarning, diffGuardDeletePercent: value.diffGuardDeletePercent });
     let settle!: PendingReview['settle'];
@@ -127,7 +139,7 @@ export class WorkspaceDiffs {
     };
     context.signal.addEventListener('abort', abort, { once: true });
     try {
-      const applyMode = context.approvedByToolConfirmation || (config.autoSave && config.autoApplyWithoutDiffView)
+      const applyMode = memoryWrite || context.approvedByToolConfirmation || (config.autoSave && config.autoApplyWithoutDiffView)
         ? 'immediate' : config.autoSave ? 'autoSave' : 'review';
       const waitingForReview = applyMode === 'review' && !context.signal.aborted;
       if (waitingForReview) await context.onDiffReview?.({ diffId: value.id, path: file, status: 'pending' });
@@ -159,7 +171,10 @@ export class WorkspaceDiffs {
     const pending = this.pending.get(id);
     if (!pending || pending.value.status !== 'pending') throw new Error('DIFF_NOT_PENDING: 此修改已经处理。');
     await this.app.conversation(actorId, pending.value.conversationId);
-    this.app.workspace(actorId, pending.value.workspaceId, ['workspace_write']);
+    if (pending.value.workspaceId.startsWith('memory:')) {
+      if (!(await memoryRoots(this.app, actorId, pending.value.conversationId))
+        .some(root => pending.value.workspaceId === `memory:${path.basename(root.directory)}`)) throw new Error('记忆目录不属于当前会话。');
+    } else this.app.workspace(actorId, pending.value.workspaceId, ['workspace_write']);
     if (pending.processing) throw new Error('DIFF_ALREADY_PROCESSING: 正在处理此修改。');
     pending.processing = true; this.notify(pending.value);
     try {

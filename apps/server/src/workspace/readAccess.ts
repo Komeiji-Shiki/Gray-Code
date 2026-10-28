@@ -2,6 +2,7 @@ import { inside as contains, resolveWorkspacePath, workspaceRoots } from './path
 import { realpath, stat } from 'node:fs/promises';
 import type { ToolContext } from '@graycode/core';
 import type { PlatformApplication } from '../application';
+import { memoryRoots } from '../memory/files';
 
 /** 文件读取的目标策略集中在此处，目录遍历和正文读取共用已确认的范围。 */
 export class FileReadAccess {
@@ -12,6 +13,10 @@ export class FileReadAccess {
     this.context.signal.throwIfAborted();
     const workspace = this.context.workspace;
     const absolute = resolveWorkspacePath(workspace, requested);
+    const actual = await realpath(absolute);
+    for (const root of await memoryRoots(this.app, this.context.actorId, this.context.conversationId, workspace)) {
+      if (contains(await this.app.files.resolveAbsolute(root.directory), actual)) return actual;
+    }
     const declaredRoots = workspace ? workspaceRoots(workspace) : [];
     const roots = await (this.roots ??= Promise.all(declaredRoots.map(root => realpath(root.directory))));
     const actor = this.context.actor ?? this.app.actor(this.context.actorId);
@@ -20,7 +25,6 @@ export class FileReadAccess {
     if (!roots.some(root => contains(root, absolute)) && !declaredRoots.some(root => contains(root.directory, absolute))
       && (actor?.role !== 'owner' || policy === 'deny'))
       throw new Error('当前账号或读取设置不允许访问工作区外的文件。');
-    const actual = await realpath(absolute);
     if (roots.some(root => contains(root, actual))) return actual;
     if (actor?.role !== 'owner' || policy === 'deny') throw new Error('当前账号或读取设置不允许访问工作区外的文件。');
     if (policy === 'allow' || this.context.approvedByToolConfirmation) return actual;

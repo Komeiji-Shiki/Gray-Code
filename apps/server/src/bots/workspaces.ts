@@ -5,6 +5,10 @@ import type { PlatformApplication } from '../application';
 import type { BotChannelIdentity } from './channelAccess';
 import { documentsDirectory } from '../workspace/documentsDirectory';
 
+export function safeDirectoryName(value: string): string {
+  return value.replace(/[^a-zA-Z0-9_.-]/g, '_').slice(0, 48);
+}
+
 export class BotWorkspaces {
   private queue: Promise<unknown> = Promise.resolve();
   private readonly documentsDirectory: () => Promise<string>;
@@ -14,7 +18,7 @@ export class BotWorkspaces {
       const id = `workspace-${conversationId}`;
       const previous = this.app.settings.find('workspaces', id);
       if (previous) return previous.id;
-      const channel = context.channelId.replace(/[^a-zA-Z0-9_.-]/g, '_').slice(0, 48) || 'conversation';
+      const channel = safeDirectoryName(context.channelId);
       const directory = path.join(await this.documentsDirectory(), 'graycode', context.platform === 'discord' ? 'discord' : 'qq', `${channel}-${conversationId.slice(-12)}`);
       if (options.existingOnly) {
         // 旧会话的自动工作区登记丢失时，只认原本应存在的目录，不创建空目录冒充旧文件。

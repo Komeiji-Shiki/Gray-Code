@@ -37,6 +37,8 @@ import { validateDecisionProvider } from '../model/decisionReviewer';
 import type { WorkspaceDiff } from '../workspace/diffs';
 import type { UiRequestHandlers, UiStartupSnapshot } from '@graycode/contracts';
 import { speechRequest } from '../speech/requests';
+import path from 'node:path';
+import { memoryRoots } from '../memory/files';
 
 interface UiSession { mode?: 'chat' | 'code' | 'character'; preferences: ProductSettingsDraft; editing: boolean; workspaceId?: string }
 export class ProductUi {
@@ -505,7 +507,11 @@ export class ProductUi {
             || data.conversationId !== undefined && value.conversationId !== data.conversationId
             || previewPath !== undefined && value.path !== previewPath) continue;
           await this.app.conversation(client.actorId, value.conversationId);
-          this.app.workspace(client.actorId, value.workspaceId, ['workspace_read']); matches.push(value);
+          if (value.workspaceId.startsWith('memory:')) {
+            if (!(await memoryRoots(this.app, client.actorId, value.conversationId))
+              .some(root => value.workspaceId === `memory:${path.basename(root.directory)}`)) throw new Error('记忆目录不属于当前会话。');
+          } else this.app.workspace(client.actorId, value.workspaceId, ['workspace_read']);
+          matches.push(value);
         }
         if (!matches.length) throw new Error(t('modules.diff.previewNotFound'));
         if (matches.some(value => value.conversationId !== matches[0].conversationId || value.workspaceId !== matches[0].workspaceId))
