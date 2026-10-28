@@ -101,5 +101,14 @@ describe('promptContextCache thought preservation', () => {
 
         const restored = deserializePromptContextCache(legacyV2);
         expect(restored.beforeHistoryMessages[0].parts).toEqual([{ text: 'flattened old content' }]);
+        expect(restored.memoryIndex).toBeUndefined();
+    });
+
+    test('记忆索引快照随回合缓存往返，结构无效时丢弃', () => {
+        const memoryIndex = { roots: ['/data/memory/global'], text: '### global\n- [偏好](preference.md) — 喜欢薄荷茶' };
+        const cache = serializePromptContextCache({ messages: [], dynamicSnapshotMessages: [], memoryIndex });
+        expect(deserializePromptContextCache(cache).memoryIndex).toEqual(memoryIndex);
+        const invalid = JSON.stringify({ ...JSON.parse(cache), memoryIndex: { roots: '/data/memory/global', text: 'x' } });
+        expect(deserializePromptContextCache(invalid).memoryIndex).toBeUndefined();
     });
 });

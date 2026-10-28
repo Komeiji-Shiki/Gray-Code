@@ -106,17 +106,21 @@ describe('文件长期记忆', () => {
     await mkdir(global.directory, { recursive: true });
     await writeFile(path.join(global.directory, 'MEMORY.md'), '- [偏好](preference.md) — 首次索引内容\n');
     const agent = { ...app.settings.read('agents').agents[0], toolNames: ['read_file', 'write_file'] };
-    const prepare = () => new PlatformPromptService(app).prepare({ actor: app.actor('owner')!, agent, conversation, history: [],
+    const prepare = (history: PlatformMessage[]) => new PlatformPromptService(app).prepare({ actor: app.actor('owner')!, agent, conversation, history,
       request: { actorId: 'owner', agentId: agent.id, conversationId: conversation.id, requestKey: 'snapshot',
         message: { role: 'user', parts: [{ text: '继续' }] } } });
-    const first = await prepare();
+    const first = await prepare([]);
     await writeFile(path.join(global.directory, 'MEMORY.md'), '- [偏好](preference.md) — 后续改写内容\n');
-    const second = await prepare();
+    // 快照随首个回合的用户消息保存，进程重启后后续回合仍从历史中取回。
+    const turn: PlatformMessage = { id: 'turn-1', role: 'user', parts: [{ text: '继续' }], isUserInput: true,
+      ...('messageMetadata' in first ? first.messageMetadata : {}) };
+    const second = await prepare([turn]);
     expect(first.systemPrompt).toContain(global.directory);
     expect(second.systemPrompt).toBe(first.systemPrompt);
     expect(second.promptContext?.beforeHistoryMessages).toEqual(first.promptContext?.beforeHistoryMessages);
     expect(JSON.stringify(second.promptContext?.beforeHistoryMessages)).toContain('首次索引内容');
     expect(JSON.stringify(second.promptContext?.beforeHistoryMessages)).not.toContain('后续改写内容');
+    expect(JSON.stringify((await prepare([])).promptContext?.beforeHistoryMessages)).toContain('后续改写内容');
   });
 
   test('无工作区文件工具写读记忆，变更记录、审阅及逆向恢复使用临时根', async () => {

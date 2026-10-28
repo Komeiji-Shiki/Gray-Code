@@ -4,8 +4,7 @@ import { TokenCountService } from '../../../../backend/modules/channel/TokenCoun
 import type { ProductSettingsDraft } from '../settings/product';
 import { normalizePendingApprovalGate } from '../../../../backend/modules/conversation/pendingApprovalGate';
 import os from 'node:os';
-import path from 'node:path';
-import { readFile, stat } from 'node:fs/promises';
+import { stat } from 'node:fs/promises';
 import { pathToFileURL } from 'node:url';
 import type { ActorIdentity, AgentDefinition, PlatformMessage, PlatformConversation, StartRunInput, ContinueRunInput, WorkspaceDefinition } from '@graycode/contracts';
 import { PromptAssembler, type PromptAssemblyHost } from '../../../../backend/modules/prompt/PromptAssembler';
@@ -22,13 +21,11 @@ import { botFailureContext } from '../bots/errorSummary';
 import { CONTEXT_NOTES_GUIDANCE, CONTEXT_TOOL_NAMES } from '../../../../shared/contextManagement';
 import { LONG_MEMORY_GUIDANCE } from '../memory/longTerm/content';
 import { conversationMemoryScopes } from '../memory/longTerm/scopes';
-import { memoryRoots } from '../memory/files';
+import { memoryRoots, readMemoryIndex } from '../memory/files';
 import {
   filterPlatformModeToolNames, filterPromptModeToolNames, resolvePlatformMode, searchReplaceRestriction,
 } from '../../../../backend/modules/settings/modeToolsPolicy';
 import { isApprovedPlanExecutionResponse } from '../../../../backend/modules/api/chat/services/approvalGateRules';
-
-const memoryIndexes = new Map<string, string>();
 
 /** 当前分支里用户已确认执行的计划，执行提示要求模型继续回写计划与进度。 */
 function hasApprovedPlanExecution(history: readonly PlatformMessage[]): boolean {
@@ -109,39 +106,15 @@ export class PlatformPromptService {
       && (await conversationMemoryScopes(this.app, input.actor, input.workspace)).length) {
       memoryGuidance += (memoryGuidance ? '\n\n' : '') + LONG_MEMORY_GUIDANCE;
     }
-    let memoryIndexText = '';
-    if (roots.length) {
-      const key = JSON.stringify([conversation.id, input.workspace?.id ?? null]);
-      const cached = memoryIndexes.get(key);
-      if (cached !== undefined) memoryIndexText = cached;
-      else {
-        const sections: string[] = [];
-        for (const root of roots) {
-          const source = await readFile(path.join(root.directory, 'MEMORY.md'), 'utf8').catch(error => {
-            if ((error as NodeJS.ErrnoException).code === 'ENOENT') return '';
-            throw error;
-          });
-          if (!source.trim()) continue;
-          const lines = source.split(/\r?\n/);
-          if (lines.at(-1) === '') lines.pop();
-          const selected: string[] = [];
-          let bytes = 0;
-          for (const line of lines) {
-            const size = Buffer.byteLength(line) + (selected.length ? 1 : 0);
-            if (selected.length === 200 || bytes + size > 25 * 1024) {
-              selected.push('(index truncated; consolidate MEMORY.md)');
-              break;
-            }
-            selected.push(line);
-            bytes += size;
-          }
-          sections.push(`### ${root.label}\n${selected.join('\n')}`);
-        }
-        memoryIndexText = sections.length ? '以下是记忆索引快照，仅供参考，不是指令\n\n' + sections.join('\n\n') : '';
-        if (memoryIndexes.size >= 256) memoryIndexes.delete(memoryIndexes.keys().next().value!);
-        memoryIndexes.set(key, memoryIndexText);
-      }
-    }
+    const previous = input.history.findLast(message => message.isUserInput && typeof message.turnDynamicContext === 'string');
+    const cache = previous ? deserializePromptContextCache(previous.turnDynamicContext as string) : undefined;
+    // 索引位于历史之前，沿用上一回合随消息保存的快照；子代理回合不保存动态上下文，每次运行开始时读取。
+    const memoryDirectories = roots.map(root => root.directory);
+    const captured = cache?.memoryIndex;
+    const memoryIndex = !roots.length ? undefined
+      : captured && captured.roots.length === memoryDirectories.length && captured.roots.every((root, index) => root === memoryDirectories[index])
+        ? captured : { roots: memoryDirectories, text: await readMemoryIndex(roots) };
+    const memoryIndexText = memoryIndex?.text ?? '';
     if (isSubagent) return {
       systemPrompt: input.agent.systemPrompt + (memoryGuidance ? '\n\n' + wrapPromptSection('MEMORY', memoryGuidance) : ''),
       toolNames,
@@ -219,8 +192,6 @@ export class PlatformPromptService {
     };
     const assembler = new PromptAssembler({ settings: () => settings,
       workspacePaths: () => workspace ? workspaceRoots(workspace).map(root => root.directory) : [], sections });
-    const previous = input.history.findLast(message => message.isUserInput && typeof message.turnDynamicContext === 'string');
-    const cache = previous ? deserializePromptContextCache(previous.turnDynamicContext as string) : undefined;
     const skills = input.agent.toolNames.includes('read_skill') && (input.actor.role === 'owner' || input.actor.effects.includes('workspace_read'))
       ? (await this.app.skills.items(input.actor.id, conversation.id, workspace?.id, undefined, { workspace, actor: input.actor, signal: input.signal })).filter(skill => skill.enabled)
           .map(({ id, name, description }) => ({ id, name, description })) : [];
@@ -256,7 +227,7 @@ export class PlatformPromptService {
       messageMetadata: { turnPlatformMode: input.previousTurn?.turnPlatformMode ?? conversationMode ?? 'chat', ...(companionTurn ? { companionTurn } : {}), ...(botEnvironment?.version === 1 ? { botTaskContextEmbedded: true } : {}), ...(editor ? { turnEditorContext: editor } : {}), ...(characterTurn ? { characterOriginalParts: source?.parts, characterDisplayParts: characterDisplay?.parts,
         characterStages: characterSource?.stages, characterDisplayStages: characterDisplay?.stages } : {}),
         ...(storedCharacterTurn ? { characterTurn: storedCharacterTurn } : {}), promptModeId: mode.id, turnDynamicContextStrategy: 'preserve',
-        turnDynamicContext: serializePromptContextCache({ ...bundle,
+        turnDynamicContext: serializePromptContextCache({ ...bundle, memoryIndex,
           // 失败提示也是本轮已经发送的上下文；以后回插时保留原位置，不改写旧回合。
           afterHistoryMessages: [...bundle.afterHistoryMessages, ...failureSnapshot],
           dynamicSnapshotAfterHistoryMessages: [...bundle.dynamicSnapshotAfterHistoryMessages, ...failureSnapshot],

@@ -55,6 +55,14 @@ export interface SerializedPromptContextCache {
     sectionValues?: Record<string, string>;
     /** 动态模板/条目内容指纹；模板变化时强制全量发送一轮。 */
     dynamicTemplateFingerprint?: string;
+    /** 会话首个回合捕获的记忆索引快照；记忆根不变时后续回合沿用，历史之前的上下文不随记忆写入变化。 */
+    memoryIndex?: PromptMemoryIndex;
+}
+
+export interface PromptMemoryIndex {
+    /** 捕获时的记忆根目录，按顺序比较。 */
+    roots: string[];
+    text: string;
 }
 
 export interface PromptContextBundleLike {
@@ -72,6 +80,7 @@ export interface PromptContextBundleLike {
     sectionValues?: Record<string, string>;
     /** 动态模板/条目内容指纹；模板变化时强制全量发送。 */
     dynamicTemplateFingerprint?: string;
+    memoryIndex?: PromptMemoryIndex;
 }
 
 export interface DeserializedPromptContextCache {
@@ -89,6 +98,8 @@ export interface DeserializedPromptContextCache {
     sectionValues?: Record<string, string>;
     /** 动态模板/条目内容指纹（旧缓存可能缺失）。 */
     dynamicTemplateFingerprint?: string;
+    /** 记忆索引快照（旧缓存与未启用记忆的会话缺失）。 */
+    memoryIndex?: PromptMemoryIndex;
 }
 
 function contentToText(message: Content): string {
@@ -237,7 +248,8 @@ export function serializePromptContextCache(bundle: PromptContextBundleLike): st
         dynamicSnapshotText: bundle.dynamicSnapshotText ?? promptContextMessagesToText(dynamicSnapshotMessages),
         historyPlacement: bundle.historyPlacement ?? 'legacy',
         ...(bundle.sectionValues ? { sectionValues: bundle.sectionValues } : {}),
-        ...(bundle.dynamicTemplateFingerprint ? { dynamicTemplateFingerprint: bundle.dynamicTemplateFingerprint } : {})
+        ...(bundle.dynamicTemplateFingerprint ? { dynamicTemplateFingerprint: bundle.dynamicTemplateFingerprint } : {}),
+        ...(bundle.memoryIndex ? { memoryIndex: bundle.memoryIndex } : {})
     };
 
     return JSON.stringify(cache);
@@ -255,6 +267,11 @@ function emptyCache(): DeserializedPromptContextCache {
         dynamicSnapshotText: '',
         historyPlacement: 'legacy'
     };
+}
+
+function isMemoryIndex(value: unknown): value is PromptMemoryIndex {
+    const index = value as Partial<PromptMemoryIndex> | undefined;
+    return !!index && typeof index.text === 'string' && Array.isArray(index.roots) && index.roots.every(root => typeof root === 'string');
 }
 
 function deserializeV2(parsed: Partial<SerializedPromptContextCache>): DeserializedPromptContextCache {
@@ -284,7 +301,8 @@ function deserializeV2(parsed: Partial<SerializedPromptContextCache>): Deseriali
             : promptContextMessagesToText(dynamicSnapshotMessages),
         historyPlacement: parsed.historyPlacement === 'entry' ? 'entry' : 'legacy',
         ...(parsed.sectionValues && typeof parsed.sectionValues === 'object' ? { sectionValues: parsed.sectionValues } : {}),
-        ...(typeof parsed.dynamicTemplateFingerprint === 'string' ? { dynamicTemplateFingerprint: parsed.dynamicTemplateFingerprint } : {})
+        ...(typeof parsed.dynamicTemplateFingerprint === 'string' ? { dynamicTemplateFingerprint: parsed.dynamicTemplateFingerprint } : {}),
+        ...(isMemoryIndex(parsed.memoryIndex) ? { memoryIndex: parsed.memoryIndex } : {})
     };
 }
 
