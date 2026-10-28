@@ -481,8 +481,10 @@ onUnmounted(() => {
   position: relative;
   overflow: auto;
 }
+/* Monaco 在尺寸通知内同步布局，内部仍是上次的像素尺寸；裁在容器内，免得外层滚动条在同一帧里反复出现。 */
 .review-panel .diff-editor {
   min-height: 0;
+  overflow: hidden;
 }
 .review-footer {
   display: flex;
