@@ -53,10 +53,12 @@ export class DiscordJsGateway implements DiscordGateway {
       });
       let controlsReady = false;
       try {
-        // 只创建或更新本应用的两个命令，保留这个 Bot 已有的其他命令。
+        // 只创建或更新本应用的三个命令，保留这个 Bot 已有的其他命令。
         await client.application!.commands.create(new SlashCommandBuilder().setName('gray').setDescription('打开 GrayCode 对话与任务操作面板')
           .setContexts(InteractionContextType.Guild, InteractionContextType.BotDM).setIntegrationTypes(ApplicationIntegrationType.GuildInstall));
         await client.application!.commands.create(new SlashCommandBuilder().setName('gray-retry').setDescription('重试当前频道最近失败的 GrayCode 任务')
+          .setContexts(InteractionContextType.Guild, InteractionContextType.BotDM).setIntegrationTypes(ApplicationIntegrationType.GuildInstall));
+        await client.application!.commands.create(new SlashCommandBuilder().setName('summarize').setDescription('立即总结当前频道的 GrayCode 对话上下文')
           .setContexts(InteractionContextType.Guild, InteractionContextType.BotDM).setIntegrationTypes(ApplicationIntegrationType.GuildInstall));
         controlsReady = true;
       } catch { /* 连接仍可使用，注册问题单独显示在管理页。 */ }
@@ -196,7 +198,7 @@ export class DiscordJsGateway implements DiscordGateway {
   }
   private async interaction(interaction: Interaction) {
     if (!this.interactionHandler || !interaction.channelId) return;
-    if (interaction.isChatInputCommand() ? !['gray', 'gray-retry'].includes(interaction.commandName)
+    if (interaction.isChatInputCommand() ? !['gray', 'gray-retry', 'summarize'].includes(interaction.commandName)
       : (interaction.isButton() || interaction.isStringSelectMenu() || interaction.isModalSubmit()) ? !interaction.customId.startsWith('gray:') : true) return;
     if (!interaction.isChatInputCommand() && !interaction.isButton() && !interaction.isStringSelectMenu() && !interaction.isModalSubmit()) return;
     const input: BotInteraction = {

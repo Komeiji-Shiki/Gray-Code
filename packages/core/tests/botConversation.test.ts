@@ -280,6 +280,53 @@ describe('Bot 频道上下文、附件与定时总结', () => {
     expect(restored.some(message => message.isSummary || message.isSummarized)).toBe(false);
   });
 
+  test('手动总结指令无需开启定时总结，触发后回执条数并允许重复执行', async () => {
+    await app.discord.receive(inbound('manual-summary'));
+    const id = (await app.discord.sessions.snapshot(context())).conversation!.id;
+    const messages: PlatformMessage[] = [];
+    for (let round = 0; round < 6; round++) messages.push({ id: `manual-u${round}`, role: 'user', isUserInput: true, parts: [{ text: `第 ${round} 轮的具体要求。` }] },
+      { id: `manual-m${round}`, role: 'model', parts: [{ text: '需要保留的事实和结论。'.repeat(80) }] });
+    await app.storage.appendHistory(id, messages);
+
+    const result = await app.discord.sessions.perform(context('manual-summary-command'), { kind: 'summarize' });
+    expect(result.reply).toContain('原文仍保留在对话里');
+    expect(generated.filter(input => input.purpose === 'summary')).toHaveLength(1);
+    const history = (await app.storage.readFullHistory(id)).messages;
+    expect(history.some(message => message.isSummary)).toBe(true);
+    expect(history.filter(message => message.isSummarized).length).toBeGreaterThan(0);
+
+    const state = await app.storage.getRecord(botInboxStateNamespace, id) as BotInboxState;
+    expect(state.summaryError).toBeUndefined(); expect(state.summarySequence).toBe(state.sequence);
+
+    // 定时开关保持关闭：手动总结不能把它打开，也不会因为同一批历史被再次调用。
+    await app.discord.summaries.tick(Date.now() + 3600000);
+    expect(generated.filter(input => input.purpose === 'summary')).toHaveLength(1);
+
+    // 没有新历史时不重复总结，给出可读的失败原因而不是静默成功。
+    await expect(app.discord.sessions.perform(context('manual-summary-again'), { kind: 'summarize' }))
+      .rejects.toThrow(/总结没有完成|没有可总结/);
+    expect(generated.filter(input => input.purpose === 'summary')).toHaveLength(1);
+  });
+
+  test('手动总结只允许主人，任务运行中与已有总结进行时给出明确提示', async () => {
+    await app.discord.receive(inbound('manual-guard'));
+    const id = (await app.discord.sessions.snapshot(context())).conversation!.id;
+    await app.storage.appendHistory(id, Array.from({ length: 10 }, (_, index) => ({ id: `guard-${index}`, role: index % 2 ? 'model' : 'user',
+      isUserInput: index % 2 === 0, parts: [{ text: '需要保留的对话内容和结论。'.repeat(80) }] })));
+    await expect(app.discord.sessions.perform({ ...context('manual-member'), authorId: '20' }, { kind: 'summarize' }))
+      .rejects.toThrow('Owner access is required.');
+    expect(generated.filter(input => input.purpose === 'summary')).toHaveLength(0);
+
+    // 并发总结由会话级控制器拒绝：这里直接构造“已经在总结”，确认不会重复发起模型请求。
+    const running = jest.spyOn(app.context, 'isSummarizing').mockReturnValue(true);
+    try {
+      await expect(app.discord.summaries.manual(context('manual-running'))).rejects.toThrow('已经在总结');
+    } finally { running.mockRestore(); }
+    const state = await app.storage.getRecord(botInboxStateNamespace, id) as BotInboxState;
+    expect(state.summaryAttemptAt).toBeUndefined();
+    expect(generated.filter(input => input.purpose === 'summary')).toHaveLength(0);
+  });
+
   test('定时总结失败后，同一批历史按原间隔重试，成功后不重复总结', async () => {
     await app.discord.receive(inbound('retry-summary'));
     const id = (await app.discord.sessions.snapshot(context())).conversation!.id;

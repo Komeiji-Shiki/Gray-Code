@@ -42,7 +42,9 @@ export class DiscordControls {
       const context = this.context(input);
       this.sessions.authorize(context);
       let control: Control = input.kind === 'command' && input.commandName === 'gray-retry'
-        ? { kind: 'perform', action: { kind: 'retry' } } : { kind: 'screen', screen: 'home' };
+        ? { kind: 'perform', action: { kind: 'retry' } }
+        : input.kind === 'command' && input.commandName === 'summarize' ? { kind: 'perform', action: { kind: 'summarize' } }
+        : { kind: 'screen', screen: 'home' };
       if (input.kind !== 'command') {
         const ticket = input.customId && this.tickets.get(input.customId);
         if (!ticket || ticket.expiresAt <= Date.now() || ticket.context.authorId !== context.authorId
@@ -100,10 +102,15 @@ export class DiscordControls {
       this.button(context, '停止任务', { kind: 'perform', action: { kind: 'cancel' } }, { style: 'danger', disabled: !state.active || !canControl })];
     if (state.run && ['failed', 'interrupted'].includes(state.run.status) && state.run.actorId === state.loaded.actor.id)
       second.push(this.button(context, '重试失败任务', { kind: 'perform', action: { kind: 'retry' } }, { style: 'primary' }));
+    // 总结会改写上下文，只留给主人；群成员的面板里不出现这个按钮。
+    if (owner) second.push(this.button(context, '总结上下文', { kind: 'perform', action: { kind: 'summarize' } }, { disabled: state.active || !!state.questions.length }));
     if (state.approvals.length) second.push(this.button(context, `待确认 ${state.approvals.length}`, { kind: 'screen', screen: 'approvals' }, { style: 'primary' }));
     if (state.questions.length) second.push(this.button(context, `待回答 ${state.questions.length}`, { kind: 'screen', screen: 'questions' }, { style: 'primary' }));
+    // 一行最多五个按钮，超出的部分另起一行，避免整个面板发送失败。
+    const rows = [first, second].flatMap(buttons => buttons.length ? Array.from({ length: Math.ceil(buttons.length / 5) },
+      (_, index) => ({ buttons: buttons.slice(index * 5, index * 5 + 5) })) : []);
     return { content: `**GrayCode 操作面板**\n对话：${state.conversation?.title || '尚未选择'}\n后续模型：${state.provider?.name || '未配置'} / ${state.model || '未选择'}\n工作区：${state.workspace?.name || '普通聊天'}\n状态：${state.run ? `${botRunLabels[state.run.status]} · 第 ${state.run.iteration} 轮` : '没有正在执行的任务'}${notice ? `\n\n${notice}` : ''}\n\n这个面板仅对你可见。`,
-      rows: [{ buttons: first }, { buttons: second }] };
+      rows };
   }
   private choices(context: BotContext, screen: Screen, title: string, choices: Choice[], page: number, extras: BotButton[] = [], navigate?: (page: number) => Control,
     back: Control = { kind: 'screen', screen: 'home' }): BotPanel {

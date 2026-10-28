@@ -179,6 +179,26 @@ describe('Discord 原生操作与共享运行流程', () => {
     } finally { perform.mockRestore(); }
   });
 
+  test('/summarize 直接触发手动总结，面板按钮与文字指令走同一条路径', async () => {
+    expect(parseBotAction('/summarize')).toEqual({ kind: 'summarize' });
+    const summarized: string[] = [];
+    const original = app.discord.sessions.summarizer!;
+    app.discord.sessions.summarizer = async ctx => { summarized.push(ctx.id); return '已总结 4 条历史，原文仍保留在对话里，可以随时恢复。'; };
+    try {
+      const command = await menu({ id: 'summarize-command', commandName: 'summarize' });
+      expect(command.acknowledgements).toEqual(['defer', 'respond']);
+      expect(command.panel.content).toContain('已总结 4 条');
+      const home = await menu();
+      // 面板上的总结按钮只给主人，群成员看不到改写上下文的入口。
+      expect(button(home.panel, '总结上下文')).toBeDefined();
+      expect((await menu({ authorId: '20' })).panel.rows!.flatMap(row => 'buttons' in row ? row.buttons : []).some(item => item.label === '总结上下文')).toBe(false);
+      const pressed = await menu({ kind: 'button', customId: button(home.panel, '总结上下文').id });
+      expect(pressed.panel.content).toContain('已总结 4 条');
+      expect(summarized).toEqual(['summarize-command', expect.any(String)]);
+      expect(generated).toHaveLength(0);
+    } finally { app.discord.sessions.summarizer = original; }
+  });
+
   test('连接可以先于频道选择；旧版已处理事件不会因会话迁移重放', async () => {
     expect(app.discord.keepsAlive).toBe(true);
     const connectionEvents: unknown[] = [];
