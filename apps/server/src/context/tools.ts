@@ -75,7 +75,7 @@ export function contextTools(app: PlatformApplication): RuntimeTool[] {
         const id = await authorizeContext(context);
         if (['record', 'recall', 'inspect'].includes(String(args.action))) {
           const state = await app.storage.readConversationState(id);
-          const view = await app.longMemoryPrompt.history.prepare(context.actorId, id, state.history.messages);
+          const view = await app.longMemory.history.prepare(context.actorId, id, state.history.messages);
           const prefix = await readModelPrefix(app, state.metadata);
           const providerId = context.modelSelection?.providerId ?? prefix?.providerId;
           const config = args.action === 'recall' && providerId ? await app.product.channel(providerId, { includeCredential: false }) : undefined;
@@ -86,7 +86,7 @@ export function contextTools(app: PlatformApplication): RuntimeTool[] {
         if (typeof args.name !== 'string' || !args.name.trim()) throw new Error('需要提供笔记名称。');
         // 自由笔记只需校验来源依赖，不需要恢复正文、附件或笔记图的完整工具结果。
         const history = await app.storage.readHistorySelection(id, { projection: MEMORY_HISTORY_PROJECTION });
-        const view = await app.longMemoryPrompt.history.prepare(context.actorId, id, history.messages);
+        const view = await app.longMemory.history.prepare(context.actorId, id, history.messages);
         const key = noteKey(id, args.name);
         const previous = await app.storage.getVersionedRecord('context-notes', key);
         const note = previous.value as WorkingNote | null;
@@ -157,7 +157,7 @@ export function contextTools(app: PlatformApplication): RuntimeTool[] {
           args.action === 'search'
             ? await app.storage.readFullHistory(id)
             : await app.storage.readHistorySelection(id, { projection: MEMORY_HISTORY_PROJECTION });
-        const view = await app.longMemoryPrompt.history.prepare(context.actorId, id, history.messages);
+        const view = await app.longMemory.history.prepare(context.actorId, id, history.messages);
         context.signal.throwIfAborted();
         let windowId = 'initial';
         const items = view.messages.map((message, index) => {

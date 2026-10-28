@@ -2,7 +2,6 @@ import { authorizeEffects, type ToolContext } from '@graycode/core';
 import type { AgentDefinition, ModelInput, RunRecord, WorkspaceDefinition } from '@graycode/contracts';
 import { PlatformApplication } from '../../../apps/server/src/application';
 import { actorForBotRun } from '../../../apps/server/src/bots/permissions';
-import { BOT_CHANNEL_ACCESS } from '../../../apps/server/src/bots/channelAccess';
 import { fixture } from './fixtures';
 
 describe('Bot 子代理授权继承与异步身份读取', () => {
@@ -72,39 +71,6 @@ describe('Bot 子代理授权继承与异步身份读取', () => {
       return null;
     });
     expect(await actorForBotRun(app, 'member', runScope())).toMatchObject({ effects: [], mcpTools: [] });
-  });
-
-  test('群聊子代理只召回根群聊记忆，不能读取同账号的个人记忆', async () => {
-    const personal = await app.longMemory.access('member');
-    await app.longMemory.remember(personal, { scopeId: personal.scopes[0].id, text: '私人测试代号是杉木-173。', kind: 'fact', topic: ['测试'] });
-    const settings = app.settings.snapshot();
-    settings.settings.discord = { enabled: true, credentialRef: 'env:GRAYCODE_SCOPE_TEST_TOKEN', allowedChannelIds: ['30'], agentId: agent.id, mentionOnly: true };
-    settings.settings.bindings.push({ id: 'member-binding', platform: 'discord', platformUserId: '100', accountId: 'member' });
-    await app.settings.save({ settings: settings.settings, expectedRevision: settings.revision });
-    const root = (await app.storage.getConversation(rootId))!;
-    await app.storage.saveMetadata({ ...root, actorId: 'owner' });
-    await app.storage.putRecord({ namespace: BOT_CHANNEL_ACCESS, id: rootId, value: { version: 1,
-      context: { platform: 'discord', botId: '900', channelId: '30', direct: false },
-      participants: [{ actorId: 'member', platformUserId: '100' }] } });
-    const group = await app.longMemory.access('member', { conversationId: rootId });
-    expect(group.scopes.map(scope => scope.kind)).toEqual(['group']);
-    await app.longMemory.remember(group, { scopeId: group.scopes[0].id, text: '群聊测试代号是石桥-622。', kind: 'fact', topic: ['测试'] });
-    const parent = await app.runtime.start({ actorId: 'member', agentId: agent.id, conversationId: rootId, workspaceId: workspace.id,
-      requestKey: 'group-parent', message: { role: 'user', parts: [{ text: '派发测试' }] } });
-    await app.runtime.wait(parent.id);
-    const result = await app.subagents.dispatch({ agentName: 'General Worker', prompt: '测试代号是什么？' }, {
-      actorId: parent.actorId, runId: parent.id, conversationId: rootId, agent, workspace, modelSelection: { providerId: agent.providerId },
-      signal: new AbortController().signal, toolCallId: 'group-child', askUser: async () => { throw new Error('unused'); }, progress: () => {},
-    });
-    expect(result).toMatchObject({ success: true, error: undefined });
-    const child = (await app.subagents.get('member', String((result.data as { runId: string }).runId)))!;
-    const access = await app.longMemory.access('member', { conversationId: child.conversationId });
-    expect(access.scopes).toEqual(group.scopes);
-    expect(() => app.longMemory.select(access, personal.scopes[0].id)).toThrow('授权范围');
-    const recalled = await app.longMemory.search(access, { text: '测试代号' });
-    expect(recalled.hits.map(hit => hit.record.text)).toEqual(['群聊测试代号是石桥-622。']);
-    const requests = seen.filter(input => input.conversationId === child.conversationId).map(input => JSON.stringify(input.messages)).join('\n');
-    expect(requests).toContain('石桥-622'); expect(requests).not.toContain('杉木-173');
   });
 
   test('异步会话读取期间关闭频道目录授权，返回的账号不带旧目录', async () => {

@@ -57,7 +57,6 @@ export async function longMemoryRequest(app:PlatformApplication,session:ClientSe
     case 'memory.jobs':return app.storage.longMemoryJobs({scopes:access.scopes,status:params.status});
     case 'memory.job.cancel':return service.background.cancel(selected(),params.id);
     case 'memory.job.retry':{const scope=selected(),job=await app.storage.longMemoryJobTransition({scope,id:params.id,action:'retry'});service.background.kick(scope);return job;}
-    case 'memory.extract':return service.background.enqueueConversation(session.actorId,params.conversationId,selected().id);
     case 'memory.summary.queue':return service.background.enqueueSummary(session.actorId,selected(),params.recordIds,params.topic,params.id,params.expectedVersion);
     case 'memory.embedding.test':{
       const policy=(await service.policies.get(session.actorId)).value;if(!policy.embedding)throw new Error('请先保存嵌入服务地址和模型。');

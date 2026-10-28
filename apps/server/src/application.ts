@@ -5,7 +5,6 @@ import { actorForBotRun, resolveBotGuestActor } from './bots/permissions';
 import { resolveBotAgent } from './bots/profiles';
 import { canReadBotConversation } from './bots/channelAccess';
 import { PlatformLongMemory } from './memory/longTerm/service';
-import { LongMemoryPrompt } from './memory/longTerm/prompt';
 import { longMemoryTools } from './memory/longTerm/tools';
 import { BotWorkspaces } from './bots/workspaces';
 import { ConversationWorkspaces } from './workspace/conversationWorkspaces';
@@ -172,7 +171,6 @@ export class PlatformApplication {
   readonly git: WorkspaceGit;
   readonly workspaceSearch: WorkspaceSearch;
   readonly longMemory: PlatformLongMemory;
-  readonly longMemoryPrompt: LongMemoryPrompt;
   readonly skills: PlatformSkills;
   readonly languages: LanguageServices;
   readonly debugging: DebugServices;
@@ -301,7 +299,6 @@ export class PlatformApplication {
     this.skills = new PlatformSkills(this);
     this.tools.register(this.skills.tool());
     this.longMemory=new PlatformLongMemory(this);
-    this.longMemoryPrompt=new LongMemoryPrompt(this.longMemory);
     for(const tool of longMemoryTools(this.longMemory))this.tools.register(tool);
     setProductVersionResolver(() => packageMetadata.version);
     this.mcp = new PlatformMcpService(this);
@@ -344,7 +341,8 @@ export class PlatformApplication {
       runInScope: (run, execute) => this.nodes.runInScope(run, () => this.automations.meter.run(run, execute)),
       prepareModel: input => this.context.prepareModel(input),
       previewModel: input => this.context.prepareModel(input, true),
-      transformOutput: async input => this.longMemoryPrompt.output(await this.characterPipeline.output(input.request.turnContext?.characterTurn as CharacterTurn | undefined, input.message, input.request.signal),input.request),
+      transformOutput: input => this.characterPipeline.output(
+        input.request.turnContext?.characterTurn as CharacterTurn | undefined, input.message, input.request.signal),
       beforeRun: async (run, workspace, signal) => {
         await this.nodes.checkRun(run);
         await this.artifacts.beforeRun(run);
@@ -453,9 +451,6 @@ export class PlatformApplication {
         void pulse.catch(() => {});
       }
       if (event.type === 'event' && ['run.completed', 'run.cancelled', 'run.failed'].includes(event.event.type)) this.checkpointLifecycle.clear(event.event.runId);
-      if (event.type === 'event' && event.event.type === 'run.completed') {
-        this.longMemory.background.afterRun(event.event.runId);
-      }
       if (event.type === 'event' && ['run.completed', 'run.cancelled', 'run.failed', 'run.interrupted'].includes(event.event.type)) {
         void this.companion.finishRun(event.event.runId).catch(error => {
           this.publish({ type: 'notification', severity: 'warning', message: String(error) });

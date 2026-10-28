@@ -69,7 +69,7 @@ describe('real HTTP model adapter with existing provider codecs', () => {
     const request = input();
     // 只提取真实工具声明，测试不会读取或修改记忆。
     request.tools = [
-      ...longMemoryTools(undefined!).filter(tool => ['memory_read', 'memory_revise'].includes(tool.declaration.name))
+      ...longMemoryTools(undefined!).filter(tool => tool.declaration.name === 'memory_read')
         .map(tool => tool.declaration),
       officeCreateDeclaration(), officeEditDeclaration(),
     ];
@@ -86,9 +86,6 @@ describe('real HTTP model adapter with existing provider codecs', () => {
       expect(tool.parametersJsonSchema).toEqual(original[index].parameters);
     }
     expect(declarations[0].parametersJsonSchema.oneOf).toEqual([{ required: ['ids'] }, { required: ['page'] }]);
-    expect(declarations[1].parametersJsonSchema.anyOf).toEqual([
-      { required: ['text'] }, { required: ['oldText', 'newText'] }, { required: ['append'] },
-    ]);
   });
 
   test('历史保留中断思考，但后续请求只重用已收到的正文', async () => {

@@ -98,7 +98,6 @@ export class ProductConfiguration {
     const value = structuredClone(input?.value ?? this.saved);
     if (!input) maskChannelCredentials(value.channels, snapshot.settings.providers);
     const draft = { value, app: snapshot.settings, credentials: structuredClone(input?.credentials ?? {}), revision: snapshot.revision, dirty: input?.dirty ?? false,
-      memoryConfig: input?.memoryConfig ? structuredClone(input.memoryConfig) : undefined,
       baseApp: structuredClone(input?.baseApp ?? snapshot.settings), basePreferences: structuredClone(input?.basePreferences ?? this.saved) } as ProductSettingsDraft;
     draft.settings = new SettingsManager({ load: async () => value.features,
       save: async settings => { value.features = structuredClone(settings); draft.dirty = true; } });

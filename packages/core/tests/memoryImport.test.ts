@@ -51,21 +51,21 @@ describe('LifeBook 独立导入资料库', () => {
     expect(page.total).toBe(2); expect(page.nextOffset).toBe(1);
     expect((await f.store.verify()).ok).toBe(true);
   });
-  test('关闭召回时隔离，明确开启后仅加入私人真实范围，角色和群聊保持隔离', async () => {
+  test('资料库只在明确启用后加入工具检索范围，各类会话使用同一真实资料库', async () => {
     await source(); const result = await importLifeBook(f.store, f.source, { actorId: 'owner' });
     const app = { storage: f.store, conversation: async () => {},
       subagents: { rootConversationId: (id: string) => id } } as any;
     const actor = { id: 'owner', role: 'owner' } as any;
-    expect((await conversationMemoryScopes(app, actor))).toHaveLength(1);
+    expect((await conversationMemoryScopes(app, actor))).toEqual([]);
     expect((await listImportLibraries(f.store, 'owner'))[0].recallEnabled).toBe(false);
     await setImportRecall(f.store, 'owner', result.id, true);
     expect((await conversationMemoryScopes(app, actor)).map(scope => scope.id)).toContain(result.scopeId);
     const character = { id: 'character', custom: { platformMode: 'character' } } as any;
-    expect((await conversationMemoryScopes(app, actor, character)).map(scope => scope.id)).not.toContain(result.scopeId);
+    expect((await conversationMemoryScopes(app, actor, character)).map(scope => scope.id)).toEqual([result.scopeId]);
     await f.store.putRecord({ namespace: BOT_CHANNEL_ACCESS, id: 'group', value: { version: 1, context: { direct: false, platform: 'discord', botId: 'bot', channelId: 'group' } } });
-    expect((await conversationMemoryScopes(app, actor, { id: 'group', actorId: 'owner' } as any)).map(scope => scope.id)).not.toContain(result.scopeId);
+    expect((await conversationMemoryScopes(app, actor, { id: 'group', actorId: 'owner' } as any)).map(scope => scope.id)).toEqual([result.scopeId]);
     await setImportRecall(f.store, 'owner', result.id, false);
-    expect((await conversationMemoryScopes(app, actor))).toHaveLength(1);
+    expect((await conversationMemoryScopes(app, actor))).toEqual([]);
   });
   test('目录改变时不发布，存储发布失败时回滚记忆写入', async () => {
     await source(); let changed = false;

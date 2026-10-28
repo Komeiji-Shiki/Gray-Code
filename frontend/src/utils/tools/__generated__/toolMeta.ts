@@ -152,25 +152,6 @@ export const toolMeta: Record<string, ToolMeta> = {
     parametersDynamic: true,
     source: "backend/tools/file/createDeleteFileDeclaration.ts",
   },
-  'engineering_log': {
-    description: "管理工程日志中的项目约定与技术经验；用户事实、偏好和经历使用个人长期记忆的 memory_search / memory_remember。wake/recall 同时读取全局与当前工作区，note 写入当前工作区（无工作区时写全局）。只记录以后仍有用且难以从仓库重建的信息，不保存临时进度、秘密或重复内容。成功结果中的 pendingCompression 可延后至当前交付完成；仅 wake 因缺少摘要失败时先压缩再重试。不同作用域的独立压缩可以同时调用。config 调整账号共享格式，不改写已保存的记忆。",
-    parameters: {
-      "action": {"type":"string","description":"wake 读概览；note 记录；recall 正则搜索；compress 摘要维护；zoom 展开树节点；forget 删除；config 查看或更新格式。","enum":["wake","note","recall","compress","zoom","forget","config"],"required":true},
-      "text": {"type":"string"},
-      "regex": {"type":"string","description":"recall 必填，不区分大小写，搜索原文、ID 和日期；截断时缩小范围。"},
-      "blockId": {"type":"string","description":"zoom/forget 必填；compress 提交时从提示复制。forget 用 a-b 丢弃摘要，用单个 ID 或闭区间 a,b 删除原文。"},
-      "summary": {"type":"string"},
-      "scope": {"type":"string","description":"仅 zoom/compress/forget 使用；默认当前工作区，无工作区时为全局。","enum":["global","workspace"]},
-      "part": {"type":"integer","description":"wake 页码，默认 1；按提示续读至 You are awake.。"},
-      "snapshotT": {"type":"integer","description":"wake 续读时复制返回的快照总数；首次省略或为 0。"},
-      "wakeLines": {"type":"number","description":"config：概览行数预算，默认 96。"},
-      "entryChars": {"type":"number"},
-      "partChars": {"type":"number","description":"config：每页字符上限，默认 20000。"},
-      "partLines": {"type":"number","description":"config：每页行数上限，默认 500。"},
-    },
-    parametersDynamic: true,
-    source: "backend/tools/memory/engineeringLog.ts",
-  },
   'execute_command': {
     descriptionDynamic: true,
     parameters: {
@@ -296,66 +277,6 @@ export const toolMeta: Record<string, ToolMeta> = {
     },
     parametersDynamic: true,
     source: "backend/tools/file/listFilesRuntime.ts",
-  },
-  'memory_compress': {
-    description: "处理待压缩的工程日志记忆。记忆按二叉树组织：相邻的两条记忆合并成一行摘要，摘要再两两合并。\n不传 blockId 和 summary 时，返回下一个待压缩的提示；按提示写好摘要后，再用 blockId 和 summary 提交。\n成功的 memory_note 或 memory_wake 返回的 pendingCompression 是可延后的维护提示，不要因此中断当前用户任务；memory_wake 因缺少摘要失败时才必须立即处理。\n开始维护后按提示顺序执行；不同作用域的独立压缩可以在同一响应中调用。",
-    parameters: {
-      "blockId": {"type":"string","description":"要压缩的块 ID，例如 \"0-1\"，从压缩提示中复制。"},
-      "summary": {"type":"string"},
-      "scope": {"type":"string","description":"记忆作用域。有工作区时默认操作当前工作区记忆；传 \"global\" 操作全局记忆，传 \"workspace\" 显式操作工作区记忆。","enum":["global","workspace"]},
-    },
-    parametersDynamic: true,
-    source: "backend/tools/memory/memory_compressRuntime.ts",
-  },
-  'memory_config': {
-    description: "查看或修改工程日志记忆的配置。不传参数时返回当前配置；传入参数时只修改对应的项。\n这些配置控制 memory_wake 的输出篇幅、分页方式和以后写入的单条长度上限，修改后不会改写已保存的记忆。",
-    parameters: {
-      "wakeLines": {"type":"number","description":"memory_wake 输出的行数预算，默认 96（约 8k tokens）。值越大，保留的细节越多。"},
-      "entryChars": {"type":"number"},
-      "partChars": {"type":"number","description":"每个输出部分的最大字符数，默认 20000。"},
-      "partLines": {"type":"number","description":"每个输出部分的最大行数，默认 500。"},
-    },
-    parametersDynamic: true,
-    source: "backend/tools/memory/memory_configRuntime.ts",
-  },
-  'memory_forget': {
-    description: "丢弃有误的工程日志树摘要，或删除原始记忆。具体行为取决于 blockId 的写法：\n- 用短横线表示的块，例如 \"16-31\"：只丢弃这个摘要及其上层摘要，原始记忆保持不变。\n- 单个数字，例如 \"5\"：删除这一条原始记忆，之后的记忆 ID 依次前移。\n- 用逗号表示的闭区间，例如 \"1,3\"：删除 ID 1 到 3（含两端）的所有原始记忆。",
-    parameters: {
-      "blockId": {"type":"string","description":"要处理的块 ID（如 \"16-31\"）、单个记忆 ID（如 \"5\"）或闭区间（如 \"1,3\"）。","required":true},
-      "scope": {"type":"string","description":"记忆作用域。有工作区时默认操作当前工作区记忆；传 \"global\" 操作全局记忆，传 \"workspace\" 显式操作工作区记忆。","enum":["global","workspace"]},
-    },
-    source: "backend/tools/memory/memory_forgetRuntime.ts",
-  },
-  'memory_note': {
-    description: "记录一条在以后的会话里仍然有用的工程日志，例如项目约定、踩过的坑或长期的技术决定。用户本人的事实、偏好和经历属于个人长期记忆，请用 memory_remember 记录，不要用本工具代替。\n有工作区时，记录保存到当前工作区的记忆中，与全局记忆分开；memory_wake 会同时读取两者。\n不要记录临时进度、工作流水、可以从仓库重新得到的内容、秘密或重复的信息。\n如果结果包含 pendingCompression，它只是可延后的维护提示：不要中断当前用户任务，完成当前交付后再压缩；同一个待压缩状态不会重复提示。",
-    parameters: {
-      "text": {"type":"string","required":true},
-    },
-    parametersDynamic: true,
-    source: "backend/tools/memory/memory_noteRuntime.ts",
-  },
-  'memory_recall': {
-    description: "用正则表达式逐字搜索工程日志记忆，也就是 memory_note 写下的项目约定和经验。用户的个人长期记忆不在这里，请用 memory_search。\n搜索同时覆盖全局记忆和当前工作区记忆，命中结果以 --- Global memory --- 和 --- Workspace memory --- 标注来源。已被压缩成摘要的原始记忆也在搜索范围内，压缩不会丢失信息。\n结果受单次输出容量限制；被截断时会提示你缩小正则范围。",
-    parameters: {
-      "regex": {"type":"string","description":"搜索用的正则表达式，不区分大小写，也会匹配记忆的 ID 和日期。","required":true},
-    },
-    source: "backend/tools/memory/memory_recallRuntime.ts",
-  },
-  'memory_wake': {
-    description: "读取工程日志记忆，也就是 memory_note 写下的项目约定和经验。它和用户的个人长期记忆是两套系统，个人长期记忆请用 memory_search 或 memory_read 查阅。\n在新的工作会话开始、且以往的约定可能影响当前任务时调用；与历史无关、也不需要工具的简单回复不必调用。\n输出分为全局记忆和当前工作区记忆两部分，分别以 --- Global memory --- 和 --- Workspace memory --- 标注。近期的记忆保留原文，较早的记忆以压缩摘要呈现。\n输出较长时会分成多个部分，请按输出末尾的提示依次读取，直到看到 \"You are awake.\" 为止。成功结果中的 pendingCompression 可延后处理，不要中断当前用户任务。",
-    parameters: {
-      "part": {"type":"integer","description":"要读取的部分号，从 1 开始，默认为 1。"},
-      "snapshotT": {"type":"integer","description":"第一次读取时的记忆总数，从输出末尾的提示中复制，用来让后续部分与第一部分保持一致。首次调用不传或传 0，表示使用当前总数。"},
-    },
-    source: "backend/tools/memory/memory_wakeRuntime.ts",
-  },
-  'memory_zoom': {
-    description: "展开工程日志记忆树中的一个节点，查看它下一层的两个半部分。\nmemory_wake 输出中每一行 #a-b 都是一个节点。逐层展开，最终可以看到原始记忆本身。",
-    parameters: {
-      "blockId": {"type":"string","description":"要展开的块 ID，例如 \"16-31\"，从 memory_wake 的输出或上一次 memory_zoom 的结果中复制。","required":true},
-      "scope": {"type":"string","description":"记忆作用域。有工作区时默认读取当前工作区记忆；传 \"global\" 读取全局记忆，传 \"workspace\" 显式读取工作区记忆。","enum":["global","workspace"]},
-    },
-    source: "backend/tools/memory/memory_zoomRuntime.ts",
   },
   'office_create': {
     descriptionDynamic: true,

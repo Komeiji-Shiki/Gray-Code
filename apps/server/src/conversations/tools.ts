@@ -38,7 +38,7 @@ export function conversationTools(app: PlatformApplication, historyConfig: Histo
           requireId(requested);
           const state = await snapshot();
           const history = await app.storage.readHistorySelection(id, { expectedRevision: state.historyRevision });
-          return structuredClone((await app.longMemoryPrompt.history.prepare(context.actorId, id, history.messages)).messages);
+          return structuredClone((await app.longMemory.history.prepare(context.actorId, id, history.messages)).messages);
         },
         getCustomMetadata: async (requested, key) => { requireId(requested); return structuredClone(((await snapshot()).metadata.custom as Record<string, unknown> | undefined)?.[key]); },
         setCustomMetadata: async (requested, key, value) => {

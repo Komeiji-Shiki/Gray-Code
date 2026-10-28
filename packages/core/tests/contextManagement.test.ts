@@ -41,7 +41,7 @@ describe('完整前缀总结与持久笔记换窗口', () => {
       progress: () => {}, askUser: async () => { throw new Error('unused'); } };
     const catalog = app.tools.catalog(['context_notes', 'new_context']);
     const readState = jest.spyOn(app.storage, 'readConversationState');
-    const prepareHistory = jest.spyOn(app.longMemoryPrompt.history, 'prepare');
+    const prepareHistory = jest.spyOn(app.longMemory.history, 'prepare');
     try {
       expect(await catalog.entries.get('context_notes')!.tool.execute({ action: 'list' }, context)).toEqual({ success: true, notes: [{ name: 'checkpoint', updatedAt: now, characters: 4 }] });
       const before = (await app.storage.getConversationInfo('compaction'))!;
