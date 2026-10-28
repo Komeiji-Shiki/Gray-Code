@@ -8,14 +8,18 @@ import { memoryRoots } from '../memory/files';
 export class FileReadAccess {
   private readonly allowed: Array<{ path: string; directory: boolean }> = [];
   private roots?: Promise<string[]>;
+  private memories?: Promise<Array<{ directory: string; canonical: string }>>;
   constructor(private readonly app: PlatformApplication, private readonly context: ToolContext) {}
   async resolve(requested: string): Promise<string> {
     this.context.signal.throwIfAborted();
     const workspace = this.context.workspace;
     const absolute = resolveWorkspacePath(workspace, requested);
-    const actual = await realpath(absolute);
-    for (const root of await memoryRoots(this.app, this.context.actorId, this.context.conversationId, workspace)) {
-      if (contains(await this.app.files.resolveAbsolute(root.directory), actual)) return actual;
+    // 记忆根与工作区根同样按登记路径或真实路径接受；范围外的路径不在权限判断之前探测是否存在。
+    const memories = await (this.memories ??= memoryRoots(this.app, this.context.actorId, this.context.conversationId, workspace)
+      .then(roots => Promise.all(roots.map(async root => ({ directory: root.directory, canonical: await this.app.files.resolveAbsolute(root.directory) })))));
+    if (memories.some(root => contains(root.directory, absolute) || contains(root.canonical, absolute))) {
+      const actual = await realpath(absolute);
+      if (memories.some(root => contains(root.canonical, actual))) return actual;
     }
     const declaredRoots = workspace ? workspaceRoots(workspace) : [];
     const roots = await (this.roots ??= Promise.all(declaredRoots.map(root => realpath(root.directory))));
@@ -25,6 +29,7 @@ export class FileReadAccess {
     if (!roots.some(root => contains(root, absolute)) && !declaredRoots.some(root => contains(root.directory, absolute))
       && (actor?.role !== 'owner' || policy === 'deny'))
       throw new Error('当前账号或读取设置不允许访问工作区外的文件。');
+    const actual = await realpath(absolute);
     if (roots.some(root => contains(root, actual))) return actual;
     if (actor?.role !== 'owner' || policy === 'deny') throw new Error('当前账号或读取设置不允许访问工作区外的文件。');
     if (policy === 'allow' || this.context.approvedByToolConfirmation) return actual;

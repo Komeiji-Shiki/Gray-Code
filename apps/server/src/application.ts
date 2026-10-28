@@ -39,7 +39,7 @@ import { CharacterPipeline, type CharacterTurn } from './characters/pipeline';
 import { CharacterResources } from './characters/resources';
 import { ApplicationAutomations } from './automations/service';
 import { prepareExternalWrite } from './workspace/writeAccess';
-import { prepareMemoryWorkspace } from './memory/files';
+import { ownsMemoryWorkspace, prepareMemoryWorkspace } from './memory/files';
 import { PlatformSkills } from './skills/service';
 import { PlatformTerminals } from './terminal/service';
 import { terminalTaskTool } from './terminal/tool';
@@ -245,7 +245,8 @@ export class PlatformApplication {
     this.fileActions = new WorkspaceFileActions(this);
     this.git = new WorkspaceGit(this.files);
     this.workspaceSearch = new WorkspaceSearch(this);
-    this.changes = new WorkspaceChanges(storage, this.files, this);
+    this.changes = new WorkspaceChanges(storage, this.files,
+      (actorId, conversationId, workspaceId) => ownsMemoryWorkspace(this, actorId, conversationId, workspaceId));
     this.diffs = new WorkspaceDiffs(this);
     this.checkpoints = new WorkspaceCheckpoints(this);
     this.checkpointLifecycle = new CheckpointLifecycle(this);

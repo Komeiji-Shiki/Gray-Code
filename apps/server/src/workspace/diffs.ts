@@ -1,5 +1,4 @@
 import { randomUUID } from 'node:crypto';
-import path from 'node:path';
 import type { ToolContext } from '@graycode/core';
 import type { PlatformApplication } from '../application';
 import { DiffReviewSession } from '../../../../backend/tools/file/DiffReviewSession';
@@ -8,7 +7,7 @@ import { countDeletedLines } from '../../../../backend/core/services/diff/diffAl
 import { splitLines } from '../../../../backend/core/services/diff/lineId';
 import { t } from '../../../../backend/i18n';
 import { getErrorDisplayMetadata, type ToolErrorDisplayMetadata } from '../../../../shared/toolErrorMetadata';
-import { memoryRoots } from '../memory/files';
+import { memoryRoots, ownsMemoryWorkspace } from '../memory/files';
 import { inside } from './paths';
 
 export interface WorkspaceDiff extends ToolErrorDisplayMetadata {
@@ -60,6 +59,11 @@ export class WorkspaceDiffs {
   private save(value: WorkspaceDiff) {
     return this.app.storage.putRecord({ namespace, id: value.id, ownerId: value.conversationId, value });
   }
+  /** 记忆工作区按会话的记忆根确认归属，其他工作区按账号权限确认。 */
+  async authorizeWorkspace(actorId: string, conversationId: string, workspaceId: string, effect: 'workspace_read' | 'workspace_write') {
+    if (!workspaceId.startsWith('memory:')) this.app.workspace(actorId, workspaceId, [effect]);
+    else if (!await ownsMemoryWorkspace(this.app, actorId, conversationId, workspaceId)) throw new Error('记忆目录不属于当前会话。');
+  }
   async list(actorId: string, workspaceId: string, includeId?: string): Promise<WorkspaceDiffSummary[]> {
     if (includeId !== undefined && (typeof includeId !== 'string' || !includeId)) throw new Error(t('modules.diff.previewNotFound'));
     if (!workspaceId.startsWith('memory:')) this.app.workspace(actorId, workspaceId, ['workspace_read']);
@@ -75,10 +79,7 @@ export class WorkspaceDiffs {
         if (value.workspaceId !== workspaceId) continue;
         if (!conversations.has(value.conversationId)) {
           await this.app.conversation(actorId, value.conversationId);
-          if (workspaceId.startsWith('memory:') && !(await memoryRoots(this.app, actorId, value.conversationId))
-            .some(root => workspaceId === `memory:${path.basename(root.directory)}`)) {
-            throw new Error('记忆目录不属于当前会话。');
-          }
+          if (workspaceId.startsWith('memory:')) await this.authorizeWorkspace(actorId, value.conversationId, workspaceId, 'workspace_read');
           conversations.add(value.conversationId);
         }
         if (value.id === includeId) included = value;
@@ -171,10 +172,7 @@ export class WorkspaceDiffs {
     const pending = this.pending.get(id);
     if (!pending || pending.value.status !== 'pending') throw new Error('DIFF_NOT_PENDING: 此修改已经处理。');
     await this.app.conversation(actorId, pending.value.conversationId);
-    if (pending.value.workspaceId.startsWith('memory:')) {
-      if (!(await memoryRoots(this.app, actorId, pending.value.conversationId))
-        .some(root => pending.value.workspaceId === `memory:${path.basename(root.directory)}`)) throw new Error('记忆目录不属于当前会话。');
-    } else this.app.workspace(actorId, pending.value.workspaceId, ['workspace_write']);
+    await this.authorizeWorkspace(actorId, pending.value.conversationId, pending.value.workspaceId, 'workspace_write');
     if (pending.processing) throw new Error('DIFF_ALREADY_PROCESSING: 正在处理此修改。');
     pending.processing = true; this.notify(pending.value);
     try {

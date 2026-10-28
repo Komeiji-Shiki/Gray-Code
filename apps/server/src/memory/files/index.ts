@@ -40,6 +40,15 @@ export async function memoryRoots(
   return roots;
 }
 
+export const memoryWorkspaceId = (directory: string) => `memory:${path.basename(directory)}`;
+
+/** 记忆工作区不在设置中登记，只在无工作区任务里临时建立；归属按会话当前可用的记忆根判断。 */
+export async function ownsMemoryWorkspace(
+  app: PlatformApplication, actorId: string, conversationId: string | undefined, workspaceId: string,
+): Promise<boolean> {
+  return (await memoryRoots(app, actorId, conversationId)).some(root => memoryWorkspaceId(root.directory) === workspaceId);
+}
+
 /** 数据目录中已有的记忆范围目录（相对路径，使用 /），备份按范围整体保留或替换。 */
 export async function memoryScopeDirectories(storageDirectory: string): Promise<string[]> {
   const base = path.join(storageDirectory, 'memory');
@@ -64,7 +73,7 @@ export async function prepareMemoryWorkspace(app: PlatformApplication, context: 
     const directory = await app.files.resolveAbsolute(root.directory);
     if (targets.every(target => inside(directory, target))) {
       await mkdir(root.directory, { recursive: true });
-      context.workspace = { id: `memory:${path.basename(root.directory)}`, name: root.label, directory: root.directory, deviceId: 'local' };
+      context.workspace = { id: memoryWorkspaceId(root.directory), name: root.label, directory: root.directory, deviceId: 'local' };
       return;
     }
   }

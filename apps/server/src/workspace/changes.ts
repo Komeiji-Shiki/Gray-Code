@@ -5,8 +5,6 @@ import type { ConversationCommit, ConversationState, WorkspaceDefinition } from 
 import type { PlatformStorage, ToolContext } from '@graycode/core';
 import { WorkspaceFiles } from './files';
 import { fileHash, readFileVersion, type DirectoryChange, type FileChange, type FileTransaction } from './fileTransaction';
-import type { PlatformApplication } from '../application';
-import { memoryRoots } from '../memory/files';
 
 export const operationNamespace = 'workspace-operations';
 export const changeNamespace = 'workspace-changes';
@@ -24,16 +22,22 @@ type ConversationVersion = Pick<ConversationState, 'metadata' | 'metadataToken'>
 
 /** SQLite 与文件系统不能共用事务；先保存恢复记录，成功后原子提交对话与操作结果。 */
 export class WorkspaceChanges {
-  constructor(private readonly storage: PlatformStorage, private readonly files: WorkspaceFiles, private readonly app: PlatformApplication) {}
+  constructor(private readonly storage: PlatformStorage, private readonly files: WorkspaceFiles,
+    private readonly ownsMemoryWorkspace: (actorId: string, conversationId: string | undefined, workspaceId: string) => Promise<boolean>) {}
+
+  /** 无工作区任务写入记忆文件时，运行记录不带工作区，文件操作使用会话的记忆工作区。 */
+  private async assertTask(context: ToolContext, workspace: WorkspaceDefinition) {
+    const run = await this.storage.getRun(context.runId);
+    if (!run || run.conversationId !== context.conversationId || run.actorId !== context.actorId
+      || run.workspaceId !== workspace.id && (run.workspaceId !== undefined
+        || !await this.ownsMemoryWorkspace(context.actorId, context.conversationId, workspace.id)))
+      throw new Error('文件操作不属于当前任务。');
+  }
 
   private async taskState(context: ToolContext) {
     if (!context.workspace || !context.conversationId || !context.toolCallId) throw new Error('文件操作缺少任务上下文。');
     context.signal.throwIfAborted();
-    const run = await this.storage.getRun(context.runId);
-    if (!run || run.conversationId !== context.conversationId || run.actorId !== context.actorId
-      || run.workspaceId !== context.workspace.id && (run.workspaceId !== undefined || !(await memoryRoots(this.app, context.actorId, context.conversationId))
-        .some(root => context.workspace!.id === `memory:${path.basename(root.directory)}`)))
-      throw new Error('文件操作不属于当前任务。');
+    await this.assertTask(context, context.workspace);
     const state = await this.storage.getConversationInfo(context.conversationId);
     if (!state) throw new Error('当前对话已删除。');
     context.signal.throwIfAborted();
@@ -74,11 +78,7 @@ export class WorkspaceChanges {
     const workspace = context.workspace;
     return this.files.transaction(workspace, async transaction => {
       context.signal.throwIfAborted();
-      const run = await this.storage.getRun(context.runId);
-      if (!run || run.conversationId !== context.conversationId || run.actorId !== context.actorId
-        || run.workspaceId !== workspace.id && (run.workspaceId !== undefined || !(await memoryRoots(this.app, context.actorId, context.conversationId))
-          .some(root => workspace.id === `memory:${path.basename(root.directory)}`)))
-        throw new Error('文件操作不属于当前任务。');
+      await this.assertTask(context, workspace);
       const state = await this.storage.getConversationInfo(context.conversationId!);
       if (!state) throw new Error('当前对话已删除。');
       context.signal.throwIfAborted();

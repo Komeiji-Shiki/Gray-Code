@@ -52,7 +52,6 @@ test('默认最多500个位置，保留提供器顺序，空页和越界页可�
 });
 
 test('分页不读取页外目标，返回页仍应用工作区外读取策略', async () => {
-  await writeFile(path.join(f.root, 'outside.ts'), 'const outside = 1;');
   provider.mockResolvedValue([location('main.ts'), location('../outside.ts')]);
   const first = await call({ maxResults: 1 });
   expect(first.data.definitions[0].content).toContain('const main');

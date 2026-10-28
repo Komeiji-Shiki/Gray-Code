@@ -6,21 +6,15 @@ import { WorkspaceFiles } from '../../../apps/server/src/workspace/files';
 import { readFileVersion, fileHash, type FileChange, type FileTransaction } from '../../../apps/server/src/workspace/fileTransaction';
 import { fixture, metadata } from './fixtures';
 import type { WorkspaceDefinition } from '@graycode/contracts';
-import { PlatformApplication } from '../../../apps/server/src/application';
 
 const workspaceOf = (directory: string): WorkspaceDefinition => ({ id: 'workspace', name: 'Fixture', directory, deviceId: 'local' });
 const version = (bytes: Uint8Array | null) => ({ bytes, hash: bytes === null ? null : fileHash(bytes), mode: 0o644 });
+const noMemoryWorkspace = async () => false;
 
 describe('workspace file change coordination', () => {
   let f: Awaited<ReturnType<typeof fixture>>;
-  let app: PlatformApplication;
-  beforeEach(async () => {
-    f = await fixture();
-    await f.store.close();
-    app = await PlatformApplication.open({ dataDirectory: f.data });
-    f.store = app.storage;
-  });
-  afterEach(async () => { await app.close(); await f.cleanup(); });
+  beforeEach(async () => { f = await fixture(); });
+  afterEach(async () => { await f.cleanup(); });
 
   test('多文件事务在第二项磁盘冲突时整批不写', async () => {
     const workspace = workspaceOf(f.source); const files = new WorkspaceFiles();
@@ -56,7 +50,7 @@ describe('workspace file change coordination', () => {
     const state = (await f.store.getConversationInfo('cas'))!; const workspace = workspaceOf(f.source); const files = new WorkspaceFiles();
     const before = version(null); const after = version(Buffer.from('written'));
     let firstApply = true;
-    const operation = new WorkspaceChanges(f.store, files, app);
+    const operation = new WorkspaceChanges(f.store, files, noMemoryWorkspace);
     await expect(files.transaction(workspace, async real => operation.perform({
       ...real,
       apply: async changes => {
@@ -78,7 +72,7 @@ describe('workspace file change coordination', () => {
     await writeFile(path.join(f.source, 'one.txt'), 'one');
     const prepared: WorkspaceOperation = { id: 'prepared', conversationId: 'recover', workspace, createdAt: Date.now(), changes };
     await f.store.putRecord({ namespace: operationNamespace, id: 'recover', ownerId: 'recover', value: prepared });
-    const result = await new WorkspaceChanges(f.store, files, app).recover();
+    const result = await new WorkspaceChanges(f.store, files, noMemoryWorkspace).recover();
     expect(result.recovered).toEqual(['prepared']);
     expect((await readFileVersion(path.join(f.source, 'one.txt'))).hash).toBeNull();
     expect((await readFileVersion(path.join(f.source, 'two.txt'))).hash).toBeNull();
@@ -92,7 +86,7 @@ describe('workspace file change coordination', () => {
     ] };
     await writeFile(path.join(f.source, 'one.txt'), 'someone-else');
     await f.store.putRecord({ namespace: operationNamespace, id: 'conflict-recover', ownerId: 'conflict-recover', value: prepared });
-    const result = await new WorkspaceChanges(f.store, files, app).recover();
+    const result = await new WorkspaceChanges(f.store, files, noMemoryWorkspace).recover();
     expect(result.conflicts).toHaveLength(1);
     expect(await readFile(path.join(f.source, 'one.txt'), 'utf8')).toBe('someone-else');
     await expect(files.transaction(workspace, async () => {})).rejects.toThrow('WORKSPACE_RECOVERY_REQUIRED');
@@ -124,7 +118,7 @@ describe('workspace file change coordination', () => {
     const downloadedBytes = Buffer.alloc(2 * 1024 * 1024 + 31, 0x42);
     const source = path.join(f.root, 'download-source.bin'); const target = path.join(f.source, 'downloads', 'saved.bin');
     await mkdir(path.dirname(target)); await writeFile(target, oldBytes); await writeFile(source, downloadedBytes);
-    const coordinator = new WorkspaceChanges(f.store, files, app);
+    const coordinator = new WorkspaceChanges(f.store, files, noMemoryWorkspace);
     const result = await coordinator.write(context, [{ path: 'downloads/saved.bin', sourceFile: source, expectedHash: fileHash(oldBytes) }]);
     expect((await readFile(target)).equals(downloadedBytes)).toBe(true);
     const operation = await f.store.getRecord(changeNamespace, result.operationId) as WorkspaceOperation;
@@ -136,7 +130,7 @@ describe('workspace file change coordination', () => {
     await f.store.appendRunEvent({ runId, type: 'run.cancelled', payload: {}, update: { status: 'cancelled' } });
     await f.store.putRecord({ namespace: operationNamespace, id: 'streamed', ownerId: 'streamed', value: operation });
     await f.store.close(); f.store = await PlatformStorage.open(f.data);
-    expect(await new WorkspaceChanges(f.store, files, app).recover()).toEqual({ recovered: [operation.id], conflicts: [] });
+    expect(await new WorkspaceChanges(f.store, files, noMemoryWorkspace).recover()).toEqual({ recovered: [operation.id], conflicts: [] });
     expect((await readFile(target)).equals(oldBytes)).toBe(true);
     expect((await f.store.backupInventory()).find(unit => unit.kind === 'conversation' && unit.id === 'streamed')!.records).toBeGreaterThan(1);
     await f.store.deleteConversation('streamed');
