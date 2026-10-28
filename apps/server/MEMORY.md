@@ -27,7 +27,7 @@ Bot 与角色会话只返回自己的目录，不再叠加全局记忆；子代�
 
 **三个只读工具。** `memory_topics` 逐层浏览授权范围、主题和摘要，用 `nextCursor` 续读当前层；`memory_search` 结合关键词与语义匹配，支持主题、类别、时间筛选，结果受 `tokenBudget` 限制；`memory_read` 按 `ids` 读取正文，`includeSources` 附带来源，长文用 `page` 分段、`nextOffset` 续读同一版本。三者都在 `longMemoryTools` 里注册，效果声明为 `workspace_read`。
 
-能检索到的范围来自 `conversationMemoryScopes`：只认 `MEMORY_IMPORT_POLICY_NAMESPACE` 里用户显式启用的 `library` 范围，且必须属于当前账号、`realm` 为 `real`。资料库不再每轮自动召回，只有当总开关打开、本轮工具清单里有 `memory_search`、且确实有可用范围时，才在 MEMORY 段落尾部追加一次 `LONG_MEMORY_GUIDANCE`，把三个工具的用法讲清楚。资料库不属于当前会话授权范围时，`PlatformLongMemory.access` 直接报错，不静默退化成空结果。
+能检索到的范围来自 `conversationMemoryScopes`：只认 `MEMORY_IMPORT_POLICY_NAMESPACE` 里用户显式启用的 `library` 范围，且必须属于当前账号、`realm` 为 `real`。资料库不再每轮自动召回，只有当总开关打开、本轮工具清单里有 `memory_search`、且确实有可用范围时，才在 MEMORY 段落尾部追加一次 `LONG_MEMORY_GUIDANCE`，把三个工具的用法讲清楚。所选资料库不属于当前会话授权范围时，`PlatformLongMemory.select` 直接报错，没有可用范围时检索也报错，不静默退化成空结果。
 
 **后台摘要与向量任务。** `MemoryBackground` 由持久任务驱动，队列空时不启动定时轮询。两类任务：
 

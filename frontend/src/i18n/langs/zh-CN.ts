@@ -2527,7 +2527,7 @@ const zhCN = {
                     },
                     memory: {
                         title: '永久记忆',
-                        description: '配置 AI 跨会话永久记忆系统（OptMem）'
+                        description: '开关文件记忆，并打开数据目录中的记忆文件夹'
                     },
                     general: {
                         title: '通用设置',

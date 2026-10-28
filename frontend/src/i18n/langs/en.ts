@@ -2525,7 +2525,7 @@ const en: LanguageMessages = {
                     },
                     memory: {
                         title: 'Permanent Memory',
-                        description: 'Configure cross-session AI memory system (OptMem)'
+                        description: 'Turn file-based memory on or off and open the memory folder in the data directory'
                     },
                     general: {
                         title: 'General Settings',

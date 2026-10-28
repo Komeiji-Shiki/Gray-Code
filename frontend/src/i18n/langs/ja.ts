@@ -2525,7 +2525,7 @@ const ja: LanguageMessages = {
                     },
                     memory: {
                         title: '永久記憶',
-                        description: 'セッションを超えた AI 記憶システム（OptMem）の設定'
+                        description: 'ファイル記憶のオン・オフと、データディレクトリ内の記憶フォルダーを開く操作'
                     },
                     general: {
                         title: '一般設定',
