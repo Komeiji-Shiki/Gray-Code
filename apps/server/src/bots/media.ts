@@ -3,7 +3,7 @@ import { BlockList, isIP } from 'node:net';
 import type { PlatformMessage } from '@graycode/contracts';
 import type { BotAttachment, BotInbound, BotReference } from './gateway';
 import type { BotDocument, BotImageFile } from './documents';
-import { formatBotMention, formatBotSourceHeader } from '../../../../shared/botMessagePresentation';
+import { formatBotMention, formatBotSourceHeader, formatBotTimestamp } from '../../../../shared/botMessagePresentation';
 
 export function imageMime(bytes: Uint8Array): string | undefined {
   const buffer = Buffer.from(bytes);
@@ -142,7 +142,8 @@ export async function botInboundParts(message: BotInbound, platform: 'discord' |
   };
   const references = async (values: BotReference[], depth: number): Promise<void> => {
     for (const ref of values.slice(0, 40)) {
-      parts.push({ text: formatBotSourceHeader(`${ref.kind === 'forward' ? '转发' : '引用'}消息`, { displayName: ref.authorName, timestamp: ref.timestamp }).slice(0, -1) + '，以下是原来源内容]' });
+      // 被引用消息只需要知道是谁说的；发送时间对理解引用没有帮助。
+      parts.push({ text: formatBotSourceHeader(`${ref.kind === 'forward' ? '转发' : '引用'}消息`, { displayName: ref.authorName }).slice(0, -1) + '，以下是原来源内容]' });
       if (ref.unavailable) parts.push({ text: `[未读取：${ref.unavailable}]` });
       else if (depth <= 4) await content(ref, depth + 1);
       else parts.push({ text: '[嵌套引用超过 4 层，后续未读取]' });
@@ -150,7 +151,9 @@ export async function botInboundParts(message: BotInbound, platform: 'discord' |
     }
     if (values.length > 40) parts.push({ text: '[转发条目超过 40 条，后续未读取]' });
   };
-  const header = formatBotSourceHeader(`${platform === 'discord' ? 'Discord' : message.network ?? 'QQ'} 发言`, {
+  // 平台已由环境提示说明，发言头只留昵称与时间；两者都缺失时才保留平台标签，避免出现空括号。
+  const identified = message.authorName?.trim() || formatBotTimestamp(message.timestamp);
+  const header = formatBotSourceHeader(identified ? undefined : `${platform === 'discord' ? 'Discord' : message.network ?? 'QQ'} 发言`, {
     displayName: message.authorName, timestamp: message.timestamp });
   if (message.segments) { parts.push({ text: header }); await content(message, 0); }
   else {

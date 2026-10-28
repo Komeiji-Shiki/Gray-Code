@@ -14,13 +14,16 @@ export function formatBotMention(id: string, name?: string): string {
   return name ? `@${id}（${name}）` : `@${id}`;
 }
 
-export function formatBotSourceHeader(label: string, source: { displayName?: unknown; timestamp?: unknown }): string {
-  const fields = [label];
+export function formatBotSourceHeader(label: string | undefined, source: { displayName?: unknown; timestamp?: unknown }): string {
+  const fields = label ? [label] : [];
   if (typeof source.displayName === 'string' && source.displayName.trim()) fields.push(JSON.stringify(source.displayName));
   const time = formatBotTimestamp(source.timestamp);
   if (time) fields.push(time);
   return `[${fields.join(' · ')}]`;
 }
+
+/** 当前发言头是 `["昵称" · 时间]`；`[Discord 发言 · …]` 是旧历史里已存的写法，两种都要识别。 */
+const SPEECH_HEADER = /^\[(?:[^\r\n\[]+ 发言(?: · [^\r\n]*)?|"(?:[^"\\\r\n]|\\.)*"(?: · [^\r\n\]]*)?|\d{4}-[^\r\n\]]*)\](?:\r?\n|$)/;
 
 /** 合并消息只显示一次发言来源；原始历史和引用内部的来源保持独立。 */
 export function formatBotSourceMessages<T extends { role: string; parts: Array<{ text?: unknown }> }>(messages: readonly T[]): T[] {
@@ -45,7 +48,7 @@ export function formatBotSourceMessages<T extends { role: string; parts: Array<{
         text = (reference ? header.slice(0, -1) + '，以下是原来源内容]' : header) + text.slice(match[0].length);
       } catch { /* 无法识别的旧消息保留原文。 */ }
       if (/^\[(引用消息|转发消息)[^\r\n]*，以下是原来源内容\]/.test(text)) referenceDepth++;
-      const header = referenceDepth === 0 && /^\[[^\r\n\[]+ 发言(?: · [^\r\n]*)?\](?:\r?\n|$)/.exec(text);
+      const header = referenceDepth === 0 && SPEECH_HEADER.exec(text);
       if (merged && header) {
         if (speechShown) text = '\n\n' + text.slice(header[0].length);
         speechShown = true;

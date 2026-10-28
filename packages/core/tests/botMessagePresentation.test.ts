@@ -39,6 +39,17 @@ test('Bot 发言和引用只展示名称及可读时间，不重复发送平台�
   for (const value of ['1111111111111111111', '2222222222222222222', '1111111111111111112', '2222222222222222223', String(timestamp), 'authorId']) expect(text).not.toContain(value);
   const time = formatBotTimestamp(timestamp)!; expect(time).toMatch(/^2026-09-10 \d{2}:\d{2}:\d{2} UTC[+-]\d{2}:\d{2}$/);
   expect(Date.parse(time.replace(' UTC', '').replace(' ', 'T'))).toBe(timestamp);
+  // 发言头只有昵称与时间，引用头只有昵称，不带平台标签和被引用消息的时间。
+  expect(parts[0].text).toBe(`["测试用户" · ${time}]\n111在吗`);
+  expect(parts[1].text).toBe('[引用消息 · "小猫"，以下是原来源内容]');
+  expect(text).not.toContain('发言');
+});
+
+test('发言头缺少昵称时只留时间，两者都缺失才保留平台标签', async () => {
+  const base = { id: 'm', authorId: 'a', channelId: 'c', content: '你好', direct: false, mentioned: false };
+  const timestamp = Date.parse('2026-09-10T13:48:38Z');
+  expect((await botInboundParts({ ...base, timestamp }, 'discord'))[0].text).toBe(`[${formatBotTimestamp(timestamp)}]\n你好`);
+  expect((await botInboundParts(base, 'discord'))[0].text).toBe('[Discord 发言]\n你好');
 });
 
 test('旧 Bot 消息在显示和发送时转换，内部来源和普通用户原文保持原样', () => {
@@ -54,14 +65,14 @@ test('旧 Bot 消息在显示和发送时转换，内部来源和普通用户原
 
 test('同一作者合并后只显示首个来源，后续段落分隔且引用内部的来源保留', async () => {
   const base = { authorId: 'author', authorName: '同一作者', channelId: 'channel', direct: false, mentioned: false, timestamp: Date.now() };
-  const quote = formatBotSourceHeader('Discord 发言', { displayName: '同一作者' }) + '\n这是引用中的原文';
+  const quote = formatBotSourceHeader(undefined, { displayName: '同一作者' }) + '\n这是引用中的原文';
   const first = await botInboundParts({ ...base, id: 'first', content: '第一段', references: [{ kind: 'reply', id: 'quoted', authorName: '被引用的人', content: quote }] }, 'discord');
   const second = await botInboundParts({ ...base, id: 'second', timestamp: base.timestamp + 1000, content: '后续补充' }, 'discord');
   const messages = [{ role: 'user', source: { platform: 'discord', platformUserId: 'author' }, botMessageIds: ['first', 'second'], parts: [...first, ...second] }] as unknown as Content[];
   const original = structuredClone(messages);
   for (const result of [toDisplayMessages(messages), formatHistoryForAPI(messages)]) {
     const text = result[0].parts.map(part => part.text ?? '').join('');
-    expect(text.match(/\[Discord 发言 · "同一作者"/g)).toHaveLength(2);
+    expect(text.match(/\["同一作者"/g)).toHaveLength(2);
     expect(text).toContain(quote); expect(text).toContain('被引用的人');
     expect(text).toContain('[原来源内容结束]\n\n后续补充');
   }
@@ -69,6 +80,9 @@ test('同一作者合并后只显示首个来源，后续段落分隔且引用�
   const header = '[Discord 发言 {"id":"a","authorId":"author","displayName":"同一作者"}]\n';
   const legacy = [{ ...messages[0], parts: [{ text: header + '第一段' }, { text: header.replace('"a"', '"b"') + '第二段' }] }];
   expect(toDisplayMessages(legacy)[0].parts.map(part => part.text).join('')).toBe('[Discord 发言 · "同一作者"]\n第一段\n\n第二段');
+  // 已存的 `[Discord 发言 · …]` 纯文本头同样按合并规则只保留首个。
+  const stored = { ...messages[0], parts: [{ text: '[Discord 发言 · "同一作者"]\n第一段' }, { text: '[Discord 发言 · "同一作者"]\n第二段' }] };
+  expect(toDisplayMessages([stored] as unknown as Content[])[0].parts.map(part => part.text).join('')).toBe('[Discord 发言 · "同一作者"]\n第一段\n\n第二段');
 });
 
 test('实际历史分页接口使用相同显示格式并保留绝对索引', async () => {

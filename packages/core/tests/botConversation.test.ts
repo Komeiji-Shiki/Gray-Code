@@ -216,9 +216,9 @@ describe('Bot 频道上下文、附件与定时总结', () => {
       expect(generated[0].systemPrompt).toEqual(generated[1].systemPrompt);
       expect(generated.every(input => input.promptContext?.taskContextEmbedded)).toBe(true);
       expect(generated[0].promptContext!.beforeHistoryMessages.flatMap(message => message.parts.map(part => part.text ?? '')).join('\n')).not.toContain('频道固定内容');
-      expect(generated[0].messages.findLast(message => message.isUserInput)?.parts[0]?.text).toMatch(/^频道固定内容 \{"platform":"discord","botId":"900","channelId":"30","direct":false\}\n认证身份 主人\n\[Discord 发言/);
+      expect(generated[0].messages.findLast(message => message.isUserInput)?.parts[0]?.text).toMatch(/^频道固定内容 \{"platform":"discord","botId":"900","channelId":"30","direct":false\}\n认证身份 主人\n\["主人" · /);
       const currentMember = generated[1].messages.findLast(message => message.isUserInput);
-      expect(currentMember?.parts[0]?.text).toMatch(/^频道固定内容 \{"platform":"discord","botId":"900","channelId":"30","direct":false\}\n认证身份 成员\n\[Discord 发言/);
+      expect(currentMember?.parts[0]?.text).toMatch(/^频道固定内容 \{"platform":"discord","botId":"900","channelId":"30","direct":false\}\n认证身份 成员\n\["/);
       const sentText = generated[1].messages.flatMap(message => message.parts.map(part => part.text ?? '')).join('\n');
       expect(sentText.match(/频道固定内容/g)).toHaveLength(2);
       expect(sentText.match(/认证身份 主人/g)).toHaveLength(1);
@@ -230,7 +230,7 @@ describe('Bot 频道上下文、附件与定时总结', () => {
       expect(turns).toHaveLength(2); expect(saved.filter(message => message.botPassive).map(message => message.botMessageIds)).toEqual([['a', 'b'], ['c'], ['d'], ['f']]);
       const cache = deserializePromptContextCache(turns[0].turnDynamicContext as string);
       expect(cache.dynamicSnapshotText).not.toContain('认证身份');
-      expect(turns[0].parts[0].text).toMatch(/^\[Discord 发言/);
+      expect(turns[0].parts[0].text).toMatch(/^\["/);
       await app.discord.receive(inbound('g', '20', true)); expect(generated).toHaveLength(2);
       await app.discord.stop(); await app.discord.start(); expect((await app.discord.sessions.snapshot(context())).conversation!.id).toBe(id);
       await expect(app.conversation('member', id)).resolves.toMatchObject({ id });
