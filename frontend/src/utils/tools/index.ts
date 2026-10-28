@@ -76,16 +76,6 @@ import './history/history_search'
 // Activity 工具
 import './activity/get_activity_stats'
 
-// Memory 工具
-import './memory/memory_wake'
-import './memory/memory_note'
-import './memory/memory_recall'
-import './memory/memory_compress'
-import './memory/memory_zoom'
-import './memory/memory_forget'
-import './memory/memory_config'
-import './memory/engineering_log'
-
 // 导出工具注册表
 export { toolRegistry, registerTool, getToolConfig, type ToolConfig } from '../toolRegistry'
 

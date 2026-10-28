@@ -1,6 +1,5 @@
 import { DEFAULT_BRANCH_RETENTION_DAYS, branchRetentionDays } from '../conversations/retention';
 import type { PendingConfigurationImport } from '../migration/configuration';
-import type { MemoryConfig } from '../../../../backend/modules/memory/types';
 import type { SavedPlatformSkill, SkillBundle } from '../skills/bundles';
 import { SettingsManager } from '../../../../backend/modules/settings/SettingsManager';
 import type { GlobalSettings } from '../../../../backend/modules/settings/types';
@@ -18,9 +17,8 @@ import { isDeepStrictEqual } from 'node:util';
 import type { PendingBackgroundImages } from './images';
 import { getActualLanguage, setLanguage, type SupportedLanguage } from '../../../../backend/i18n';
 
-export interface ProductPreferences { branchRetentionDays?: number; pendingBackgroundImages?: PendingBackgroundImages; pendingConfigurationImports?: PendingConfigurationImport[]; pendingMemoryConfig?: { scopeId: string; value: MemoryConfig; expectedRevision: number | null }; pendingSkillBundles?: Record<string, SkillBundle>; importedSkills?: SavedPlatformSkill[]; features: GlobalSettings; channels: ChannelConfig[]; mcpServers?: McpServerConfig[]; mcpSecrets?: Record<string, string> }
+export interface ProductPreferences { branchRetentionDays?: number; pendingBackgroundImages?: PendingBackgroundImages; pendingConfigurationImports?: PendingConfigurationImport[]; pendingSkillBundles?: Record<string, SkillBundle>; importedSkills?: SavedPlatformSkill[]; features: GlobalSettings; channels: ChannelConfig[]; mcpServers?: McpServerConfig[]; mcpSecrets?: Record<string, string> }
 export interface ProductSettingsDraft {
-  memoryConfig?: { scopeId: string; value: MemoryConfig; expectedRevision: number | null; dirty: boolean };
   settings: SettingsManager;
   configs: ConfigManager;
   mcp: McpManager;
@@ -157,8 +155,7 @@ export class ProductConfiguration {
       if (!agent.providerId || !next.providers.some(profile => profile.id === agent.providerId)) agent.providerId = active || next.providers[0]?.id || '';
     }
     const snapshot = await this.application.settings.save({ settings: next, expectedRevision: draft.revision, credentials },
-      { ...draft.value, channels, ...(draft.memoryConfig?.dirty ? { pendingMemoryConfig: draft.memoryConfig } : {}) });
-    draft.memoryConfig = undefined;
+      { ...draft.value, channels });
     delete draft.value.pendingSkillBundles;
     delete draft.value.pendingConfigurationImports;
     delete draft.value.pendingBackgroundImages;
@@ -170,8 +167,6 @@ export class ProductConfiguration {
   async prepare(next: AppSettings, previous: AppSettings, value?: ProductPreferences): Promise<PreparedSettingsProjection> {
     const saved = structuredClone(value ?? this.saved);
     if (saved.branchRetentionDays !== undefined) branchRetentionDays(saved.branchRetentionDays);
-    const memoryConfig = saved.pendingMemoryConfig;
-    delete saved.pendingMemoryConfig;
     const configurationImports = saved.pendingConfigurationImports ?? [];
     delete saved.pendingConfigurationImports;
     const skillBundles = saved.pendingSkillBundles ?? {};
@@ -189,8 +184,8 @@ export class ProductConfiguration {
       records: [{ namespace: 'product-settings', id: 'main', value: sealed.value },
         ...this.application.images.records(backgroundImages),
         ...Object.entries(skillBundles).map(([id, value]) => ({ namespace: 'skill-bundles', id, value })),
-        ...configurationImports.map(value => ({ namespace: 'migration-configurations', id: value.id, value: { ...value, importedAt: Date.now() } })),
-        ...(memoryConfig ? [{ namespace: 'memory-config', id: memoryConfig.scopeId, value: memoryConfig.value, expectedRevision: memoryConfig.expectedRevision }] : [])], credentials: { ...credentials, ...sealed.credentials },
+        ...configurationImports.map(value => ({ namespace: 'migration-configurations', id: value.id, value: { ...value, importedAt: Date.now() } }))],
+      credentials: { ...credentials, ...sealed.credentials },
       publish: () => {
         const language = uiLanguage(activeSettings);
         const previousLanguage = getActualLanguage();

@@ -40,7 +40,6 @@ import { CharacterPipeline, type CharacterTurn } from './characters/pipeline';
 import { CharacterResources } from './characters/resources';
 import { ApplicationAutomations } from './automations/service';
 import { prepareExternalWrite } from './workspace/writeAccess';
-import { PlatformMemory } from './memory/service';
 import { PlatformSkills } from './skills/service';
 import { PlatformTerminals } from './terminal/service';
 import { terminalTaskTool } from './terminal/tool';
@@ -171,7 +170,6 @@ export class PlatformApplication {
   readonly checkpointLifecycle: CheckpointLifecycle;
   readonly git: WorkspaceGit;
   readonly workspaceSearch: WorkspaceSearch;
-  readonly memory: PlatformMemory;
   readonly longMemory: PlatformLongMemory;
   readonly longMemoryPrompt: LongMemoryPrompt;
   readonly skills: PlatformSkills;
@@ -301,8 +299,6 @@ export class PlatformApplication {
     this.tools.register(terminalTaskTool(this.terminals));
     this.skills = new PlatformSkills(this);
     this.tools.register(this.skills.tool());
-    this.memory = new PlatformMemory(this);
-    for (const tool of this.memory.declarations()) this.tools.register(tool);
     this.longMemory=new PlatformLongMemory(this);
     this.longMemoryPrompt=new LongMemoryPrompt(this.longMemory);
     for(const tool of longMemoryTools(this.longMemory))this.tools.register(tool);
@@ -501,7 +497,7 @@ export class PlatformApplication {
         const originalFiles = (snapshot.settings.toolCatalogVersion ?? 0) < 2
           ? ['read_file', 'list_files', 'find_files', 'search_in_files', 'write_file', 'apply_diff', 'insert_code', 'delete_code', 'create_directory', 'delete_file'] : [];
         const conversationTools = (snapshot.settings.toolCatalogVersion ?? 0) < 3 ? ['todo_write', 'todo_update', 'history_search', 'get_activity_stats'] : [];
-        if (baseline && (snapshot.settings.toolCatalogVersion ?? 0) < 10) baseline.toolNames = [...new Set([...baseline.toolNames, ...originalFiles, ...conversationTools, 'get_symbols', 'goto_definition', 'find_references', 'show_windows_notification', ...application.artifacts.tools().map(tool => tool.declaration.name), 'subagents', 'execute_command', 'read_skill', ...application.memory.declarations().map(tool => tool.declaration.name)])];
+        if (baseline && (snapshot.settings.toolCatalogVersion ?? 0) < 10) baseline.toolNames = [...new Set([...baseline.toolNames, ...originalFiles, ...conversationTools, 'get_symbols', 'goto_definition', 'find_references', 'show_windows_notification', ...application.artifacts.tools().map(tool => tool.declaration.name), 'subagents', 'execute_command', 'read_skill'])];
         if (baseline) baseline.toolNames = [...new Set([...baseline.toolNames, ...browserTools(application.browser).map(tool => tool.declaration.name)])];
         snapshot.settings.toolCatalogVersion = 11;
         await application.settings.save({ settings: snapshot.settings, expectedRevision: snapshot.revision });

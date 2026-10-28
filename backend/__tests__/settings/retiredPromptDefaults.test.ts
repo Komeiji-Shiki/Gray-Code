@@ -16,7 +16,7 @@ import {
     DEFAULT_DYNAMIC_CONTEXT_TEMPLATE,
     DEFAULT_SUMMARIZE_CONFIG
 } from '../../modules/settings/types';
-import { DEFAULT_MEMORY_PROMPT, DYNAMIC_CONTEXT_PREAMBLE } from '../../../shared/defaultPromptTemplates';
+import { DYNAMIC_CONTEXT_PREAMBLE } from '../../../shared/defaultPromptTemplates';
 import { retiredPromptKind } from '../../modules/settings/retiredPromptDefaults';
 import { createMemorySettingsStorage } from '../__fixtures__/settingsFixtures';
 import { RETIRED_PROMPT_SAMPLES } from '../__fixtures__/retiredPromptSamples';
@@ -30,7 +30,7 @@ async function managerWith(toolsConfig: Record<string, unknown>) {
 describe('retired prompt defaults', () => {
     test('current defaults are not registered as retired', () => {
         for (const text of [CODE_MODE_TEMPLATE, DESIGN_MODE_TEMPLATE, PLAN_MODE_TEMPLATE, ASK_MODE_TEMPLATE, REVIEW_MODE_TEMPLATE,
-            DEFAULT_DYNAMIC_CONTEXT_TEMPLATE, DEFAULT_MEMORY_PROMPT, DEFAULT_SUMMARIZE_CONFIG.summarizePrompt, DEFAULT_SUMMARIZE_CONFIG.autoSummarizePrompt]) {
+            DEFAULT_DYNAMIC_CONTEXT_TEMPLATE, DEFAULT_SUMMARIZE_CONFIG.summarizePrompt, DEFAULT_SUMMARIZE_CONFIG.autoSummarizePrompt]) {
             expect(retiredPromptKind(text)).toBeUndefined();
         }
     });

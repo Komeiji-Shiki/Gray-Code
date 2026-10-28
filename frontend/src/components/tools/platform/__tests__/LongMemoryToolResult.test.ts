@@ -3,7 +3,6 @@ import { afterEach, beforeEach, expect, test } from 'vitest'
 import { hasMessage, setLanguage } from '../../../../i18n'
 import LongMemoryToolResult from '../LongMemoryToolResult.vue'
 import { DefaultToolResult, getToolConfig } from '../../../../utils/toolRegistry'
-import '../../../../utils/tools/memory/memory_note'
 import '../../../../utils/tools/platform'
 
 const wrappers: VueWrapper[] = []
@@ -130,10 +129,11 @@ test('contradictory success with an error cannot acknowledge removal or saving',
   expect(save.find('.memory-save-receipt').exists()).toBe(false)
 })
 
-test('new platform registry covers all 13 names and preserves the old memory_note renderer', () => {
+test('platform registry preserves long-memory renderers and displays old engineering tools with the generic result', () => {
   const names = ['workspace_files', 'search_files', 'run_command', 'process_session', 'team_tasks', 'team_wait', 'memory_topics', 'memory_search', 'memory_read', 'memory_remember', 'memory_revise', 'memory_remove', 'memory_summarize']
   for (const name of names) expect(getToolConfig(name)?.contentComponent).not.toBe(DefaultToolResult)
-  expect(getToolConfig('memory_note')?.contentComponent).not.toBe(getToolConfig('memory_remember')?.contentComponent)
+  expect(getToolConfig('memory_note')?.contentComponent).toBe(DefaultToolResult)
+  expect(getToolConfig('engineering_log')?.contentComponent).toBe(DefaultToolResult)
   expect(getToolConfig('unregistered_platform_fixture')?.contentComponent).toBe(DefaultToolResult)
 })
 

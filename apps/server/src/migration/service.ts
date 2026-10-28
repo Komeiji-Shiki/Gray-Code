@@ -4,7 +4,6 @@ import { importLegacyActivity, type ActivityImportReport } from './activity';
 import { ConfigurationMigration, type ConfigurationFile } from './configuration';
 import { validateLegacyUsageIndex } from '../conversations/usage';
 import { importLegacySkills, type SkillImportReport } from '../skills/import';
-import { LegacyMemoryImporter, type MemoryImportReport } from '../memory/import';
 import type { PlatformApplication } from '../application';
 import { importLegacyHistory, type LegacyImportOptions, type LegacyCheckpointConverter } from '@graycode/core';
 import { validateLegacyImportPaths } from '@graycode/core';
@@ -557,7 +556,6 @@ export class MigrationService {
     try {
     update({ phase: 'scanning', detail: '检查旧数据目录', currentItem: source });
     const root = await validateLegacyImportPaths(source, this.app.storage.directory);
-    let memory: MemoryImportReport | undefined;
     let skills: SkillImportReport | undefined;
     let configurationFiles: ConfigurationFile[] = [];
     let activity: ActivityImportReport | undefined;
@@ -580,8 +578,6 @@ export class MigrationService {
       convertUsage: async (id, value) => validateLegacyUsageIndex(value, id),
       importAdditionalArtifacts: options.conversationIds ? undefined : async () => {
         operation.controller.signal.throwIfAborted();
-        update({ phase: 'memory', detail: '导入长期记忆' });
-        memory = await new LegacyMemoryImporter(this.app).run(actorId, root, operation.controller.signal);
         update({ phase: 'skills', detail: '导入技能及附属文件' });
         skills = await importLegacySkills(this.app, actorId, root, operation.controller.signal);
         update({ phase: 'activity', detail: '导入使用时间记录' });
@@ -591,8 +587,10 @@ export class MigrationService {
         update({ phase: 'configuration', detail: '识别旧配置文件' });
         const configurations = await this.configurations.inspect(root, operation.controller.signal);
         configurationFiles = configurations.files;
-        return { consumed: [...memory.consumed, ...skills.consumed, ...activity.consumed, ...runtimeAssets.consumed, ...configurations.consumed], issues: [...memory.issues, ...skills.issues, ...activity.issues, ...runtimeAssets.issues, ...configurations.issues],
-          importedUnits: memory.imported.length + memory.skipped.length + skills.imported.length + skills.skipped.length + activity.imported.length + activity.skipped.length + runtimeAssets.imported.length + runtimeAssets.skipped.length + configurations.importedUnits };
+        return { consumed: [...skills.consumed, ...activity.consumed, ...runtimeAssets.consumed, ...configurations.consumed],
+          issues: [...skills.issues, ...activity.issues, ...runtimeAssets.issues, ...configurations.issues],
+          importedUnits: skills.imported.length + skills.skipped.length + activity.imported.length + activity.skipped.length
+            + runtimeAssets.imported.length + runtimeAssets.skipped.length + configurations.importedUnits };
       },
     });
     operation.controller.signal.throwIfAborted();
@@ -607,7 +605,10 @@ export class MigrationService {
       await this.app.storage.commitConversation({ conversationId: id, expectedRevision: state.historyRevision, expectedMetadataToken: state.metadataToken,
         metadata: { ...state.metadata, actorId, legacySource: root } });
     }
-    const result = this.configurations.complete({ ...report, operationId: operation.id, configurationFiles, ...(runtimeAssets ? { runtimeAssets: { imported: runtimeAssets.imported, skipped: runtimeAssets.skipped } } : {}), ...(activity ? { activity: { imported: activity.imported, skipped: activity.skipped } } : {}), ...(skills ? { skills: { imported: skills.imported, skipped: skills.skipped } } : {}), ...(memory ? { memory: { imported: memory.imported, skipped: memory.skipped } } : {}) });
+    const result = this.configurations.complete({ ...report, operationId: operation.id, configurationFiles,
+      ...(runtimeAssets ? { runtimeAssets: { imported: runtimeAssets.imported, skipped: runtimeAssets.skipped } } : {}),
+      ...(activity ? { activity: { imported: activity.imported, skipped: activity.skipped } } : {}),
+      ...(skills ? { skills: { imported: skills.imported, skipped: skills.skipped } } : {}) });
     update({ phase: 'finalizing', detail: '保存迁移报告' });
     await this.app.storage.commitRecords([{ namespace: 'migration-reports', id: operation.id, ownerId: actorId, value: result },
       { namespace: 'migration-latest', id: actorId, ownerId: actorId, value: { operationId: operation.id } }]);

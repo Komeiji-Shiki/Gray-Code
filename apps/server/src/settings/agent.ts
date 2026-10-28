@@ -3,8 +3,6 @@ import type { SettingsManager } from '../../../../backend/modules/settings/Setti
 import { DEFAULT_TOOL_AUTO_EXEC_CONFIG } from '../../../../backend/modules/settings/types/toolsTypes';
 import type { PlatformApplication } from '../application';
 import { CONTEXT_TOOL_NAMES } from '../../../../shared/contextManagement';
-import { withEngineeringLogAgent } from '../memory/engineeringLogPolicy';
-import { ENGINEERING_LOG_LEGACY_NAMES } from '../../../../backend/modules/memory/types';
 import { upgradeToolNames } from '../../../../shared/toolNameUpgrades';
 
 /**
@@ -38,10 +36,9 @@ export function toolApprovalConfigured(preferences: SettingsManager, name: strin
   return !Object.hasOwn(DEFAULT_TOOL_AUTO_EXEC_CONFIG, name) || configured[name] !== DEFAULT_TOOL_AUTO_EXEC_CONFIG[name];
 }
 
-/** 读取旧清单时先保留工程日志的操作范围，再升级工具名称；不改写已保存的配置。 */
+/** 读取旧清单时升级工具名称；不改写已保存的配置。 */
 export function upgradeAgentToolNames(agent: AgentDefinition): AgentDefinition {
-  const upgraded = withEngineeringLogAgent(agent);
-  return { ...upgraded, toolNames: upgradeToolNames(upgraded.toolNames) };
+  return { ...agent, toolNames: upgradeToolNames(agent.toolNames) };
 }
 
 type ToolEnablement = Pick<SettingsManager, 'getToolsEnabled' | 'isToolEnabled'>;
@@ -53,7 +50,7 @@ function hasWebSearchCredential(preferences: SettingsManager): boolean {
 
 /**
  * 合并工具中某个操作是否启用：用户单独设置过新名称时以新名称为准，否则沿用该操作原工具的启用项。
- * 工具清单、工程日志和终端的 argv / input 操作共用这一条规则。
+ * 工具清单和终端的 argv / input 操作共用这一条规则。
  */
 export function mergedOperationEnabled(preferences: ToolEnablement, toolName: string, legacyName: string): boolean {
   return preferences.isToolEnabled(Object.hasOwn(preferences.getToolsEnabled(), toolName) ? toolName : legacyName);
@@ -71,8 +68,6 @@ export function configuredAgent(app: PlatformApplication, agent: AgentDefinition
   const webConfigured = hasWebSearchCredential(preferences);
   return { ...agent, toolNames: [...new Set([...selected, ...mcpNames])].filter(name =>
     (webConfigured || name !== 'web_search' && name !== 'web_fetch')
-    && (name === 'engineering_log'
-      ? Object.values(ENGINEERING_LOG_LEGACY_NAMES).some(legacy => mergedOperationEnabled(preferences, name, legacy))
-      : preferences.isToolEnabled(name))),
+    && preferences.isToolEnabled(name)),
     toolApproval: { ...toolApprovalRules(preferences, names, mcpNames), ...agent.toolApproval } };
 }

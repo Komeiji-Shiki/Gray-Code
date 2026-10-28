@@ -6,7 +6,6 @@
  */
 
 import type { PromptMode, SystemPromptConfig } from './types';
-import { MEMORY_TOOL_NAMES } from '../memory/types';
 import {
     CODE_MODE_TEMPLATE,
     DESIGN_MODE_TEMPLATE,
@@ -100,8 +99,7 @@ export const DESIGN_PROMPT_MODE: PromptMode = {
         'validate_progress_document',
         'subagents',
         'create_design',
-        'update_design',
-        ...MEMORY_TOOL_NAMES
+        'update_design'
     ]
 };
 
@@ -133,8 +131,7 @@ export const PLAN_PROMPT_MODE: PromptMode = {
         'validate_progress_document',
         'subagents',
         'create_plan',
-        'update_plan',
-        ...MEMORY_TOOL_NAMES
+        'update_plan'
     ]
 };
 
@@ -186,8 +183,7 @@ export const REVIEW_MODE_TOOL_POLICY: string[] = [
     'validate_progress_document',
     'record_review_milestone',
     'finalize_review',
-    'reopen_review',
-    ...MEMORY_TOOL_NAMES
+    'reopen_review'
 ];
 
 export const REVIEW_PROMPT_MODE: PromptMode = {

@@ -105,20 +105,16 @@ describe('多根工作区的文件、任务与旧检查点', () => {
     expect(calls).toBe(2);
   });
 
-  test('固定文件和记忆按实际目录归属，目录改名后仍可读取与注入上下文', async () => {
+  test('固定文件按实际目录归属，目录改名后仍可读取与注入上下文', async () => {
     const conversation = await app.createConversation('owner', 'persistent references', 'multi');
     const ui = <T>(type: string, data: Record<string, unknown> = {}) => rpc<T>('ui.request', { type, data: { conversationId: conversation.id, ...data } });
     await writeFile(path.join(beta, 'same.txt'), 'PINNED_SECOND_ROOT_CONTENT');
     const validated = await ui<{ valid: boolean; relativePath: string; workspaceUri: string }>('validatePinnedFile', { path: '@beta/same.txt' });
     expect(validated.valid).toBe(true); expect(validated.relativePath).toBe('same.txt');
     await ui('addPinnedFile', { path: validated.relativePath, workspaceUri: validated.workspaceUri });
-    await ui('addMemoryEntry', { workspaceUri: validated.workspaceUri, text: 'SECOND_ROOT_MEMORY' });
     const draft = app.settings.snapshot(); draft.settings.workspaces[0].roots![1].name = 'assets';
     await app.settings.save({ settings: draft.settings, expectedRevision: draft.revision });
     expect(await ui('getPinnedFilesConfig')).toMatchObject({ files: [{ path: '@assets/same.txt', workspaceUri: validated.workspaceUri }] });
-    expect(await ui('getMemoryEntries', { workspaceUri: validated.workspaceUri })).toMatchObject({ total: 1 });
-    expect(await ui('getMemoryEntries', { workspaceUri: pathToFileURL(alpha).toString() })).toMatchObject({ total: 0 });
-    expect(await ui('listMemoryScopes')).toMatchObject({ scopes: expect.arrayContaining([expect.objectContaining({ name: 'assets', fsPath: beta })]) });
     const saved = await app.storage.getConversation(conversation.id);
     const prompt = await new PlatformPromptService(app).prepare({ request: { actorId: 'owner', conversationId: conversation.id, agentId: 'default', requestKey: 'preview', message: message(0) },
       actor: app.actor('owner')!, agent: { ...app.settings.snapshot().settings.agents[0], toolNames: [] }, workspace: workspace(), conversation: saved!, history: [], preview: true });

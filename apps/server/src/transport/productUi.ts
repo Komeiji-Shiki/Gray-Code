@@ -19,7 +19,6 @@ import { validateExternalAgentProfiles } from '../externalAgents/settings';
 import { randomUUID } from 'node:crypto';
 import { createCharacterStarterPreset } from '../../../../shared/characterPromptModules';
 import { characterConversation } from '../characters/conversation';
-import { memoryUiHandlers } from '../memory/ui';
 import { pathToFileURL } from 'node:url';
 import type { PlatformApplication } from '../application';
 import type { ClientSession } from './router';
@@ -748,8 +747,6 @@ export class ProductUi {
       return this.app.skills.change(client.actorId, data.id, type === 'setSkillEnabled' ? data.enabled : undefined,
         data.conversationId, workspace?.id, ui.preferences);
     };
-    const memoryHandlers = memoryUiHandlers(this.app, client.actorId, ui.preferences);
-    if (Object.hasOwn(memoryHandlers, type)) handler = memoryHandlers[type as keyof typeof memoryHandlers];
     if (handler) {
       const result = await handler(data);
       if (ui.preferences.dirty) {

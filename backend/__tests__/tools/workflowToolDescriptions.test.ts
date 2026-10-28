@@ -1,12 +1,11 @@
 /**
- * 工作流与工程日志记忆工具的模型说明：锁定改写后必须保留的行为约束。
+ * 工作流工具的模型说明：锁定改写后必须保留的行为约束。
  *
  * 覆盖：
  * - update_plan：progress_sync 只传 path/todos/updateMode/changeSummary，更新约束只在主说明写一次，
  *   updateMode / sourceArtifact 参数各提一句；
  * - create_plan：todos 为必填，sourceArtifact 用于检查计划是否仍与来源文档一致；
  * - review 系列：一次审查一份文档、同一会话只有一个进行中的审查、finalize 后需 reopen；
- * - engineering_log：区分工程日志与个人长期记忆（memory_search / memory_remember）；
  * - 所有文本不含内部实现名（ConversationMetadata、Cursor-style 等）与全大写强调词。
  */
 
@@ -26,7 +25,6 @@ import { createFinalizeReviewToolDeclaration } from '../../tools/review/finalize
 import { createReopenReviewToolDeclaration } from '../../tools/review/reopen_reviewRuntime';
 import { createValidateReviewDocumentToolDeclaration } from '../../tools/review/validate_review_documentRuntime';
 import { createCompareReviewDocumentsToolDeclaration } from '../../tools/review/compare_review_documentsRuntime';
-import { createEngineeringLogDeclaration } from '../../tools/memory/engineeringLog';
 import type { ToolDeclaration } from '../../tools/types';
 
 const WORKFLOW_DECLARATIONS: ToolDeclaration[] = [
@@ -48,12 +46,8 @@ const WORKFLOW_DECLARATIONS: ToolDeclaration[] = [
     createCompareReviewDocumentsToolDeclaration()
 ];
 
-const MEMORY_DECLARATIONS: ToolDeclaration[] = [
-    createEngineeringLogDeclaration()
-];
-
 function byName(name: string): ToolDeclaration {
-    const found = [...WORKFLOW_DECLARATIONS, ...MEMORY_DECLARATIONS].find(decl => decl.name === name);
+    const found = WORKFLOW_DECLARATIONS.find(decl => decl.name === name);
     if (!found) throw new Error(`declaration not found: ${name}`);
     return found;
 }
@@ -74,7 +68,7 @@ function declarationTexts(decl: ToolDeclaration): string[] {
 }
 
 const ALL_TEXTS: Array<[string, string[]]> = [
-    ...[...WORKFLOW_DECLARATIONS, ...MEMORY_DECLARATIONS].map(decl => [`source:${decl.name}`, declarationTexts(decl)] as [string, string[]])
+    ...WORKFLOW_DECLARATIONS.map(decl => [`source:${decl.name}`, declarationTexts(decl)] as [string, string[]])
 ];
 
 describe('工具说明不暴露内部实现、不使用全大写强调', () => {
@@ -146,22 +140,5 @@ describe('progress 系列：保留默认值与替换语义', () => {
 
     test('update_progress：只改传入字段，todos/risks 整体替换', () => {
         expect(byName('update_progress').description).toContain('todos 和 risks 整体替换');
-    });
-});
-
-describe('engineering_log：区分工程日志与个人长期记忆', () => {
-    test('读取与记录操作明确指向独立的个人长期记忆工具', () => {
-        const description = byName('engineering_log').description;
-        expect(description).toContain('工程日志');
-        expect(description).toContain('个人长期记忆');
-        expect(description).toContain('memory_search');
-        expect(description).toContain('memory_remember');
-    });
-
-    test('note 的长度按 UTF-8 字节计算，config 不再声称只影响输出格式', () => {
-        const declaration = byName('engineering_log');
-        expect(declaration.parameters.properties.text.description).toContain('UTF-8 字节');
-        expect(declaration.description).not.toContain('只影响输出格式');
-        expect(declaration.description).toContain('不改写已保存的记忆');
     });
 });

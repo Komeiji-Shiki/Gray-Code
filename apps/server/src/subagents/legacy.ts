@@ -10,7 +10,6 @@ import { configuredAgent } from '../settings/agent';
 import {
   filterPlatformModeToolNames, filterPromptModeToolNames, resolvePlatformMode, searchReplaceRestriction,
 } from '../../../../backend/modules/settings/modeToolsPolicy';
-import { engineeringLogActionRestrictions } from '../memory/engineeringLogPolicy';
 import { createSubagentRecord } from './profile';
 import { legacySubagentSnapshot, readLegacySubagent } from './legacySource';
 import type { PlatformSubagent, SubagentLaunchContext } from './types';
@@ -139,8 +138,7 @@ export class LegacySubagents {
     const promptModeId = custom?.promptModeConfig?.modeId ?? profile?.promptModeId ?? agent.promptModeId;
     const mode = preferences.resolvePromptMode(promptModeId);
     agent.toolNames = filterPlatformModeToolNames(platformMode, profile, filterPromptModeToolNames(mode, agent.toolNames));
-    agent.toolApproval = { ...agent.toolApproval, ...engineeringLogActionRestrictions(mode.toolPolicy ?? []),
-      ...engineeringLogActionRestrictions(profile?.toolNames ?? []), ...searchReplaceRestriction(agent.toolNames) };
+    agent.toolApproval = { ...agent.toolApproval, ...searchReplaceRestriction(agent.toolNames) };
     const workspaceId = source.state.metadata.workspaceId;
     const workspace = typeof workspaceId === 'string' ? this.app.workspace(actorId, workspaceId, []) : undefined;
     const modelSelection = { providerId: provider.id, modelOverride: selected?.modelId || undefined };

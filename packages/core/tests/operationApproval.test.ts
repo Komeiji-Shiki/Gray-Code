@@ -1,6 +1,6 @@
 import path from 'node:path';
 import { readFile, writeFile } from 'node:fs/promises';
-import type { AgentDefinition, PlatformMessage } from '@graycode/contracts';
+import type { PlatformMessage } from '@graycode/contracts';
 import { PlatformApplication } from '../../../apps/server/src/application';
 import { ApplicationRouter } from '../../../apps/server/src/transport/router';
 import { fixture } from './fixtures';
@@ -64,13 +64,4 @@ describe('按操作审批：受限模式与合并工具', () => {
     expect(searchDeclaration!.parameters.properties).toHaveProperty('mode');
   });
 
-  test('旧清单划定的工程日志操作范围不会被新名称上的自动执行覆盖', async () => {
-    const draft = app.settings.snapshot();
-    const base = draft.settings.agents[0];
-    const limited: AgentDefinition = { ...base, id: 'limited', name: 'Limited', toolNames: ['memory_wake', 'read_file'], toolApproval: { engineering_log: 'auto' } };
-    draft.settings.agents.push(limited);
-    await app.settings.save({ settings: draft.settings, expectedRevision: draft.revision });
-    const noted = await run({ name: 'engineering_log', args: { action: 'note', text: '不应写入' } }, { agentId: 'limited' });
-    expect(noted).toMatchObject({ success: false, code: 'PERMISSION_DENIED', error: 'This tool is disabled by its approval rule.' });
-  });
 });

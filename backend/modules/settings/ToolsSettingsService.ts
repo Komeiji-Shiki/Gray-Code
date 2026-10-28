@@ -34,9 +34,10 @@ import {
     getDefaultExecuteCommandConfig,
     DEFAULT_MAX_TOOL_ITERATIONS
 } from './types';
-import { MEMORY_TOOL_NAMES, isMemoryToolName } from '../memory/types';
 import { SettingsCore } from './SettingsCore';
 import { MemorySettingsService } from './MemorySettingsService';
+
+const MEMORY_TOOL_NAMES = ['memory_topics', 'memory_search', 'memory_read'];
 
 /**
  * 工具设置服务
@@ -136,7 +137,7 @@ export class ToolsSettingsService {
      * @returns 是否启用（未配置时默认启用）
      */
     isToolEnabled(toolName: string): boolean {
-        if (isMemoryToolName(toolName) && !this.memory.isMemoryEnabled()) {
+        if (MEMORY_TOOL_NAMES.includes(toolName) && !this.memory.isMemoryEnabled()) {
             return false;
         }
         // 如果未配置，默认启用
@@ -151,7 +152,7 @@ export class ToolsSettingsService {
      */
     async setToolEnabled(toolName: string, enabled: boolean): Promise<void> {
         await this.core.serializeMutation(async () => {
-            if (enabled && isMemoryToolName(toolName) && !this.memory.isMemoryEnabled()) {
+            if (enabled && MEMORY_TOOL_NAMES.includes(toolName) && !this.memory.isMemoryEnabled()) {
                 throw new Error('Permanent memory is disabled. Enable it in Memory settings before enabling memory tools.');
             }
             const oldValue = { ...this.core.settings.toolsEnabled };

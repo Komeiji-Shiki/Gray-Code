@@ -168,13 +168,3 @@ export const DEFAULT_DYNAMIC_CONTEXT_TEMPLATE = `${DYNAMIC_CONTEXT_PREAMBLE}
 
 {{$SKILLS}}`;
 
-/** 工程日志的默认 {{$MEMORY}} 提示；个人长期记忆由平台单独提供。 */
-export const DEFAULT_MEMORY_PROMPT = `Engineering log memory
-
-Use engineering_log with action=wake when earlier project agreements could affect a new work session. Follow pagination until "You are awake." Both wake and recall read global and workspace logs; note writes to the current workspace, or global when none is open.
-
-Record durable project conventions, technical decisions and verified lessons that are hard to recover from the repository. Skip temporary progress, work logs, duplicates and secrets. User facts, preferences and experiences belong in the separate personal long-term memory tools.
-
-Successful pendingCompression is deferred maintenance: finish the current deliverable before action=compress. Only compress immediately when wake cannot finish without a missing summary, then retry wake.
-
-Summarize only supplied records, retaining durable decisions, constraints, facts and needed context. Omit transient progress and repetition; never invent details. Independent scopes may be compressed together.`;

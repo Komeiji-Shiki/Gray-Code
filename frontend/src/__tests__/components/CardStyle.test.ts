@@ -22,7 +22,7 @@ const cards: Array<[string, string]> = [
   ['checkpoint/CheckpointMessageSettings.vue', '.tools-table'], ['checkpoint/CheckpointToolSettings.vue', '.tools-table'],
   ['ContextSettings.vue', '.setting-block'], ['ContextSettings.vue', '.preview-block'],
   ['DependencySettings.vue', '.tool-panel'], ['GenerateImageSettings.vue', '.section'],
-  ['memorySettings/MemoryConfigSection.vue', '.section'], ['ModelManager.vue', '.model-list-container'],
+  ['ModelManager.vue', '.model-list-container'],
   ['panel/GeneralSettingsSection.vue', '.info-text'], ['panel/GeneralSettingsSection.vue', '.proxy-settings'],
   ['panel/GeneralSettingsSection.vue', '.storage-settings'], ['panel/UsageSummaryCard.vue', '.usage-summary-card'],
   ['PlatformAppearanceSettings.vue', '.unified-preview'], ['PlatformIntegrationSettings.vue', '.bot-access-settings'],
@@ -73,7 +73,7 @@ describe('设置页卡片', () => {
 describe('设置页其余容器、提示框与状态胶囊', () => {
   test.each([
     ['mcpSettings/McpBrowsePanel.vue', '.mcp-browse-panel'], ['NotificationQuietHours.vue', '.notification-quiet-hours'],
-    ['PromptEntriesEditor.vue', '.character-entry-tools'], ['memorySettings/MemoryEntriesSection.vue', '.section'],
+    ['PromptEntriesEditor.vue', '.character-entry-tools'],
     ['../usage/UsageTimeSection.vue', '.usage-time-section'],
   ])('%s %s 是填充卡片', (file, subject) => {
     const body = baseRules(read(file), subject).join(';')
@@ -86,7 +86,7 @@ describe('设置页其余容器、提示框与状态胶囊', () => {
   test.each([
     ['AutoExecSettings.vue', '.settings-tips'], ['ContextSettings.vue', '.pattern-help'],
     ['GenerateImageSettings.vue', '.feature-description'], ['SummarizeSettings.vue', '.feature-description'],
-    ['MemorySettings.vue', '.info-box'], ['panel/WorkspaceFeatureLinks.vue', '.workspace-feature-links'],
+    ['panel/WorkspaceFeatureLinks.vue', '.workspace-feature-links'],
     ['discord/discordSettings.css', '.discord-notice'],
   ])('%s %s 是淡底提示框', (file, subject) => {
     const body = baseRules(read(file), subject).join(';')

@@ -28,7 +28,7 @@ export function createSubagentRecord(app: PlatformApplication, args: Record<stri
   const tools = config?.tools ?? { mode: 'all' };
   const whitelist = tools.mode === 'whitelist' ? new Set(upgradeToolNames(tools.whitelist ?? tools.list ?? [])) : undefined;
   const toolNames = context.agent.toolNames.filter(name => {
-    if (/^(memory_|todo_)/.test(name) || name === 'engineering_log' || !app.product.runtimeSettings().isToolEnabled(name) || depth >= MAX_SUBAGENT_NESTING_DEPTH && name === 'subagents') return false;
+    if (/^(memory_|todo_)/.test(name) || !app.product.runtimeSettings().isToolEnabled(name) || depth >= MAX_SUBAGENT_NESTING_DEPTH && name === 'subagents') return false;
     if (tools.mode === 'builtin') return !isMcpToolName(name);
     if (tools.mode === 'mcp') return isMcpToolName(name);
     // 设置页和预设写入具名列表；list 只兼容旧配置，显式 [] 不能回退到旧授权。

@@ -1,15 +1,11 @@
 import path from 'node:path';
 import { mkdir, readFile, writeFile, stat } from 'node:fs/promises';
-import { pathToFileURL } from 'node:url';
 import { createCipheriv, createDecipheriv, randomBytes } from 'node:crypto';
 import type { ChannelConfig } from '../../../backend/modules/config/types';
 import { PlatformApplication } from '../../../apps/server/src/application';
 import { ApplicationRouter } from '../../../apps/server/src/transport/router';
 import { SettingsTransfer } from '../../../apps/server/src/settings/transfer';
 import type { ConfigurationReport } from '../../../apps/server/src/migration/configuration';
-import { pad } from '../../../backend/modules/memory/logFormat';
-import { LOG_REC, TREE_REC, DEFAULT_MEMORY_CONFIG } from '../../../backend/modules/memory/types';
-import { buildConfigContent } from '../../../backend/modules/memory/configFile';
 import { SkillsRuntime } from '../../../backend/modules/skills/SkillsRuntime';
 import { fixture, message, metadata } from './fixtures';
 
@@ -116,11 +112,6 @@ describe('旧设置与附属资源迁移', () => {
     await source('skills/migration-skill/SKILL.md', '---\nname: migration-skill\ndescription: 保留附属资源的示例\n---\n正文引用 assets/sample.bin。');
     await source('skills/migration-skill/assets/sample.bin', binary);
     await source('skills/migration-skill/scripts/check.cjs', `require('node:fs').writeFileSync(${JSON.stringify(path.join(f.root, 'must-not-execute'))},'executed')`);
-    await source('memory/LOG.txt', Buffer.concat([pad('#0 2026-09-01 第一条全局记忆', LOG_REC), pad('#1 2026-09-02 第二条全局记忆', LOG_REC)]));
-    await source('memory/TREE/2', pad('两条全局记忆的原摘要', TREE_REC));
-    await source('memory/config', buildConfigContent(DEFAULT_MEMORY_CONFIG));
-    await source('memory-workspaces/previous/scope.json', JSON.stringify({ fsPath: project, uri: pathToFileURL(project).toString() }));
-    await source('memory-workspaces/previous/LOG.txt', pad('#0 2026-09-03 独立项目记忆', LOG_REC));
     const sample = Date.parse('2026-09-01T12:00:00+08:00');
     await source('activity/2026-09-01.json', JSON.stringify({ date: '2026-09-01', samples: [sample, sample + 1000] }));
     await source('dependencies/node_modules/fixture-package/package.json', JSON.stringify({ name: 'fixture-package', version: '1.0.0', scripts: { postinstall: 'exit 99' } }));
@@ -129,14 +120,10 @@ describe('旧设置与附属资源迁移', () => {
     await ui('ui.settings.begin');
     const report = await ui<ConfigurationReport>('migration.import', { source: f.source });
     expect(report.issues).toEqual([]); expect(report.pendingArtifacts).toEqual([]); expect(report.readyForCutover).toBe(false);
-    expect(report.skills?.imported).toEqual(['migration-skill']); expect(report.memory?.imported).toHaveLength(2); expect(report.activity?.imported).toEqual(['2026-09-01']);
+    expect(report.skills?.imported).toEqual(['migration-skill']); expect(report.activity?.imported).toEqual(['2026-09-01']);
     expect(report.runtimeAssets?.imported).toEqual(['dependencies']);
     expect(await readFile(path.join(f.data, 'dependencies/node_modules/fixture-package/asset.bin'))).toEqual(binary);
     expect((await stat(path.join(f.data, 'dependencies/empty'))).isDirectory()).toBe(true);
-    const global = app.memory.scope('owner'); const local = app.memory.scope('owner', app.workspace('owner', 'project', ['workspace_read']));
-    expect((await app.storage.memoryEntries(global, 0, 10)).map(entry => entry.text)).toEqual(['第一条全局记忆', '第二条全局记忆']);
-    expect((await app.storage.memorySummaries(global)).map(summary => summary.text)).toEqual(['两条全局记忆的原摘要']);
-    expect((await app.storage.memoryEntries(local, 0, 10)).map(entry => entry.text)).toEqual(['独立项目记忆']);
     const context = { runId: 'skill-read', actorId: 'reader', actor: app.actor('reader')!, workspace: app.workspace('reader', 'project', ['workspace_read']),
       signal: new AbortController().signal, progress: () => {}, askUser: async () => { throw new Error('unused'); } };
     expect((await app.skills.tool().execute({ name: 'migration-skill' }, context)).success).toBe(false);
@@ -157,10 +144,9 @@ describe('旧设置与附属资源迁移', () => {
     expect((await ui<ConfigurationReport>('migration.report', { operationId: report.operationId })).readyForCutover).toBe(true);
     expect(app.product.runtimeSettings().getUISettings().language).toBe('en'); expect(app.storage.directory).toBe(f.data);
     const repeated = await ui<ConfigurationReport>('migration.import', { source: f.source });
-    expect(repeated.issues).toEqual([]); expect(repeated.skills?.skipped).toEqual(['migration-skill']); expect(repeated.memory?.skipped).toHaveLength(2);
+    expect(repeated.issues).toEqual([]); expect(repeated.skills?.skipped).toEqual(['migration-skill']);
     expect(repeated.activity?.skipped).toEqual(['2026-09-01']); expect(repeated.runtimeAssets?.skipped).toEqual(['dependencies']);
     expect(await app.storage.getRecord('activity-samples', 'owner_2026-09-01')).toMatchObject({ samples: [sample, sample + 1000] });
-    expect((await app.storage.memoryEntries(global, 0, 10))).toHaveLength(2);
     for (const [file, bytes] of sources) expect(await readFile(file)).toEqual(bytes);
   });
 });

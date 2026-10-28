@@ -16,7 +16,6 @@ registerTool('ask_user', {
   contentComponent: DefaultToolResult,
 })
 
-// 只注册独立平台的新协议；旧 memory_wake/note/recall 等工程日志面板保持不变。
 for (const [names, component] of [
   [['workspace_files', 'search_files'], WorkspaceToolResult],
   [['run_command', 'process_session'], ProcessToolResult],

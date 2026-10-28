@@ -8,7 +8,7 @@ import { stat } from 'node:fs/promises';
 import { pathToFileURL } from 'node:url';
 import type { ActorIdentity, AgentDefinition, PlatformMessage, PlatformConversation, StartRunInput, ContinueRunInput, WorkspaceDefinition } from '@graycode/contracts';
 import { PromptAssembler, type PromptAssemblyHost } from '../../../../backend/modules/prompt/PromptAssembler';
-import { generateContextBadgeFormatSection, generateMemorySection, wrapPromptSection } from '../../../../backend/modules/prompt/commonSections';
+import { generateContextBadgeFormatSection, wrapPromptSection } from '../../../../backend/modules/prompt/commonSections';
 import { getSingleWorkspaceFileTree } from '../../../../backend/modules/prompt/workspaceFileTree';
 import { normalizePinnedFiles, readPinnedFileCapped, PINNED_FILE_MAX_TOTAL_BYTES } from '../../../../backend/modules/prompt/pinnedFiles';
 import { deserializePromptContextCache, serializePromptContextCache } from '../../../../backend/modules/prompt/promptContextCache';
@@ -23,7 +23,6 @@ import { LONG_MEMORY_GUIDANCE, LONG_MEMORY_TOOL_NAMES } from '../memory/longTerm
 import {
   filterPlatformModeToolNames, filterPromptModeToolNames, resolvePlatformMode, searchReplaceRestriction,
 } from '../../../../backend/modules/settings/modeToolsPolicy';
-import { engineeringLogActionRestrictions } from '../memory/engineeringLogPolicy';
 import { isApprovedPlanExecutionResponse } from '../../../../backend/modules/api/chat/services/approvalGateRules';
 
 /** 当前分支里用户已确认执行的计划，执行提示要求模型继续回写计划与进度。 */
@@ -135,7 +134,7 @@ export class PlatformPromptService {
         `User Language: ${locale}`, "Please respond using the user's language by default."].join('\n'),
       generateContextBadgeFormatSection,
       generateMemorySection: () => settings.isMemoryEnabled() && input.agent.toolNames.some(name=>(LONG_MEMORY_TOOL_NAMES as readonly string[]).includes(name))
-        ? wrapPromptSection('LONG-TERM MEMORY',LONG_MEMORY_GUIDANCE) : generateMemorySection(settings),
+        ? wrapPromptSection('LONG-TERM MEMORY',LONG_MEMORY_GUIDANCE) : '',
       generateFileTreeSection: (depth, ignores) => workspace ? workspaceRoots(workspace).map(root => (workspaceRoots(workspace).length > 1 ? '@' + root.name + '/\n' : '') + getSingleWorkspaceFileTree(root.directory, depth === -1 ? 100 : depth, ignores)).join('\n\n') : '',
       generateOpenTabsSection: (limit, ignores) => formatOpenTabsSection(editor?.openFiles ?? [], limit, ignores),
       generateActiveEditorSection: ignores => formatActiveEditorSection(editor?.activeFile, ignores),
@@ -174,8 +173,6 @@ export class PlatformPromptService {
       ...(input.preview ? { previewDynamicText: bundle.text } : {}),
       toolNames,
       toolApproval: {
-        ...engineeringLogActionRestrictions(mode.toolPolicy ?? []),
-        ...engineeringLogActionRestrictions(profile?.toolNames ?? []),
         ...searchReplaceRestriction(toolNames),
       },
       promptContext: { beforeHistoryMessages,
