@@ -8,8 +8,8 @@ import type { ClientSession } from '../transport/router';
 import type { ProductSettingsDraft } from '../settings/product';
 import { chatRunInput, chatUserMessage } from '../transport/chatInput';
 
-/** 当前草稿的完整请求投影，不创建对话、不消耗模型额度。 */
-export async function previewPrompt(app: PlatformApplication, client: ClientSession, data: Record<string, any>, preferences: ProductSettingsDraft,
+/** 按正式发送的流水线组装本轮请求，不创建对话、不消耗模型额度。 */
+export async function prepareRequestPreview(app: PlatformApplication, client: ClientSession, data: Record<string, any>, preferences: ProductSettingsDraft,
   workspaceId?: string, mode: 'chat' | 'code' | 'character' = 'chat') {
   if (!data.configId) throw new Error('请选择渠道和模型。');
   const now = Date.now();
@@ -20,7 +20,14 @@ export async function previewPrompt(app: PlatformApplication, client: ClientSess
   const state: ConversationState | undefined = data.conversationId ? undefined : { metadata: conversation, metadataToken: '', records: [],
     history: { conversationId: conversation.id, messages: [], total: 0, startIndex: 0, revision: 0 } };
   const request = { ...chatRunInput(client, data, preferences, conversation, `prompt-preview:${randomUUID()}`), message: chatUserMessage(data) };
-  const prepared = await app.runtime.preview(request, state ? { state, commit: {} } : undefined, { clientId: client.clientId });
+  return app.runtime.preview(request, state ? { state, commit: {} } : undefined, { clientId: client.clientId });
+}
+
+/** 当前草稿的完整请求投影。 */
+export async function previewPrompt(app: PlatformApplication, client: ClientSession, data: Record<string, any>, preferences: ProductSettingsDraft,
+  workspaceId?: string, mode: 'chat' | 'code' | 'character' = 'chat') {
+  const now = Date.now();
+  const prepared = await prepareRequestPreview(app, client, data, preferences, workspaceId, mode);
   const projected = await withDependencyRuntime(app.dependencies, () => app.modelAdapter.preview(prepared.input));
   const turn = restoreCharacterTurn(prepared.input.turnContext?.characterTurn);
   const companion = prepared.input.turnContext?.companionTurn;

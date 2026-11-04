@@ -43,7 +43,7 @@ export function createContextBudget(
       messageTokens, exceedsSoftLimit: inputTokens > softLimitTokens, exceedsInputLimit: inputTokens > resolution.maxInputTokens };
   };
   return { evaluate, estimateMessage, fixedTokens, maxInputTokens: resolution.maxInputTokens, softLimitTokens,
-    tokenizer: describeTextTokenizer(options), resolution };
+    tokenizer: describeTextTokenizer(options), tokenizerOptions: options, resolution };
 }
 
 export type ContextBudgetCounter = ReturnType<typeof createContextBudget>;
