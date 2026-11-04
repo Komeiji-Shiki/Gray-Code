@@ -705,34 +705,36 @@ const ringRadius = 8
 const ringCircumference = 2 * Math.PI * ringRadius
 const ringDashOffset = computed(() => ringCircumference * (1 - chatStore.tokenUsagePercent / 100))
 
-// ========== 上下文统计详情入口（只读，不触发总结） ==========
-const showContextDetail = ref(false)
-const contextDetailMounted = ref(false)
+// ========== 上下文占用面板（只读，不触发总结） ==========
+const showContextUsage = ref(false)
+const contextUsageMounted = ref(false)
+const tokenRingButton = ref<HTMLElement | null>(null)
 const promptPreviewAvailable = !!window.__GRAYCODE_HOST
 const showPromptPreview = ref(false)
 const promptPreviewMounted = ref(false)
 // 第一次打开才加载模块，之后继续保留对话框自己的视图选择和读取生命周期。
-watch(showContextDetail, open => { if (open) contextDetailMounted.value = true }, { immediate: true })
+watch(showContextUsage, open => { if (open) contextUsageMounted.value = true }, { immediate: true })
 watch(showPromptPreview, open => { if (open) promptPreviewMounted.value = true }, { immediate: true })
-const ContextDetailDialog = defineAsyncComponent({ ...asyncDialogOptions(() => {
-  contextDetailMounted.value = false
-  showContextDetail.value = false
-}), loader: () => import('./ContextDetailDialog.vue') })
+const ContextUsagePanel = defineAsyncComponent({ ...asyncDialogOptions(() => {
+  contextUsageMounted.value = false
+  showContextUsage.value = false
+}), loader: () => import('./ContextUsagePanel.vue') })
 const PromptPreviewDialog = defineAsyncComponent({ ...asyncDialogOptions(() => {
   promptPreviewMounted.value = false
   showPromptPreview.value = false
 }), loader: () => import('./PromptPreviewDialog.vue') })
-const promptPreviewRequest = computed(() => ({
+const contextUsageRequest = computed(() => ({
   conversationId: chatStore.currentConversationId, configId: chatStore.configId,
+  modelOverride: chatStore.selectedModelId || undefined,
+  reasoningEffort: chatStore.selectedReasoningEffort || undefined, promptModeId: chatStore.currentPromptModeId
+}))
+const promptPreviewRequest = computed(() => ({
+  ...contextUsageRequest.value,
   message: withSavedImagePaths(serializeNodes(editorNodes.value).trim(), props.attachments ?? []), attachments: (props.attachments ?? []).map(attachment => ({
     id: attachment.id, name: attachment.name, type: attachment.type, size: attachment.size,
     mimeType: attachment.mimeType, data: attachment.data || '', thumbnail: attachment.thumbnail
-  })), modelOverride: chatStore.selectedModelId || undefined,
-  reasoningEffort: chatStore.selectedReasoningEffort || undefined, promptModeId: chatStore.currentPromptModeId
+  }))
 }))
-function openContextDetail() {
-  showContextDetail.value = true
-}
 
 // ========== lifecycle ==========
 
@@ -892,26 +894,15 @@ watch(() => settingsStore.promptModesVersion, () => {
           />
         </Tooltip>
 
-        <!-- 上下文统计详情入口：用量区域旁，只读展示 describeConversation -->
-        <Tooltip :content="t('components.input.contextDetail.open')" placement="top">
-          <IconButton
-            icon="codicon-info"
-            size="small"
-            :tooltip="t('components.input.contextDetail.open')"
-            :aria-label="t('components.input.contextDetail.open')"
-            :disabled="!chatStore.currentConversationId"
-            class="context-detail-button"
-            @click="openContextDetail"
-          />
-        </Tooltip>
-
-        <div
+        <button
+          ref="tokenRingButton"
+          type="button"
           class="token-ring-wrapper"
-          role="img"
-          tabindex="0"
-          :title="tokenUsageAriaLabel"
+          aria-haspopup="dialog"
+          :aria-expanded="showContextUsage"
           :aria-label="tokenUsageAriaLabel"
           aria-describedby="token-usage-tooltip"
+          @click="showContextUsage = !showContextUsage"
         >
           <svg class="token-ring" width="22" height="22" viewBox="0 0 22 22" aria-hidden="true" focusable="false">
             <circle
@@ -944,8 +935,9 @@ watch(() => settingsStore.promptModesVersion, () => {
               <span class="token-tooltip-label">{{ t('components.input.context') }}</span>
               <span class="token-tooltip-value">{{ formatNumber(chatStore.usedTokens) }} / {{ formatNumber(chatStore.maxContextTokens) }}</span>
             </div>
+            <div class="token-tooltip-hint">{{ t('components.input.contextDetail.open') }}</div>
           </div>
-        </div>
+        </button>
 
         <SendButton
           :disabled="!canSend"
@@ -979,13 +971,12 @@ watch(() => settingsStore.promptModesVersion, () => {
       @reasoning-change="handleReasoningChange"
     />
 
-    <ContextDetailDialog
-      v-if="contextDetailMounted"
-      v-model="showContextDetail"
-      :conversation-id="chatStore.currentConversationId"
-      :provider-id="chatStore.configId"
-      :model-override="chatStore.selectedModelId || undefined"
-      :fallback-max-tokens="chatStore.maxContextTokens"
+    <ContextUsagePanel
+      v-if="contextUsageMounted"
+      v-model="showContextUsage"
+      :request="contextUsageRequest"
+      :used-tokens="chatStore.usedTokens"
+      :anchor="tokenRingButton"
     />
     <PromptPreviewDialog v-if="promptPreviewAvailable && promptPreviewMounted" v-model="showPromptPreview"
       :request="promptPreviewRequest" :running="chatStore.isWaitingForResponse" />
@@ -1092,10 +1083,6 @@ watch(() => settingsStore.promptModesVersion, () => {
   font-size: 17px !important;
 }
 
-.context-detail-button :deep(i.codicon) {
-  font-size: 15px !important;
-}
-
 .token-ring-wrapper {
   position: relative;
   display: flex;
@@ -1103,6 +1090,16 @@ watch(() => settingsStore.promptModesVersion, () => {
   justify-content: center;
   min-width: var(--gc-control-height-sm);
   min-height: var(--gc-control-height-sm);
+  padding: 0;
+  background: none;
+  border: none;
+  border-radius: var(--gc-radius-sm);
+  cursor: pointer;
+}
+
+.token-ring-wrapper:hover,
+.token-ring-wrapper[aria-expanded='true'] {
+  background: var(--gc-surface-hover);
 }
 
 .token-ring {
@@ -1128,8 +1125,8 @@ watch(() => settingsStore.promptModesVersion, () => {
   pointer-events: none;
 }
 
-.token-ring-wrapper:hover .token-tooltip,
-.token-ring-wrapper:focus-visible .token-tooltip {
+.token-ring-wrapper[aria-expanded='false']:hover .token-tooltip,
+.token-ring-wrapper[aria-expanded='false']:focus-visible .token-tooltip {
   opacity: 1;
   visibility: visible;
 }
@@ -1169,6 +1166,13 @@ watch(() => settingsStore.promptModesVersion, () => {
   color: var(--gc-text-primary);
   font-family: var(--gc-font-code);
   font-size: var(--gc-font-size-caption);
+}
+
+.token-tooltip-hint {
+  color: var(--gc-text-muted);
+  font-size: var(--gc-font-size-caption);
+  line-height: 1.5;
+  text-align: left;
 }
 
 .async-dialog-loading {

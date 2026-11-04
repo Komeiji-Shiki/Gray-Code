@@ -381,7 +381,7 @@ async function verifyInputToolbar({ window, chat, until, output }) {
   const describeFocus = () => chat(`(() => {
     const node = document.activeElement;
     if (!node) return 'outside';
-    const selectors = ['.checkpoint-button', '.prompt-preview-button', '.summarize-button', '.context-detail-button',
+    const selectors = ['.checkpoint-button', '.prompt-preview-button', '.summarize-button',
       '.token-ring-wrapper', '.preserve-send-button', '.send-button:not(.preserve-send-button)'];
     return selectors.find(selector => node.matches(selector)) || (node.closest('.bottom-toolbar') ? 'toolbar-control' : 'outside');
   })()`);
@@ -397,12 +397,23 @@ async function verifyInputToolbar({ window, chat, until, output }) {
     }
     for (const item of enabledActions)
       assert(visited.includes(item.selector), `Tab must reach enabled action ${item.selector}.`);
-    assert(visited.includes('.context-detail-button'), 'Tab must reach context detail.');
     assert(visited.includes('.token-ring-wrapper'), 'Tab must reach token usage.');
-    // 反向导航仍可用：从用量环回到相邻的上下文详情。
+    // 反向导航仍可用：从用量环回到工具栏里相邻的可用操作。
     await chat('document.querySelector(".token-ring-wrapper").focus()');
     await press('Tab', 9, 8);
-    assert.equal(await describeFocus(), '.context-detail-button', 'Shift+Tab must return to context detail.');
+    assert.notEqual(await describeFocus(), 'outside', 'Shift+Tab must stay inside the toolbar.');
+    // 用量环打开占用面板：分类来自真实组装流程，Esc 关闭后焦点回到环上。
+    await chat('document.querySelector(".token-ring-wrapper").click()');
+    let usageRows = 0;
+    for (let attempt = 0; attempt < 50 && !usageRows; attempt++) {
+      await new Promise(resolve => setTimeout(resolve, 200));
+      usageRows = await chat('document.querySelectorAll(".context-usage .usage-rows > li").length');
+    }
+    assert(usageRows >= 2, `Context usage panel must list categories: ${await chat('document.querySelector(".context-usage")?.innerText')}`);
+    pictures.push(await screenshot(window, output, 'input-context-usage.png'));
+    await press('Escape', 27);
+    assert.equal(await chat('!!document.querySelector(".context-usage")'), false, 'Escape must close the context usage panel.');
+    assert.equal(await describeFocus(), '.token-ring-wrapper', 'Closing the panel must return focus to token usage.');
   } finally {
     keyboard.detach();
   }

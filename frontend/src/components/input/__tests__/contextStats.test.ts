@@ -11,12 +11,13 @@ import {
   isMissingHandlerError,
   normalizeDescribePayload,
   normalizeSummaryDetailPayload,
-  resolveDisplayMaxTokens,
-  resolveDisplayPercent,
+  buildContextUsageRows,
   isPreciseSource,
   toSummaryTokenView,
+  fetchContextBreakdown,
   fetchContextDescribe,
-  fetchSummaryDetail
+  fetchSummaryDetail,
+  type ContextBreakdown
 } from '../contextStats'
 
 const mockedSend = vi.mocked(sendToExtension)
@@ -126,19 +127,39 @@ describe('contextStats describe 整形', () => {
   })
 })
 
-describe('contextStats 展示回退与字段口径', () => {
-  test('resolveDisplayMaxTokens 优先后端值，缺失回退 store 值', () => {
-    expect(resolveDisplayMaxTokens(8000, 4000)).toBe(8000)
-    expect(resolveDisplayMaxTokens(undefined, 4000)).toBe(4000)
-    expect(resolveDisplayMaxTokens(undefined, undefined)).toBeUndefined()
-    expect(resolveDisplayMaxTokens(0, 4000)).toBe(4000)
+describe('contextStats 占用行与字段口径', () => {
+  const breakdown = (overrides: Partial<ContextBreakdown> = {}): ContextBreakdown => ({
+    categories: [
+      { id: 'messages', tokens: 300, items: [{ id: 'user', tokens: 300 }] },
+      { id: 'mcpTools', tokens: 0, items: [] },
+      { id: 'memory', tokens: 100, items: [] }
+    ],
+    totalTokens: 400, maxContextTokens: 1000, maxInputTokens: 900, softLimitTokens: 700, reservedOutputTokens: 100,
+    autoCompactBufferTokens: 200, freeTokens: 300, managementEnabled: true, tokenizer: 'o200k_base', model: 'm', notices: [], measuredAt: 1,
+    ...overrides
   })
 
-  test('resolveDisplayPercent 与 computed.ts 同 min(100) 口径', () => {
-    expect(resolveDisplayPercent(50, 100)).toBe(50)
-    expect(resolveDisplayPercent(200, 100)).toBe(100)
-    expect(resolveDisplayPercent(10, undefined)).toBeUndefined()
-    expect(resolveDisplayPercent(10, 0)).toBeUndefined()
+  test('buildContextUsageRows 跳过空分类，各行合计等于整个上下文窗口', () => {
+    const rows = buildContextUsageRows(breakdown())
+    expect(rows.map(row => row.id)).toEqual(['messages', 'memory', 'reservedOutput', 'autoCompactBuffer', 'freeSpace'])
+    expect(rows.reduce((total, row) => total + row.tokens, 0)).toBe(1000)
+    expect(rows.reduce((total, row) => total + row.percent, 0)).toBeCloseTo(100)
+    expect(rows[0].items).toEqual([{ id: 'user', tokens: 300 }])
+  })
+
+  test('buildContextUsageRows 没有缓冲和预留时不显示这两行，剩余空间用尽也保留', () => {
+    const rows = buildContextUsageRows(breakdown({ reservedOutputTokens: 0, autoCompactBufferTokens: 0, freeTokens: 0 }))
+    expect(rows.map(row => row.id)).toEqual(['messages', 'memory', 'freeSpace'])
+    expect(rows.at(-1)?.tokens).toBe(0)
+  })
+
+  test('fetchContextBreakdown 透传请求，失败时抛原文', async () => {
+    const request = { conversationId: 'c1', configId: 'channel' }
+    mockedSend.mockResolvedValueOnce(breakdown())
+    expect((await fetchContextBreakdown(request)).totalTokens).toBe(400)
+    expect(mockedSend).toHaveBeenCalledWith(CONTEXT_REQUESTS.breakdown, request)
+    mockedSend.mockResolvedValueOnce({ success: false, error: { message: '渠道不可用' } })
+    await expect(fetchContextBreakdown(request)).rejects.toThrow('渠道不可用')
   })
 
   test('isPreciseSource 仅 provider-usage 为精确', () => {

@@ -11,6 +11,8 @@
  * - 总结展示字段与 SummaryMessage 一致：compressed 条数（summarizedMessageCount）、
  *   auto 徽标（isAutoSummary）、压缩前后 token（sourceTokenCount → summaryTokenCount，
  *   saved = estimatedTokensSaved）。
+ * - breakdown：按来源分账的本地估算，走正式请求的组装流水线，计数器与自动总结判定相同；
+ *   usedTokens 是上次请求的接口返回值，两者分词方式不同，界面分开显示，不互相校正。
  * 只读：不触发总结，不推进裁剪状态。
  */
 
@@ -18,8 +20,71 @@ import { sendToExtension } from '@/utils/vscode'
 
 export const CONTEXT_REQUESTS = {
   describe: 'context.describe',
-  summaryDetail: 'context.summaryDetail'
+  summaryDetail: 'context.summaryDetail',
+  breakdown: 'context.breakdown'
 } as const
+
+export type ContextCategoryId = 'messages' | 'systemTools' | 'mcpTools' | 'memory' | 'systemPrompt' | 'dynamicContext'
+
+export interface ContextBreakdownItem {
+  id: string
+  tokens: number
+  /** 工具名和提示词段落标题按原文显示；缺省时界面按 id 翻译。 */
+  label?: string
+  detail?: string
+}
+
+export interface ContextBreakdownCategory {
+  id: ContextCategoryId
+  tokens: number
+  items: ContextBreakdownItem[]
+}
+
+export interface ContextBreakdown {
+  categories: ContextBreakdownCategory[]
+  totalTokens: number
+  maxContextTokens: number
+  maxInputTokens: number
+  softLimitTokens: number
+  reservedOutputTokens: number
+  autoCompactBufferTokens: number
+  freeTokens: number
+  managementEnabled: boolean
+  tokenizer: string
+  model: string
+  notices: string[]
+  measuredAt: number
+}
+
+export interface ContextBreakdownRequest {
+  conversationId?: string | null
+  configId?: string
+  modelOverride?: string
+  reasoningEffort?: string
+  promptModeId?: string
+}
+
+export type ContextUsageRowId = ContextCategoryId | 'reservedOutput' | 'autoCompactBuffer' | 'freeSpace'
+
+export interface ContextUsageRow {
+  id: ContextUsageRowId
+  tokens: number
+  percent: number
+  items: ContextBreakdownItem[]
+}
+
+/** 面板行与占用条共用一份数据：已用分类在前，再是预留和缓冲，剩余空间始终在最后。 */
+export function buildContextUsageRows(breakdown: ContextBreakdown): ContextUsageRow[] {
+  const percent = (tokens: number) => tokens / breakdown.maxContextTokens * 100
+  const row = (id: ContextUsageRowId, tokens: number, items: ContextBreakdownItem[] = []): ContextUsageRow =>
+    ({ id, tokens, percent: percent(tokens), items })
+  return [
+    ...breakdown.categories.filter(category => category.tokens > 0).map(category => row(category.id, category.tokens, category.items)),
+    ...(breakdown.reservedOutputTokens > 0 ? [row('reservedOutput', breakdown.reservedOutputTokens)] : []),
+    ...(breakdown.autoCompactBufferTokens > 0 ? [row('autoCompactBuffer', breakdown.autoCompactBufferTokens)] : []),
+    row('freeSpace', breakdown.freeTokens)
+  ]
+}
 
 export type ContextTokenSource = 'provider-usage' | 'summary-estimate' | 'none' | string
 
@@ -110,15 +175,6 @@ export function isMissingHandlerError(error: unknown): boolean {
     /尚未接入/.test(message) ||
     /No handler/i.test(message)
   )
-}
-
-/** 是否运行在独立桌面宿主。 */
-export function isDesktopHost(): boolean {
-  try {
-    return typeof window !== 'undefined' && !!window.__GRAYCODE_HOST
-  } catch {
-    return false
-  }
 }
 
 function asFiniteNumber(value: unknown, fallback = 0): number {
@@ -244,26 +300,6 @@ export function normalizeSummaryDetailPayload(payload: unknown): ContextSummaryD
   return { conversationId, summary: entry }
 }
 
-/**
- * 展示用上限回退：后端未返回 max（未传 providerId 或渠道未知）时回退 chatStore.maxContextTokens。
- * 与 InputArea token 环同一显示口径。
- */
-export function resolveDisplayMaxTokens(
-  describeMax: number | undefined,
-  fallbackMax: number | undefined
-): number | undefined {
-  if (typeof describeMax === 'number' && Number.isFinite(describeMax) && describeMax > 0) return describeMax
-  if (typeof fallbackMax === 'number' && Number.isFinite(fallbackMax) && fallbackMax > 0) return fallbackMax
-  return undefined
-}
-
-/** 展示用使用率回退：后端未返回 percent 时按 used/max 本地计算（与 computed.ts 同 min(100, …) 口径）。 */
-export function resolveDisplayPercent(used: number, max: number | undefined): number | undefined {
-  if (typeof max !== 'number' || !Number.isFinite(max) || max <= 0) return undefined
-  if (typeof used !== 'number' || !Number.isFinite(used) || used < 0) return 0
-  return Math.min(100, (used / max) * 100)
-}
-
 /** tokens.source 是否为供应商精确计数（与 computed.ts 的 provider-usage 分支对应）。 */
 export function isPreciseSource(source: unknown): boolean {
   return source === 'provider-usage'
@@ -288,6 +324,13 @@ function throwIfFailedEnvelope(raw: unknown, fallback: string): void {
       throw new Error(extractRpcErrorMessage(record.error) || fallback)
     }
   }
+}
+
+/** 只读获取按来源分账的上下文占用；宿主在 RPC 边界保证结构，这里只判失败。 */
+export async function fetchContextBreakdown(request: ContextBreakdownRequest): Promise<ContextBreakdown> {
+  const raw = await sendToExtension<ContextBreakdown>(CONTEXT_REQUESTS.breakdown, request)
+  throwIfFailedEnvelope(raw, '上下文占用获取失败')
+  return raw
 }
 
 /** 只读获取上下文统计（不触发总结）。 */

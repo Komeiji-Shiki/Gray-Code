@@ -118,6 +118,7 @@
   --gc-chart-red: var(--gc-danger);
   --gc-chart-orange: color-mix(in srgb, var(--gc-warning) 55%, var(--gc-danger));
   --gc-chart-purple: color-mix(in srgb, var(--gc-accent) 55%, var(--gc-danger));
+  --gc-chart-teal: color-mix(in srgb, var(--gc-success) 50%, var(--gc-accent));
   --gc-scrollbar: var(--vscode-scrollbarSlider-background, color-mix(in srgb, var(--gc-text-muted) 30%, transparent));
   --gc-scrollbar-hover: var(--vscode-scrollbarSlider-hoverBackground, color-mix(in srgb, var(--gc-text-muted) 50%, transparent));
 

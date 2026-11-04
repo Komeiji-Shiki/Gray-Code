@@ -201,22 +201,27 @@ describe('InputArea 发送失败恢复', () => {
     vi.restoreAllMocks()
   })
 
-  test('详情面板首次打开才挂载，关闭再打开继续保留同一实例', async () => {
+  test('占用面板由 Token 环切换，首次打开才挂载，关闭再打开继续保留同一实例', async () => {
     runtime.chatStore.currentConversationId = 'conv-lazy'
-    const dialog = { name: 'ContextDetailDialog', props: ['modelValue'], emits: ['update:modelValue'], template: '<div />' }
-    wrapper = mount(InputArea, { global: { stubs: { ...stubs, ContextDetailDialog: dialog } } })
+    const panel = { name: 'ContextUsagePanel', props: ['modelValue'], emits: ['update:modelValue'], template: '<div />' }
+    wrapper = mount(InputArea, { global: { stubs: { ...stubs, ContextUsagePanel: panel } } })
     await flushPromises()
-    expect(wrapper.findComponent({ name: 'ContextDetailDialog' }).exists()).toBe(false)
-    await wrapper.get('.context-detail-button').trigger('click')
+    const ring = wrapper.get('.token-ring-wrapper')
+    expect(wrapper.findComponent({ name: 'ContextUsagePanel' }).exists()).toBe(false)
+    expect(ring.attributes('aria-expanded')).toBe('false')
+    await ring.trigger('click')
     await flushPromises()
-    const opened = wrapper.getComponent({ name: 'ContextDetailDialog' })
+    const opened = wrapper.getComponent({ name: 'ContextUsagePanel' })
     expect(opened.props('modelValue')).toBe(true)
+    expect(ring.attributes('aria-expanded')).toBe('true')
     opened.vm.$emit('update:modelValue', false)
     await nextTick()
     expect(opened.props('modelValue')).toBe(false)
-    await wrapper.get('.context-detail-button').trigger('click')
-    expect(wrapper.getComponent({ name: 'ContextDetailDialog' }).vm).toBe(opened.vm)
+    await ring.trigger('click')
+    expect(wrapper.getComponent({ name: 'ContextUsagePanel' }).vm).toBe(opened.vm)
     expect(opened.props('modelValue')).toBe(true)
+    await ring.trigger('click')
+    expect(opened.props('modelValue')).toBe(false)
   })
 
   test.each(['awaiting_input', 'awaiting_approval'])('%s 保持忙碌状态，真实停止按钮仍可取消运行', async status => {
