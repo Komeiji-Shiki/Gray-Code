@@ -282,7 +282,7 @@ export class PlatformRuntime {
     if (this.services.prepareModel && !this.services.previewModel) throw new Error('当前宿主尚未提供只读提示词预览。');
     const prepared = await this.services.previewModel?.({ run, agent: configuredAgent, workspace: workspace ?? undefined, iteration: 1, input: request, history: state });
     if (prepared) request.messages = prepared.messages;
-    return { input: request, notices: prepared?.notices ?? [] };
+    return { input: request, notices: prepared?.notices ?? [], deferredTools: catalog.deferred };
   }
   private begin(input: StartRunInput | ContinueRunInput, change?: PreparedConversationChange, scope?: RuntimeRunScope): Promise<RunRecord> {
     const pending = this.beginRun(input, change, scope);
@@ -701,7 +701,12 @@ export class PlatformRuntime {
         call = { ...call, args: prepared.args };
         parameterWarnings = prepared.warnings;
       }
-      if (!entry.validate(call.args)) return finish({ success: false, code: 'INVALID_ARGUMENTS', error: `Tool arguments do not match its schema: ${JSON.stringify(entry.validate.errors)}` });
+      if (!entry.validate(call.args)) {
+        // 没加载就调用按需工具时直接附上定义，模型下一次调用就能修正，不必再绕一轮搜索。
+        const definition = catalog.deferred?.get(call.name);
+        return finish({ success: false, code: 'INVALID_ARGUMENTS', error: `Tool arguments do not match its schema: ${JSON.stringify(entry.validate.errors)}`,
+          ...(definition ? { definition } : {}) });
+      }
       const effects = entry.tool.effects(call.args);
       const approvalName = entry.tool.approvalName?.(call.args);
       // 合并工具按操作继承的 deny 是模式或旧清单划定的范围，新名称上的 auto/ask 不能覆盖它。
@@ -730,6 +735,7 @@ export class PlatformRuntime {
       signal.throwIfAborted();
       await this.event(run.id, 'tool.started', { toolCallId: call.id, toolName: call.name });
       const context: ToolContext = { runId: run.id, conversationId: run.conversationId, toolCallId: call.id, iteration: run.iteration, actorId: run.actorId, workspace, signal, nativeAsync, nativeTaskHandle,
+        deferredTools: catalog.deferred,
         approvedByToolConfirmation: approval,
         actor: current ?? undefined,
         requestApproval: async reason => {

@@ -9,6 +9,7 @@
 import type { UISoundSettings } from './uiTypes';
 import type {
     ToolsEnabledState,
+    ToolLoadingState,
     ToolAutoExecConfig,
     ToolsConfig
 } from './toolsTypes';
@@ -175,7 +176,10 @@ export interface GlobalSettings {
      * 未列出的工具默认启用
      */
     toolsEnabled: ToolsEnabledState;
-    
+
+    /** 用户单独设置过的工具加载方式；未列出的工具由宿主的默认策略决定。 */
+    toolLoading?: ToolLoadingState;
+
     /**
      * 工具自动执行配置
      *

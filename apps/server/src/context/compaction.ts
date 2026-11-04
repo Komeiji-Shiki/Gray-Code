@@ -9,6 +9,7 @@ import { MessageTokenEstimator } from '../../../../backend/modules/api/chat/serv
 import { SummaryAlgorithms, MIN_SUMMARY_LENGTH } from '../../../../backend/modules/api/chat/services/SummaryAlgorithms';
 import { DEFAULT_CONTEXT_MANAGEMENT_METHOD, DEFAULT_USER_MESSAGE_RETENTION, type ContextManagementMethod, type ContextUserMessageRetention } from '../../../../shared/contextManagement';
 import { isHistoricalUserInput, retainedUserIds } from './retention';
+import { resolveToolLoading } from '../settings/toolLoading';
 import { getModelCompletionStatus } from '../../../../shared/modelCompletion';
 import { clampSummarizeMaxInputRatio } from '../../../../backend/modules/settings/types/summarizeTypes';
 import { MANUAL_SUMMARY_MAX_INPUT_RATIO } from '../../../../backend/modules/api/chat/services/SummaryAlgorithms';
@@ -201,9 +202,11 @@ export async function manualSummaryPrefix(app: PlatformApplication, frame: Captu
     history: frame.state.history.messages, previousTurn, request: { actorId: actor.id, agentId: agent.id, conversationId: frame.state.metadata.id,
       requestKey: 'manual-summary', providerId, modelOverride, promptModeId: typeof previousTurn?.promptModeId === 'string' ? previousTurn.promptModeId : undefined,
       message: { id: randomUUID(), role: 'user', parts: [{ text: '' }] } } });
+  const loading = resolveToolLoading(app.product.runtimeSettings(), prepared.toolNames, await app.product.channel(providerId, { includeCredential: false }));
   return { conversationId: frame.state.metadata.id, providerId, modelOverride, systemPrompt: prepared.systemPrompt,
     promptContext: 'promptContext' in prepared ? prepared.promptContext : undefined, turnContext: 'turnContext' in prepared ? prepared.turnContext : undefined,
-    taskContext: { actor: { id: actor.id, displayName: actor.displayName, role: actor.role }, workspace }, tools: app.tools.catalog(prepared.toolNames).declarations };
+    taskContext: { actor: { id: actor.id, displayName: actor.displayName, role: actor.role }, workspace },
+    tools: app.tools.catalog(loading.names, undefined, loading.deferred).declarations };
 }
 
 export interface SummarizeContextOptions extends ContextBoundaryOptions {

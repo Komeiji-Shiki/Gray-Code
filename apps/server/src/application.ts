@@ -89,6 +89,7 @@ import { ProductConfiguration, type ProductPreferences } from "./settings/produc
 import { ProductUi } from "./transport/productUi";
 import { PlatformPromptService } from './prompt/service';
 import { PlatformMcpService } from './mcp/service';
+import { resolveToolLoading, toolSearchTool } from './settings/toolLoading';
 import { ExternalAgents } from './externalAgents/service';
 import { ConversationService } from './conversations/service';
 import { settlePendingUserInput } from './conversations/ui';
@@ -278,6 +279,7 @@ export class PlatformApplication {
     for (const tool of subagentTools(this)) this.tools.register(tool);
     for (const tool of teamTools(this)) this.tools.register(tool);
     for (const tool of this.media.tools()) this.tools.register(tool);
+    this.tools.register(toolSearchTool());
     this.tools.register(createAskUserTool());
     this.tools.register(this.notifications.tool());
     for (const tool of this.pets.tools()) this.tools.register(tool);
@@ -335,7 +337,8 @@ export class PlatformApplication {
         if (names.includes('goal_update')) overrides.set('goal_update', this.automations.tool());
         // 与提示词准备的替换拒绝使用同一份名单：只授予搜索时不向模型展示替换参数。
         if (isSearchInFilesReplaceForbidden(names)) overrides.set('search_in_files', readOnlySearchTool(this));
-        return this.tools.catalog(names, overrides);
+        const loading = resolveToolLoading(this.product.runtimeSettings(), names, channel);
+        return this.tools.catalog(loading.names, overrides, loading.deferred);
       },
       preparePrompt: async input => this.automations.preparePrompt(input.automationId, input.conversation.id, await new PlatformPromptService(this).prepare(input)),
       currentAutomationId: () => this.automations.meter.currentId(),

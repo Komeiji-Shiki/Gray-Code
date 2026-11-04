@@ -28,6 +28,8 @@ import type {
     GlobalSettings,
     SettingsChangeListener,
     ToolsEnabledState,
+    ToolLoadingMode,
+    ToolLoadingState,
     ToolAutoExecConfig,
     ProxySettings,
     ToolsConfig,
@@ -281,6 +283,14 @@ export class SettingsManager {
 
     setToolAutoExecConfig(config: ToolAutoExecConfig): Promise<void> {
         return this.tools.setToolAutoExecConfig(config);
+    }
+
+    getToolLoading(): Readonly<ToolLoadingState> {
+        return this.tools.getToolLoading();
+    }
+
+    setToolLoading(toolName: string, mode: ToolLoadingMode): Promise<void> {
+        return this.tools.setToolLoading(toolName, mode);
     }
 
     /**

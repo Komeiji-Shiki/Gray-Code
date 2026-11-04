@@ -24,6 +24,18 @@ export interface ToolsEnabledState {
 }
 
 /**
+ * 工具加载方式
+ *
+ * resident：每次请求都带完整定义。
+ * deferred：请求里只有固定占位，模型用 tool_search 取得完整定义。
+ */
+export type ToolLoadingMode = 'resident' | 'deferred';
+
+export interface ToolLoadingState {
+    [toolName: string]: ToolLoadingMode;
+}
+
+/**
  * 工具自动执行配置
  *
  * 控制哪些工具可以自动执行（无需用户确认）

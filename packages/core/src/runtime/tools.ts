@@ -26,6 +26,8 @@ export interface ToolContext {
   onDiffReview?: (review: { diffId: string; path: string; status: 'pending' | 'accepted' | 'rejected' | 'cancelled' }) => Promise<void>;
   workspace?: WorkspaceDefinition;
   signal: AbortSignal;
+  /** 本次运行的按需工具完整声明，由运行器从捕获的目录提供。 */
+  deferredTools?: ToolCatalog['deferred'];
   /** 仅由运行器设置，后台宿主据此把终态返回原始调用。 */
   nativeAsync?: boolean;
   /** 原生异步调用经过运行器接管后的句柄，供宿主返回正确的等待入口；不取自普通工具参数。 */
@@ -63,6 +65,19 @@ export interface ToolCatalog {
   version: string;
   declarations: ToolDeclaration[];
   entries: ReadonlyMap<string, { tool: RuntimeTool } & CompiledToolSchema>;
+  /** 按需工具的完整声明：declarations 里只放固定占位，校验和执行仍用 entries 里的真实工具。 */
+  deferred?: ReadonlyMap<string, ToolDeclaration>;
+}
+
+export const TOOL_SEARCH_NAME = 'tool_search';
+
+/**
+ * 按需工具在请求里的固定声明，内容只取决于名称。模型加载工具时定义作为工具结果追加进消息，
+ * tools 数组逐字节不变，前缀缓存不受影响。参数表保持宽松，真实校验在执行入口完成。
+ */
+function deferredToolDeclaration(name: string): ToolDeclaration {
+  return canonical({ name, description: `On-demand tool. Call ${TOOL_SEARCH_NAME} first to get its parameters.`,
+    parameters: { type: 'object', properties: {}, additionalProperties: true } }) as ToolDeclaration;
 }
 
 function canonical(value: unknown): unknown {
@@ -105,7 +120,7 @@ export class RuntimeToolRegistry {
   private readonly validators = new Map<string, { schema: string } & CompiledToolSchema>();
   private readonly definitions = new WeakMap<RuntimeTool, ToolDefinitionSnapshot>();
   private readonly overrideDefinitions = new Map<string, { fingerprint: string; definition: ToolDefinitionSnapshot }>();
-  private readonly catalogs = new Map<string, Pick<ToolCatalog, 'declarations' | 'version'>>();
+  private readonly catalogs = new Map<string, Pick<ToolCatalog, 'declarations' | 'version' | 'deferred'>>();
   private nextDefinitionId = 0;
 
   /** 宿主可为实际执行提供上下文，声明和效果分类保持纯函数。 */
@@ -135,7 +150,7 @@ export class RuntimeToolRegistry {
     return definition;
   }
 
-  catalog(names: string[], overrides?: ReadonlyMap<string, RuntimeTool>): ToolCatalog {
+  catalog(names: string[], overrides?: ReadonlyMap<string, RuntimeTool>, deferred?: ReadonlySet<string>): ToolCatalog {
     const definitions: ToolDefinitionSnapshot[] = [];
     const entries = new Map<string, { tool: RuntimeTool } & CompiledToolSchema>();
     for (const name of [...new Set(names)].sort()) {
@@ -156,19 +171,26 @@ export class RuntimeToolRegistry {
       }
       entries.set(name, { tool, validate: cached.validate, normalizeArguments: cached.normalizeArguments });
     }
-    const key = definitions.map(definition => definition.id).join(',');
+    const isDeferred = (definition: ToolDefinitionSnapshot) => deferred?.has(definition.declaration.name) === true;
+    const key = definitions.map(definition => `${definition.id}${isDeferred(definition) ? 'd' : ''}`).join(',');
     const previous = this.catalogs.get(key);
     if (previous) {
       this.catalogs.delete(key); this.catalogs.set(key, previous);
       return { ...previous, entries };
     }
-    const declarations = definitions.map(definition => definition.declaration);
+    const declarations = definitions.map(definition => isDeferred(definition)
+      ? deferredToolDeclaration(definition.declaration.name) : definition.declaration);
+    const deferredDeclarations = definitions.filter(isDeferred).map(definition => definition.declaration);
     const validationSchemas = Object.fromEntries(definitions.filter(definition => definition.separateValidation)
       .map(definition => [definition.declaration.name, definition.parameters]));
-    const fingerprint = Object.keys(validationSchemas).length ? { declarations, validationSchemas } : declarations;
+    const fingerprint = Object.keys(validationSchemas).length || deferredDeclarations.length
+      ? { declarations, ...(Object.keys(validationSchemas).length ? { validationSchemas } : {}),
+        ...(deferredDeclarations.length ? { deferred: deferredDeclarations } : {}) }
+      : declarations;
     // 捕获后的声明不可变，多个运行可以共享 Token 缓存；版本仍按原有内容与排序计算。
     Object.freeze(declarations);
-    const catalog = { declarations, version: createHash('sha256').update(JSON.stringify(fingerprint)).digest('hex') };
+    const catalog = { declarations, version: createHash('sha256').update(JSON.stringify(fingerprint)).digest('hex'),
+      ...(deferredDeclarations.length ? { deferred: new Map(deferredDeclarations.map(declaration => [declaration.name, declaration])) } : {}) };
     this.catalogs.set(key, catalog);
     if (this.catalogs.size > 64) this.catalogs.delete(this.catalogs.keys().next().value!);
     return { ...catalog, entries };

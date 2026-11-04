@@ -294,6 +294,10 @@ describe('Responses native socket with a real local WebSocket upstream', () => {
       const run = await app.runtime.start({ actorId: 'owner', agentId: 'native-migration', workspaceId: 'native-workspace', conversationId: conversation.id,
         requestKey: 'native-migration', message: { role: 'user', parts: [{ text: '启动命令并保存下载，同时继续其他工作。' }] } });
       expect((await app.runtime.wait(run.id))?.status).toBe('completed'); expect(browserExecutions).toBe(1);
+      // browser_files 默认按需：占位声明也走原生异步，只多一个固定的 task_handle。
+      const browserStub = requests[0].tools.find((tool: any) => tool.name === 'browser_files');
+      expect(browserStub.async).toBe(true);
+      expect(Object.keys(browserStub.parameters.properties)).toEqual(['task_handle']);
       expect(requests[1].previous_response_id).toBe('migration-1');
       expect(JSON.stringify(requests)).not.toContain('summarized-native-evidence');
       const history = (await app.storage.readFullHistory(conversation.id)).messages;

@@ -84,6 +84,7 @@ const COMMON_CHANNEL_FIELDS: ReadonlyArray<keyof BaseChannelConfig | 'apiKey' | 
     'tokenCountMethod',
     'tokenCountApiConfig',
     'strictToolsEnabled',
+    'toolDeferredLoading',
     // apiKey 跨类型保留：OpenAI 与 OpenAI Responses 等转换场景下密钥通常仍有效，
     // 无效时用户可在表单中直接覆盖
     'apiKey',

@@ -1,4 +1,4 @@
-import type { ModelInput, PlatformMessage } from '@graycode/contracts';
+import type { ModelInput, PlatformMessage, ToolDeclaration } from '@graycode/contracts';
 import type { ChannelConfig } from '../../../../backend/modules/config/types';
 import type { ContentPart } from '../../../../backend/modules/conversation/types';
 import { deserializePromptContextCache } from '../../../../backend/modules/prompt/promptContextCache';
@@ -20,7 +20,7 @@ export interface ContextBreakdownItem {
   detail?: string;
 }
 export interface ContextBreakdownCategory {
-  id: 'messages' | 'systemTools' | 'mcpTools' | 'memory' | 'systemPrompt' | 'dynamicContext';
+  id: 'messages' | 'systemTools' | 'mcpTools' | 'memory' | 'systemPrompt' | 'dynamicContext' | 'systemToolsDeferred' | 'mcpToolsDeferred';
   tokens: number;
   items: ContextBreakdownItem[];
 }
@@ -77,6 +77,7 @@ function isMemoryIndex(message: PlatformMessage): boolean {
 export function measureContextInput(input: ModelInput, config: ChannelConfig, options: {
   absoluteLimit?: number;
   serverNames?: ReadonlyMap<string, string>;
+  deferred?: ReadonlyMap<string, ToolDeclaration>;
 } = {}) {
   const counter = createContextBudget(input, config, options.absoluteLimit);
   const { estimateMessage, tokenizerOptions: tokenizer } = counter;
@@ -97,14 +98,24 @@ export function measureContextInput(input: ModelInput, config: ChannelConfig, op
 
   const systemTools = createCategory('systemTools');
   const mcpTools = createCategory('mcpTools');
+  const systemToolsDeferred = createCategory('systemToolsDeferred');
+  const mcpToolsDeferred = createCategory('mcpToolsDeferred');
   for (const tool of input.tools) {
     const tokens = countJsonTokens(tool, tokenizer);
     const decoded = decodeMcpToolName(tool.name);
     const category = decoded ? mcpTools : systemTools;
-    category.tokens += tokens;
-    category.add(tool.name, tokens, decoded
+    const label = decoded
       ? { label: decoded.toolName, detail: options.serverNames?.get(decoded.serverId) ?? decoded.serverId }
-      : { label: tool.name });
+      : { label: tool.name };
+    const definition = options.deferred?.get(tool.name);
+    category.tokens += tokens;
+    if (definition) {
+      category.add('stubs', tokens);
+      const unsent = decoded ? mcpToolsDeferred : systemToolsDeferred;
+      const size = countJsonTokens(definition, tokenizer);
+      unsent.tokens += size;
+      unsent.add(tool.name, size, label);
+    } else category.add(tool.name, tokens, label);
   }
 
   const memory = createCategory('memory');
@@ -163,6 +174,8 @@ export function measureContextInput(input: ModelInput, config: ChannelConfig, op
   const softLimitTokens = managementEnabled ? counter.softLimitTokens : maxInputTokens;
   return {
     categories, totalTokens, maxContextTokens, maxInputTokens, softLimitTokens, managementEnabled,
+    // 按需工具的完整定义没有发送，只用于说明省下了多少，不计入已用。
+    deferredCategories: [systemToolsDeferred, mcpToolsDeferred].map(category => category.finish()).filter(category => category.tokens > 0),
     tokenizer: counter.tokenizer.encoding,
     reservedOutputTokens: Math.max(0, maxContextTokens - maxInputTokens),
     autoCompactBufferTokens: Math.max(0, maxInputTokens - Math.max(totalTokens, softLimitTokens)),
@@ -180,6 +193,7 @@ export async function describeContextBreakdown(app: PlatformApplication, client:
     ...measureContextInput(prepared.input, config, {
       absoluteLimit: app.product.runtimeSettings().getSummarizeConfig().autoSummarizeTokenLimit,
       serverNames: app.mcp.serverNames(),
+      deferred: prepared.deferredTools,
     }),
     model: prepared.input.modelOverride ?? config.model,
     notices: prepared.notices,

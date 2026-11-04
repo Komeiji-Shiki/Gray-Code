@@ -64,7 +64,7 @@ export class SettingsTransfer {
       }
     }
     if (data.vscodeSettings && typeof data.vscodeSettings === 'object') {
-      const allowed = new Set(['toolsConfig', 'ui', 'toolsEnabled', 'toolAutoExec', 'maxToolIterations', 'defaultToolMode', 'activeChannelId', 'lastReadAnnouncementVersion', 'checkForUpdates', 'updateChannel', 'proxy']);
+      const allowed = new Set(['toolsConfig', 'ui', 'toolsEnabled', 'toolLoading', 'toolAutoExec', 'maxToolIterations', 'defaultToolMode', 'activeChannelId', 'lastReadAnnouncementVersion', 'checkForUpdates', 'updateChannel', 'proxy']);
       const values: Record<string, unknown> = {};
       for (const [key, value] of Object.entries(data.vscodeSettings)) {
         const name = key.replace(/^graycode\./, ''); if (allowed.has(name)) values[name] = value;

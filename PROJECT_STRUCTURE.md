@@ -71,6 +71,8 @@ packages/core 不导入 Electron、VS Code、frontend 或 backend。构建脚本
 
 运行开始时捕获模型、工具、工作区和相关配置，已经启动的任务继续使用捕获版本；工具目录刷新只影响之后的运行。工具目录按规范化 schema 复用参数校验器。
 
+按需工具在模型请求的 `tools` 里只有内容固定的占位，完整定义由 `tool_search` 的结果追加进消息，加载前后 `tools` 与系统提示逐字节相同。名称、审批、校验和执行都沿用真实工具，占位只影响发给模型的声明；默认策略与解析在 [settings/toolLoading.ts](apps/server/src/settings/toolLoading.ts)。
+
 默认 Agent 跟随内置工具目录，但 Bot 附件、上下文笔记等环境工具不常驻，由 [prompt/service.ts](apps/server/src/prompt/service.ts) 按会话环境追加（登记见 [settings/agent.ts](apps/server/src/settings/agent.ts)）；没有内置浏览器宿主时不携带浏览器工具。工具声明随每次请求发送，是请求前缀的一部分。
 
 独立读取可在同批最多四个并行，结果按原声明顺序保存。同一响应中连续的子代理派发一起启动，由子代理最大并发数排队。需要确认、文件写入、进程和界面动作串行。流式文本/思考增量按 16 ms 或 16 KiB 合并，结构化参数和结束事件保持边界。

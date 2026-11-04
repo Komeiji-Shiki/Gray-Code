@@ -323,6 +323,7 @@ export const MESSAGE_NAMES = {
   'tools.resetToolAutoExec': 'tools.resetToolAutoExec',
   'tools.setToolAutoExec': 'tools.setToolAutoExec',
   'tools.setToolEnabled': 'tools.setToolEnabled',
+  'tools.setToolLoading': 'tools.setToolLoading',
   'tools.updateApplyDiffConfig': 'tools.updateApplyDiffConfig',
   'tools.updateExecuteCommandConfig': 'tools.updateExecuteCommandConfig',
   'tools.updateFindFilesConfig': 'tools.updateFindFilesConfig',

@@ -128,7 +128,8 @@ describe('子代理设置保存到模型请求的工具范围', () => {
     await saveTools(tools);
     const child = await dispatch();
     expect(child.profile.toolNames).toEqual(['goto_definition', 'read_file']);
-    expect(names(childInputs(child.conversationId)[0])).toEqual(['context_status', 'goto_definition', 'read_file']);
+    // goto_definition 默认按需，工具搜索是加载它的入口，不计入子代理配置的工具范围。
+    expect(names(childInputs(child.conversationId)[0])).toEqual(['context_status', 'goto_definition', 'read_file', 'tool_search']);
   });
 
   test.each([

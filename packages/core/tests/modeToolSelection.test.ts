@@ -89,7 +89,7 @@ describe('平台模式按配置与会话阶段选择工具', () => {
     for (const name of ['execute_command', 'search_in_files', 'subagents', ...SYNC_TOOLS, ...MODE_ONLY_TOOLS]) {
       expect(sent).not.toContain(name);
     }
-    expect(sent.every(name => name === mcpTool || name.startsWith('context_')
+    expect(sent.every(name => name === mcpTool || name.startsWith('context_') || name === 'tool_search'
       || (DEFAULT_CHAT_MODE_TOOL_NAMES as readonly string[]).includes(name))).toBe(true);
   });
 

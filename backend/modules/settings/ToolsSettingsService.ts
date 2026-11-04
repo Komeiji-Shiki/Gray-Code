@@ -8,6 +8,8 @@
 
 import type {
     ToolsEnabledState,
+    ToolLoadingMode,
+    ToolLoadingState,
     ToolAutoExecConfig,
     ToolsConfig,
     ListFilesToolConfig,
@@ -225,6 +227,31 @@ export class ToolsSettingsService {
      */
     getEnabledTools(allTools: string[]): string[] {
         return allTools.filter(name => this.isToolEnabled(name));
+    }
+
+    // ========== 工具加载方式 ==========
+
+    /** 用户单独设置过的加载方式；未列出的工具由宿主的默认策略决定。 */
+    getToolLoading(): Readonly<ToolLoadingState> {
+        return this.core.settings.toolLoading ?? {};
+    }
+
+    async setToolLoading(toolName: string, mode: ToolLoadingMode): Promise<void> {
+        await this.core.serializeMutation(async () => {
+            const oldValue = this.core.cloneConfig(this.getToolLoading());
+            this.core.settings.toolLoading = { ...this.core.settings.toolLoading, [toolName]: mode };
+            this.core.settings.lastUpdated = Date.now();
+
+            await this.core.storage.save(this.core.settings);
+
+            this.core.notifyChange({
+                type: 'tools',
+                path: 'toolLoading',
+                oldValue,
+                newValue: this.core.cloneConfig(this.core.settings.toolLoading),
+                settings: this.core.cloneConfig(this.core.settings)
+            });
+        });
     }
 
     // ========== 工具自动执行管理 ==========

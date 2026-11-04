@@ -4,7 +4,9 @@ import { branchRetentionDays, DEFAULT_BRANCH_RETENTION_DAYS } from '../conversat
 import type { ProductSettingsDraft } from '../settings/product';
 import type { PlatformApplication } from '../application';
 import { mcpUiHandlers } from '../mcp/ui';
+import { TOOL_SEARCH_NAME } from '@graycode/core';
 import { toolApprovalConfigured, toolApprovalRules } from '../settings/agent';
+import { defaultToolLoading } from '../settings/toolLoading';
 import { getModels } from '../../../../backend/modules/channel/modelList';
 
 type Handler = (data: Record<string, any>) => unknown | Promise<unknown>;
@@ -76,7 +78,9 @@ export function productSettingsHandlers(draft: ProductSettingsDraft, app: Platfo
     'tools.resetToolAutoExec': async data => { await settings.resetToolAutoExec(data.toolName); return { success: true, ...approvalState(data.toolName) }; },
     'tools.getTools': () => {
       const rules = approvalRules();
+      const loading = settings.getToolLoading();
       return { tools: app.tools.declarations().map(tool => ({ ...tool, enabled: settings.isToolEnabled(tool.name), ...approvalState(tool.name, rules),
+        ...(tool.name === TOOL_SEARCH_NAME ? {} : { loading: loading[tool.name] ?? defaultToolLoading(tool.name) }),
         category: /^(read_file|write_file|apply_diff|insert_code|delete_code|delete_file|create_directory|list_files|find_files|search_in_files)$/.test(tool.name) ? 'file'
           : /^(execute_command|terminal_task)$/.test(tool.name) ? 'terminal'
             : tool.name.startsWith('memory_') ? 'memory' : tool.name === 'read_skill' ? 'skills' : tool.name.startsWith('todo_') ? 'todo' : tool.name === 'history_search' ? 'history'
@@ -84,6 +88,11 @@ export function productSettingsHandlers(draft: ProductSettingsDraft, app: Platfo
                 : ['generate_image', 'remove_background', 'crop_image', 'resize_image', 'rotate_image'].includes(tool.name) ? 'media' : 'other' })) };
     },
     'tools.setToolEnabled': async data => { await settings.setToolEnabled(data.toolName, data.enabled); return { success: true }; },
+    'tools.setToolLoading': async data => {
+      if (data.mode !== 'resident' && data.mode !== 'deferred') throw new Error('工具加载方式无效。');
+      await settings.setToolLoading(data.toolName, data.mode);
+      return { success: true };
+    },
     'tools.setToolsEnabled': async data => { await settings.setToolsEnabled(data.states); return { success: true }; },
     getSkillsConfig: () => settings.getSkillsConfig(),
     updateSkillsConfig: async data => { await settings.updateSkillsConfig(data.config); return { success: true }; },

@@ -290,6 +290,14 @@ export interface BaseChannelConfig {
      * 默认值：false（兼容反代/代理网关不支持 strict 字段的场景）
      */
     strictToolsEnabled?: boolean;
+
+    /**
+     * 是否按需加载工具
+     *
+     * 默认开启：按需工具在请求里只有固定占位，完整定义由 tool_search 的结果提供。
+     * 网关不接受宽松参数表，或模型无法按占位传参时可以关闭，所有工具改发完整定义。
+     */
+    toolDeferredLoading?: boolean;
     
     /**
      * 是否发送历史思考内容
