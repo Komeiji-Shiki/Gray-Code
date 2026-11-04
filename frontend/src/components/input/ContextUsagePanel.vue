@@ -64,7 +64,7 @@ let detailEpoch = 0
 let shownConversationId: string | null | undefined
 
 const rows = computed(() => breakdown.value ? buildContextUsageRows(breakdown.value) : [])
-const barRows = computed(() => rows.value.filter(row => row.id !== 'freeSpace'))
+const barRows = computed(() => rows.value.filter(row => row.id !== 'freeSpace' && !row.uncounted))
 const usedPercent = computed(() => breakdown.value ? breakdown.value.totalTokens / breakdown.value.maxContextTokens * 100 : 0)
 const usageLevel = computed(() => usedPercent.value >= 90 ? 'danger' : usedPercent.value >= 75 ? 'warning' : '')
 
@@ -305,14 +305,14 @@ onBeforeUnmount(() => {
           <component
             :is="row.items.length ? 'button' : 'div'"
             class="usage-row"
-            :class="{ expandable: row.items.length }"
+            :class="{ expandable: row.items.length, uncounted: row.uncounted }"
             v-bind="row.items.length ? { type: 'button', 'aria-expanded': expandedRow === row.id } : {}"
             @click="row.items.length && toggleRow(row.id)"
           >
             <span class="usage-swatch" aria-hidden="true"></span>
             <span class="usage-row-label">{{ rowLabel(row.id) }}</span>
             <span class="usage-row-tokens">{{ formatNumber(row.tokens) }}</span>
-            <span class="usage-row-percent">{{ formatPercent(row.percent) }}</span>
+            <span class="usage-row-percent">{{ row.uncounted ? '—' : formatPercent(row.percent) }}</span>
             <i
               class="codicon usage-chevron"
               :class="{ 'codicon-chevron-right': row.items.length, open: expandedRow === row.id }"
@@ -547,7 +547,9 @@ onBeforeUnmount(() => {
 .usage-color-systemPrompt { --usage-color: var(--gc-chart-yellow); }
 .usage-color-mcpTools { --usage-color: var(--gc-chart-purple); }
 .usage-color-dynamicContext { --usage-color: var(--gc-chart-teal); }
-.usage-color-freeSpace { --usage-color: var(--gc-surface-hover); }
+.usage-color-freeSpace,
+.usage-color-systemToolsDeferred,
+.usage-color-mcpToolsDeferred { --usage-color: var(--gc-surface-hover); }
 .usage-color-reservedOutput,
 .usage-color-autoCompactBuffer {
   --usage-color: repeating-linear-gradient(135deg, var(--gc-text-muted) 0 2px, transparent 2px 4px);
@@ -588,6 +590,11 @@ onBeforeUnmount(() => {
 
 .usage-row.expandable:hover {
   background: var(--gc-surface-hover);
+}
+
+.usage-row.uncounted .usage-row-label,
+.usage-row.uncounted .usage-row-percent {
+  color: var(--gc-text-muted);
 }
 
 .usage-swatch {

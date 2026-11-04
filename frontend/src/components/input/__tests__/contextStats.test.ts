@@ -134,6 +134,7 @@ describe('contextStats 占用行与字段口径', () => {
       { id: 'mcpTools', tokens: 0, items: [] },
       { id: 'memory', tokens: 100, items: [] }
     ],
+    deferredCategories: [],
     totalTokens: 400, maxContextTokens: 1000, maxInputTokens: 900, softLimitTokens: 700, reservedOutputTokens: 100,
     autoCompactBufferTokens: 200, freeTokens: 300, managementEnabled: true, tokenizer: 'o200k_base', model: 'm', notices: [], measuredAt: 1,
     ...overrides
@@ -145,6 +146,14 @@ describe('contextStats 占用行与字段口径', () => {
     expect(rows.reduce((total, row) => total + row.tokens, 0)).toBe(1000)
     expect(rows.reduce((total, row) => total + row.percent, 0)).toBeCloseTo(100)
     expect(rows[0].items).toEqual([{ id: 'user', tokens: 300 }])
+  })
+
+  test('buildContextUsageRows 未发送的按需定义排在最后，不计入窗口合计', () => {
+    const rows = buildContextUsageRows(breakdown({
+      deferredCategories: [{ id: 'systemToolsDeferred', tokens: 5000, items: [{ id: 'office_create', tokens: 5000, label: 'office_create' }] }]
+    }))
+    expect(rows.at(-1)).toMatchObject({ id: 'systemToolsDeferred', tokens: 5000, uncounted: true })
+    expect(rows.filter(row => !row.uncounted).reduce((total, row) => total + row.tokens, 0)).toBe(1000)
   })
 
   test('buildContextUsageRows 没有缓冲和预留时不显示这两行，剩余空间用尽也保留', () => {

@@ -496,7 +496,9 @@ const en: LanguageMessages = {
                     dynamicContext: 'Dynamic context',
                     reservedOutput: 'Reserved for output',
                     autoCompactBuffer: 'Auto-summary buffer',
-                    freeSpace: 'Free space'
+                    freeSpace: 'Free space',
+                    systemToolsDeferred: 'Built-in tools (on demand, not sent)',
+                    mcpToolsDeferred: 'MCP tools (on demand, not sent)'
                 },
                 items: {
                     user: 'User messages',
@@ -508,6 +510,7 @@ const en: LanguageMessages = {
                     base: 'Template body',
                     guidance: 'Memory guidance',
                     snapshots: 'Earlier turn snapshots',
+                    stubs: 'On-demand tool placeholders',
                     other: 'Other injected content'
                 },
                 detailsTitle: 'Summaries & message range',
@@ -1360,8 +1363,12 @@ const en: LanguageMessages = {
                             openaiXmlJson: 'OpenAI XML/JSON: Supports reading images and generating images, does not support documents'
                         }
                     },
+                    toolDeferredLoading: {
+                        label: 'Load tools on demand',
+                        hint: 'On-demand tools carry a fixed placeholder in requests and their full definition comes from Tool Search, saving context without affecting prompt caching. Turn this off if the gateway rejects the parameter schema or the model cannot pass arguments to these tools.'
+                    },
                     strictTools: {
-                        label: 'Enable Strict Tool Use',
+                        label:'Enable Strict Tool Use',
                         hint: 'When enabled, the API enforces model output to strictly conform to parameter schemas, eliminating type errors and missing fields. Requires Anthropic or OpenAI channel support. Proxies may not be compatible. Gemini does not support this feature.',
                         support: {
                             anthropic: 'Anthropic: Auto-injects beta header, max 20 strict tools',
@@ -2812,6 +2819,12 @@ const en: LanguageMessages = {
                     enableAll: 'Enable All',
                     disableAll: 'Disable All'
                 },
+                toolLoading: {
+                    resident: 'Always',
+                    deferred: 'On demand',
+                    residentHint: 'Every request sends the full definition. Click to switch to on demand.',
+                    deferredHint: 'Requests carry a fixed placeholder; the model gets the definition through Tool Search, without affecting prompt caching. Click to always send.'
+                },
                 loading: 'Loading tools list...',
                 empty: 'No tools available',
                 categories: {
@@ -2848,6 +2861,7 @@ const en: LanguageMessages = {
                     office_create: sharedEn.components.settings.toolsSettings.toolDisplayNames.office_create,
                     office_edit: sharedEn.components.settings.toolsSettings.toolDisplayNames.office_edit,
                     context_status: sharedEn.components.settings.toolsSettings.toolDisplayNames.context_status,
+                    tool_search: 'Tool Search',
                     terminal_task: sharedEn.components.settings.toolsSettings.toolDisplayNames.terminal_task,
                     computer_windows: 'Application Windows', computer_observe: 'Observe Computer', computer_control: 'Desktop Control', computer_action: 'Computer Action',
                     memory_search: 'Search Long-term Memory', memory_read: 'Read Long-term Memory', memory_remember: 'Save Long-term Memory', memory_remove: 'Remove Long-term Memory',
@@ -2926,6 +2940,7 @@ const en: LanguageMessages = {
                     office_create: sharedEn.components.settings.toolsSettings.toolDescriptions.office_create,
                     office_edit: sharedEn.components.settings.toolsSettings.toolDescriptions.office_edit,
                     context_status: sharedEn.components.settings.toolsSettings.toolDescriptions.context_status,
+                    tool_search: 'Lets the model get full definitions of on-demand tools. When off, every tool sends its full definition',
                     terminal_task: sharedEn.components.settings.toolsSettings.toolDescriptions.terminal_task,
                     browser_tabs: 'List, create and manage built-in browser tabs, and show a tab in the workspace.',
                     browser_read: 'Read page structure and element references, capture the current viewport, or inspect captured console and network records.',

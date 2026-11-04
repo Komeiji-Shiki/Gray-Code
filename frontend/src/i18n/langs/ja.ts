@@ -496,7 +496,9 @@ const ja: LanguageMessages = {
                     dynamicContext: '動的コンテキスト',
                     reservedOutput: '出力用の予約',
                     autoCompactBuffer: '自動要約バッファ',
-                    freeSpace: '空き容量'
+                    freeSpace: '空き容量',
+                    systemToolsDeferred: '組み込みツール（オンデマンド、未送信）',
+                    mcpToolsDeferred: 'MCP ツール（オンデマンド、未送信）'
                 },
                 items: {
                     user: 'ユーザーメッセージ',
@@ -508,6 +510,7 @@ const ja: LanguageMessages = {
                     base: 'テンプレート本文',
                     guidance: 'メモリの利用説明',
                     snapshots: '過去ターンのスナップショット',
+                    stubs: 'オンデマンドツールのプレースホルダー',
                     other: 'その他の挿入内容'
                 },
                 detailsTitle: '要約とメッセージ範囲',
@@ -1359,6 +1362,10 @@ const ja: LanguageMessages = {
                             openaiResponses: 'OpenAI Responses：画像、PDF の読み取りをネイティブにサポートし、推論プロセスのリアルタイム表示をサポートします',
                             openaiXmlJson: 'OpenAI XML/JSON: 画像の読み取りと生成をサポートしますが、ドキュメントはサポートしていません'
                         }
+                    },
+                    toolDeferredLoading: {
+                        label: 'ツールをオンデマンドで読み込む',
+                        hint: 'オンデマンドツールはリクエスト内では固定のプレースホルダーのみとなり、完全な定義はツール検索の結果から渡されます。コンテキストを節約し、プロンプトキャッシュにも影響しません。ゲートウェイがパラメータスキーマを拒否する場合や、モデルがこれらのツールに引数を渡せない場合はオフにしてください。'
                     },
                     strictTools: {
                         label: 'Strict Tool Use を有効化',
@@ -2812,6 +2819,12 @@ const ja: LanguageMessages = {
                     enableAll: 'すべて有効化',
                     disableAll: 'すべて無効化'
                 },
+                toolLoading: {
+                    resident: '常駐',
+                    deferred: 'オンデマンド',
+                    residentHint: '毎回のリクエストで完全な定義を送信します。クリックでオンデマンドに切り替えます。',
+                    deferredHint: 'リクエストには固定のプレースホルダーのみ含まれ、モデルはツール検索で定義を取得します。プロンプトキャッシュには影響しません。クリックで常駐に切り替えます。'
+                },
                 loading: 'ツールリストを読み込み中...',
                 empty: '利用可能なツールがありません',
                 categories: {
@@ -2848,6 +2861,7 @@ const ja: LanguageMessages = {
                     office_create: sharedJa.components.settings.toolsSettings.toolDisplayNames.office_create,
                     office_edit: sharedJa.components.settings.toolsSettings.toolDisplayNames.office_edit,
                     context_status: sharedJa.components.settings.toolsSettings.toolDisplayNames.context_status,
+                    tool_search: 'ツール検索',
                     terminal_task: sharedJa.components.settings.toolsSettings.toolDisplayNames.terminal_task,
                     computer_windows: 'アプリのウィンドウ', computer_observe: '画面の確認', computer_control: 'デスクトップ制御', computer_action: 'コンピューター操作',
                     memory_search: '長期記憶の検索', memory_read: '長期記憶の読み取り', memory_remember: '長期記憶の保存', memory_remove: '長期記憶の削除',
@@ -2926,6 +2940,7 @@ const ja: LanguageMessages = {
                     office_create: sharedJa.components.settings.toolsSettings.toolDescriptions.office_create,
                     office_edit: sharedJa.components.settings.toolsSettings.toolDescriptions.office_edit,
                     context_status: sharedJa.components.settings.toolsSettings.toolDescriptions.context_status,
+                    tool_search: 'オンデマンドツールの完全な定義をモデルに渡します。オフにするとすべてのツールが完全な定義を送信します',
                     terminal_task: sharedJa.components.settings.toolsSettings.toolDescriptions.terminal_task,
                     browser_tabs: '内蔵ブラウザーのタブを一覧表示、作成、管理し、ワークスペースに表示します。',
                     browser_read: 'ページ構造と要素参照を取得し、表示範囲を撮影するか、記録済みのコンソールとネットワーク情報を確認します。',

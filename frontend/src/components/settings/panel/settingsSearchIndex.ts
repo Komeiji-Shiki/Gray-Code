@@ -51,6 +51,12 @@ export function settingsSearchIndex(isDesktopHost: boolean, supportsFileAssociat
     anchor: '[data-search-anchor="multimodal"]'
   },
   {
+    key: 'channel-tool-deferred-loading', tab: 'channel',
+    labelKey: 'components.settings.channelSettings.form.toolDeferredLoading.label',
+    keywords: ['按需加载', '工具搜索', 'tool search', 'on demand', 'deferred'],
+    anchor: '[data-search-anchor="tool-deferred-loading"]'
+  },
+  {
     key: 'channel-strict-tools', tab: 'channel',
     labelKey: 'components.settings.channelSettings.form.strictTools.label',
     keywords: ['strict tool use', '严格工具', '强制工具', '工具调用'],

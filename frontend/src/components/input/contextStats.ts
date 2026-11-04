@@ -25,6 +25,7 @@ export const CONTEXT_REQUESTS = {
 } as const
 
 export type ContextCategoryId = 'messages' | 'systemTools' | 'mcpTools' | 'memory' | 'systemPrompt' | 'dynamicContext'
+  | 'systemToolsDeferred' | 'mcpToolsDeferred'
 
 export interface ContextBreakdownItem {
   id: string
@@ -42,6 +43,8 @@ export interface ContextBreakdownCategory {
 
 export interface ContextBreakdown {
   categories: ContextBreakdownCategory[]
+  /** 按需工具没有发送的完整定义，只说明省下了多少，不计入已用。 */
+  deferredCategories: ContextBreakdownCategory[]
   totalTokens: number
   maxContextTokens: number
   maxInputTokens: number
@@ -71,9 +74,11 @@ export interface ContextUsageRow {
   tokens: number
   percent: number
   items: ContextBreakdownItem[]
+  /** 不占窗口的说明行：没有占比，也不进占用条。 */
+  uncounted?: boolean
 }
 
-/** 面板行与占用条共用一份数据：已用分类在前，再是预留和缓冲，剩余空间始终在最后。 */
+/** 面板行与占用条共用一份数据：已用分类在前，再是预留和缓冲、剩余空间，未发送的按需定义放在最后。 */
 export function buildContextUsageRows(breakdown: ContextBreakdown): ContextUsageRow[] {
   const percent = (tokens: number) => tokens / breakdown.maxContextTokens * 100
   const row = (id: ContextUsageRowId, tokens: number, items: ContextBreakdownItem[] = []): ContextUsageRow =>
@@ -82,7 +87,8 @@ export function buildContextUsageRows(breakdown: ContextBreakdown): ContextUsage
     ...breakdown.categories.filter(category => category.tokens > 0).map(category => row(category.id, category.tokens, category.items)),
     ...(breakdown.reservedOutputTokens > 0 ? [row('reservedOutput', breakdown.reservedOutputTokens)] : []),
     ...(breakdown.autoCompactBufferTokens > 0 ? [row('autoCompactBuffer', breakdown.autoCompactBufferTokens)] : []),
-    row('freeSpace', breakdown.freeTokens)
+    row('freeSpace', breakdown.freeTokens),
+    ...breakdown.deferredCategories.map(category => ({ ...row(category.id, category.tokens, category.items), uncounted: true }))
   ]
 }
 

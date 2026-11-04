@@ -14,6 +14,9 @@ const breakdown = (model = 'fixture-model') => ({
     { id: 'mcpTools', tokens: 100, items: [{ id: 'mcp__a__b', tokens: 100, label: 'b', detail: '服务器 A' }] },
     { id: 'memory', tokens: 0, items: [] }
   ],
+  deferredCategories: [
+    { id: 'mcpToolsDeferred', tokens: 2000, items: [{ id: 'mcp__a__c', tokens: 2000, label: 'c', detail: '服务器 A' }] }
+  ],
   totalTokens: 700, maxContextTokens: 1000, maxInputTokens: 1000, softLimitTokens: 800, reservedOutputTokens: 0,
   autoCompactBufferTokens: 200, freeTokens: 100, managementEnabled: true, tokenizer: 'o200k_base', model, notices: [], measuredAt: 1
 })
@@ -36,6 +39,20 @@ function answerWith(handlers: Record<string, (data: any) => unknown>) {
   rpc.mockImplementation((type: string, data: any) => Promise.resolve(handlers[type]?.(data)))
 }
 
+test('未发送的按需定义只作说明：列在最后，没有占比，也不进占用条', async () => {
+  answerWith({ 'context.breakdown': () => breakdown() })
+  const wrapper = mountPanel()
+  try {
+    await flushPromises()
+    const row = wrapper.get('.usage-rows > li:last-child')
+    expect(row.classes()).toContain('usage-color-mcpToolsDeferred')
+    expect(row.get('.usage-row-percent').text()).toBe('—')
+    expect(wrapper.findAll('.usage-segment').some(segment => segment.classes().includes('usage-color-mcpToolsDeferred'))).toBe(false)
+    await row.get('.usage-row').trigger('click')
+    expect(wrapper.get('.usage-items').text()).toContain('服务器 A')
+  } finally { wrapper.unmount() }
+})
+
 test('打开时读取分类：只列有占用的来源，占用条不含剩余空间，展开后显示单项', async () => {
   answerWith({ 'context.breakdown': () => breakdown() })
   const wrapper = mountPanel()
@@ -44,7 +61,7 @@ test('打开时读取分类：只列有占用的来源，占用条不含剩余�
     expect(rpc).toHaveBeenCalledWith('context.breakdown', request())
     expect(rpc).not.toHaveBeenCalledWith('context.describe', expect.anything())
     expect(wrapper.findAll('.usage-rows > li').map(row => row.classes()[0])).toEqual([
-      'usage-color-messages', 'usage-color-mcpTools', 'usage-color-autoCompactBuffer', 'usage-color-freeSpace'
+      'usage-color-messages', 'usage-color-mcpTools', 'usage-color-autoCompactBuffer', 'usage-color-freeSpace', 'usage-color-mcpToolsDeferred'
     ])
     expect(wrapper.findAll('.usage-segment').map(segment => segment.attributes('style'))).toEqual([
       'width: 60%;', 'width: 10%;', 'width: 20%;'

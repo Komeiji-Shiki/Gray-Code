@@ -41,6 +41,8 @@ interface ToolInfo {
   description: string
   enabled: boolean
   category?: string
+  /** 工具搜索自身没有加载方式：它是加载按需工具的入口。 */
+  loading?: 'resident' | 'deferred'
 }
 
 // 国际化
@@ -159,6 +161,20 @@ async function loadTools() {
     console.error('Failed to load tools:', error)
   } finally {
     isLoading.value = false
+  }
+}
+
+// 切换常驻或按需：只影响之后的请求，正在运行的任务继续使用已捕获的工具目录。
+async function toggleLoading(tool: ToolInfo) {
+  const mode = tool.loading === 'deferred' ? 'resident' : 'deferred'
+  savingTools.value.add(tool.name)
+  try {
+    await sendToExtension(MESSAGE_NAMES['tools.setToolLoading'], { toolName: tool.name, mode })
+    tool.loading = mode
+  } catch (error) {
+    console.error(`Failed to change loading mode of ${tool.name}:`, error)
+  } finally {
+    savingTools.value.delete(tool.name)
   }
 }
 
@@ -348,6 +364,18 @@ onMounted(() => {
               </div>
               
               <div class="tool-actions">
+                <button
+                  v-if="tool.loading"
+                  type="button"
+                  class="loading-btn"
+                  :class="tool.loading"
+                  :disabled="savingTools.has(tool.name)"
+                  :title="t(`components.settings.toolsSettings.toolLoading.${tool.loading}Hint`)"
+                  @click="toggleLoading(tool)"
+                >
+                  {{ t(`components.settings.toolsSettings.toolLoading.${tool.loading}`) }}
+                </button>
+
                 <!-- 配置按钮 -->
                 <button
                   v-if="hasConfigPanel(tool.name)"
@@ -721,6 +749,27 @@ onMounted(() => {
 
 .config-btn .codicon {
   font-size: 14px;
+}
+
+.loading-btn {
+  flex-shrink: 0;
+  min-width: 44px;
+  padding: 2px 8px;
+  background: transparent;
+  border: 1px solid var(--gc-border-control);
+  border-radius: var(--gc-radius-sm);
+  color: var(--gc-text-primary);
+  font-size: var(--gc-font-size-caption);
+  cursor: pointer;
+}
+
+.loading-btn:hover {
+  background: var(--gc-surface-hover);
+}
+
+.loading-btn.deferred {
+  color: var(--gc-text-muted);
+  border-style: dashed;
 }
 
 /* 开关样式 */

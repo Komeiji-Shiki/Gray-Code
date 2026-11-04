@@ -295,6 +295,21 @@ const emit = defineEmits<{
     </div>
   </div>
 
+  <div class="form-group" data-search-anchor="tool-deferred-loading">
+    <div class="checkbox-with-hint">
+      <label class="custom-checkbox">
+        <input
+          type="checkbox"
+          :checked="config.toolDeferredLoading ?? true"
+          @change="(e: any) => emit('update:field', 'toolDeferredLoading', e.target.checked)"
+        />
+        <span class="checkmark"></span>
+        <span class="checkbox-text">{{ t('components.settings.channelSettings.form.toolDeferredLoading.label') }}</span>
+      </label>
+      <span class="field-hint">{{ t('components.settings.channelSettings.form.toolDeferredLoading.hint') }}</span>
+    </div>
+  </div>
+
   <!-- Strict Tool Use -->
   <div class="form-group" data-search-anchor="strict-tools">
     <div class="checkbox-with-hint">

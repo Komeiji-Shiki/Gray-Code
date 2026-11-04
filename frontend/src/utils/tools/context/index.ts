@@ -12,6 +12,10 @@ registerTool('context_status', {
   descriptionFormatter: () => getToolDescription('context_status', ''),
   contentComponent: lazyToolComponent(() => import('../../../components/tools/context/ContextStatusPanel.vue')),
 })
+registerTool('tool_search', {
+  name: 'tool_search', icon: 'codicon-search',
+  descriptionFormatter: args => typeof args.query === 'string' ? args.query : '',
+})
 const ContextToolPanel = lazyToolComponent(() => import('../../../components/tools/context/ContextToolPanel.vue'))
 const text = (value: unknown) => typeof value === 'string' && value.length ? value : undefined
 

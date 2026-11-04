@@ -498,7 +498,9 @@ const zhCN = {
                     dynamicContext: '动态上下文',
                     reservedOutput: '输出预留',
                     autoCompactBuffer: '自动总结缓冲',
-                    freeSpace: '剩余空间'
+                    freeSpace: '剩余空间',
+                    systemToolsDeferred: '内置工具（按需，未发送）',
+                    mcpToolsDeferred: 'MCP 工具（按需，未发送）'
                 },
                 items: {
                     user: '用户消息',
@@ -510,6 +512,7 @@ const zhCN = {
                     base: '模板正文',
                     guidance: '记忆使用说明',
                     snapshots: '历史回合快照',
+                    stubs: '按需工具占位',
                     other: '其他注入内容'
                 },
                 detailsTitle: '总结与消息范围',
@@ -1361,6 +1364,10 @@ const zhCN = {
                             openaiResponses: 'OpenAI Responses：原生支持图片、PDF 读取，支持推理过程实时显示',
                             openaiXmlJson: 'OpenAI XML/JSON：支持读取图片和生成图片，不支持文档'
                         }
+                    },
+                    toolDeferredLoading: {
+                        label: '按需加载工具',
+                        hint: '按需工具在请求里只有固定占位，完整定义由工具搜索的结果提供，节省上下文且不影响提示词缓存。如果网关报参数表错误，或模型调用这些工具时传不出参数，请关闭。'
                     },
                     strictTools: {
                         label: '启用 Strict Tool Use',
@@ -2814,6 +2821,12 @@ const zhCN = {
                     enableAll: '全部启用',
                     disableAll: '全部禁用'
                 },
+                toolLoading: {
+                    resident: '常驻',
+                    deferred: '按需',
+                    residentHint: '每次请求都发送完整定义。点击改为按需。',
+                    deferredHint: '请求里只有固定占位，模型用工具搜索取得定义，不影响提示词缓存。点击改为常驻。'
+                },
                 loading: '加载工具列表...',
                 empty: '暂无可用工具',
                 categories: {
@@ -2850,6 +2863,7 @@ const zhCN = {
                     office_create: sharedZhCN.components.settings.toolsSettings.toolDisplayNames.office_create,
                     office_edit: sharedZhCN.components.settings.toolsSettings.toolDisplayNames.office_edit,
                     context_status: sharedZhCN.components.settings.toolsSettings.toolDisplayNames.context_status,
+                    tool_search: '工具搜索',
                     terminal_task: sharedZhCN.components.settings.toolsSettings.toolDisplayNames.terminal_task,
                     computer_windows: '应用窗口', computer_observe: '观察电脑', computer_control: '桌面控制权', computer_action: '操作电脑',
                     memory_search: '检索长期记忆', memory_read: '读取长期记忆', memory_remember: '保存长期记忆', memory_remove: '移除长期记忆',
@@ -2928,6 +2942,7 @@ const zhCN = {
                     office_create: sharedZhCN.components.settings.toolsSettings.toolDescriptions.office_create,
                     office_edit: sharedZhCN.components.settings.toolsSettings.toolDescriptions.office_edit,
                     context_status: sharedZhCN.components.settings.toolsSettings.toolDescriptions.context_status,
+                    tool_search: '让模型取得按需工具的完整定义。关闭后所有工具都发送完整定义',
                     terminal_task: sharedZhCN.components.settings.toolsSettings.toolDescriptions.terminal_task,
                     browser_tabs: '列出、创建和管理内置浏览器标签页，可在工作台中显示标签页。',
                     browser_read: '读取网页结构和元素引用、截取当前视口，或查看已捕获的控制台与网络记录。',
