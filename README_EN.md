@@ -107,7 +107,7 @@ The built-in `web_search` and `web_fetch` tools call the official DeepSeek Searc
 | Model providers | Gemini, OpenAI Chat Completions-compatible APIs, OpenAI Responses, and Anthropic, plus ChatGPT subscription sign-in. Each provider has its own tool mode, reasoning, retry, and token counting settings |
 | MCP · Skills · Subagents | Connect MCP servers, load reusable Skills, and dispatch foreground or background subagents for wide reviews and research |
 | External coding agents | Attach terminal coding agents such as Kimi Code and Claude Code through ACP |
-| Persistent memory | Long-term facts and engineering logs are stored in separate layers, isolated between global and workspace scopes, with migration from systems such as LifeBook |
+| Persistent memory | Personal, project, bot-channel, and character-story memories are Markdown files the model reads and writes with normal file tools; systems such as LifeBook can be imported into a library |
 | Automations | Scheduled or event-triggered tasks whose background results flow back into the original conversation |
 | Office files | Read, create, and edit Word, Excel, and PowerPoint files |
 | Image tools | Generate, cut out, crop, resize, and rotate images. DeepSeek vision models can use PDF rasterization, GIF frame extraction, and format normalization |
@@ -140,7 +140,7 @@ The full manual is maintained with the source in [wiki/](wiki/Home.md) (Chinese)
 | [Tools, Skills, and Agents](wiki/Agents-and-MCP.md) | MCP, Skills, subagents, and external ACP agents |
 | [Visual Tools](wiki/Visual-Tools.md) | Computer use, the built-in browser, and image tools |
 | [Automations, Bots, and Devices](wiki/Automation-and-Devices.md) | Automations, Discord and QQ bots, multiple devices, and the Web workspace |
-| [Memory and Companions](wiki/Memory-and-Companions.md) | Long-term memory, engineering logs, Live2D pets, and screen awareness |
+| [Memory and Companions](wiki/Memory-and-Companions.md) | File memory, the imported library, Live2D pets, and screen awareness |
 | [Characters and Worldbooks](wiki/Characters-and-Worldbooks.md) | Character binding, worldbook budgets, and activation |
 | [Data and Diagnostics](wiki/Data-and-Diagnostics.md) | Storage, backup and restore, run history, and troubleshooting |
 

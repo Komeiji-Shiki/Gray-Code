@@ -107,7 +107,7 @@ GrayCode 是一款 Windows x64 桌面 AI 工作台。它能理解你的项目、
 | 多模型渠道 | Gemini、OpenAI Chat Completions 兼容接口、OpenAI Responses、Anthropic，也支持 ChatGPT 订阅登录；每个渠道单独配置工具模式、思考、重试与 Token 计数 |
 | MCP · Skills · 子代理 | 连接 MCP Server，加载可复用的 Skills，派发前台或后台子代理并发处理大范围审查和调研 |
 | 外部编码代理 | 通过 ACP 接入 Kimi Code、Claude Code 等终端编码代理 |
-| 永久记忆 | 长期事实记忆与工程日志分层保存，全局与工作区彼此隔离，支持从 LifeBook 等旧系统迁移 |
+| 永久记忆 | 用 Markdown 文件保存个人、项目、Bot 频道与角色故事的记忆，模型用普通文件工具读写；可从 LifeBook 等旧系统导入资料库 |
 | 自动任务 | 定时或事件触发的任务，后台结果自动回流到原对话 |
 | Office 文件 | 读取、创建和修改 Word、Excel、PPT |
 | 图片工具 | 生成图片、抠图、裁剪、缩放与旋转；DeepSeek 视觉模型可启用 PDF 逐页栅格化、GIF 拆帧和格式规范化 |
@@ -140,7 +140,7 @@ GrayCode 是一款 Windows x64 桌面 AI 工作台。它能理解你的项目、
 | [工具、Skills 与代理](wiki/Agents-and-MCP.md) | MCP、Skills、子代理与外部 ACP 代理 |
 | [截图与坐标工具](wiki/Visual-Tools.md) | 电脑操作、内置浏览器与图片工具 |
 | [自动任务、Bot 与远程设备](wiki/Automation-and-Devices.md) | 自动任务、Discord / QQ 机器人、多设备与 Web 工作台 |
-| [记忆、桌宠与屏幕感知](wiki/Memory-and-Companions.md) | 长期记忆、工程日志、Live2D 桌宠与屏幕感知 |
+| [记忆、桌宠与屏幕感知](wiki/Memory-and-Companions.md) | 文件记忆、导入资料库、Live2D 桌宠与屏幕感知 |
 | [角色卡、世界书与正则](wiki/Characters-and-Worldbooks.md) | 角色绑定、世界书预算与激活 |
 | [数据、记忆与诊断](wiki/Data-and-Diagnostics.md) | 存储、备份恢复、运行记录与排障 |
 
