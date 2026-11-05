@@ -76,6 +76,11 @@ describe('加载方式解析', () => {
     expect(resolveToolLoading(preferences(), ['office_create'], { toolDeferredLoading: true }).deferred?.has('office_create')).toBe(true);
   });
 
+  test('开启严格工具的渠道发送完整定义，关闭时不受影响', () => {
+    expect(resolveToolLoading(preferences(), ['office_create'], { strictToolsEnabled: true })).toEqual({ names: ['office_create'] });
+    expect(resolveToolLoading(preferences(), ['office_create'], { strictToolsEnabled: false }).deferred?.has('office_create')).toBe(true);
+  });
+
   test('子代理继承的清单已含工具搜索时不重复，也不会把它自己算成按需', () => {
     const resolved = resolveToolLoading(preferences(), [TOOL_SEARCH_NAME, 'office_create']);
     expect(resolved.names).toEqual(['office_create', TOOL_SEARCH_NAME]);
@@ -308,6 +313,20 @@ describe('真实运行', () => {
       expect(JSON.stringify((await preview('第二次')).tools)).toBe(first);
     }
     expect(base).toHaveLength(0);
+  });
+
+  test('严格工具渠道能组装请求：Chat 与 Responses 都发送完整定义，没有占位和搜索工具', async () => {
+    for (const type of ['openai', 'openai-responses']) {
+      const draft = await app.product.draft();
+      const id = await draft.configs.createConfig({ name: `${type} strict`, type, url: 'http://127.0.0.1:1/v1', model: 'fixture-model', apiKey: '', enabled: true,
+        contextManagementEnabled: false, timeout: 1000, strictToolsEnabled: true } as never);
+      await app.product.save(draft);
+      const { body } = await app.productUi.call(client, 'prompt.preview',
+        { conversationId: 'loading-chat', configId: id, message: '严格模式' }) as { body: Record<string, unknown> };
+      const tools = JSON.stringify(body.tools);
+      expect(tools).toContain('Find a record by its path.');
+      expect(tools).not.toContain(TOOL_SEARCH_NAME);
+    }
   });
 
   test('上下文面板分开统计占位和没有发送的完整定义', async () => {

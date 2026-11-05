@@ -18,11 +18,16 @@ export function defaultToolLoading(name: string): ToolLoadingMode {
     ? 'deferred' : 'resident';
 }
 
-/** 工具搜索不进 Agent 清单：有按需工具时才追加，子代理继承的清单也在这里统一去重。 */
+/**
+ * 工具搜索不进 Agent 清单：有按需工具时才追加，子代理继承的清单也在这里统一去重。
+ * 严格工具要求参数表封闭，占位的宽松参数表无法转换，开启严格工具的渠道发送完整定义。
+ */
 export function resolveToolLoading(preferences: Pick<SettingsManager, 'getToolLoading' | 'isToolEnabled'>, names: readonly string[],
-  channel?: { toolDeferredLoading?: boolean } | null): { names: string[]; deferred?: ReadonlySet<string> } {
+  channel?: { toolDeferredLoading?: boolean; strictToolsEnabled?: boolean } | null): { names: string[]; deferred?: ReadonlySet<string> } {
   const selected = names.filter(name => name !== TOOL_SEARCH_NAME);
-  if (channel?.toolDeferredLoading === false || !preferences.isToolEnabled(TOOL_SEARCH_NAME)) return { names: selected };
+  if (channel?.toolDeferredLoading === false || channel?.strictToolsEnabled === true || !preferences.isToolEnabled(TOOL_SEARCH_NAME)) {
+    return { names: selected };
+  }
   const configured = preferences.getToolLoading();
   const deferred = new Set(selected.filter(name => (configured[name] ?? defaultToolLoading(name)) === 'deferred'));
   return deferred.size ? { names: [...selected, TOOL_SEARCH_NAME], deferred } : { names: selected };
