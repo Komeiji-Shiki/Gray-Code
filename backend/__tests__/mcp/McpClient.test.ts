@@ -89,6 +89,25 @@ describe('SDK MCP client', () => {
         expect(() => process.kill(pid, 0)).toThrow();
     });
 
+    test('HTTP 跨域重定向不跟随，自定义请求头和请求体不会发给重定向目标', async () => {
+        const target = await httpFixture('modern');
+        const redirector = createServer((_request, response) => {
+            response.writeHead(307, { Location: target.url }).end();
+        });
+        redirector.listen(0, '127.0.0.1'); await once(redirector, 'listening');
+        const port = (redirector.address() as import('node:net').AddressInfo).port;
+        const client = new McpClient({ type: 'streamable-http', url: `http://localhost:${port}/mcp`, headers: { 'X-Api-Key': 'fixture-secret' } }, 2000);
+        try {
+            await expect(client.connect()).rejects.toThrow();
+            expect(target.calls).toHaveLength(0);
+        } finally {
+            await client.disconnect();
+            redirector.closeAllConnections();
+            await new Promise<void>(resolve => redirector.close(() => resolve()));
+            await target.close();
+        }
+    });
+
     test.each(['modern', 'legacy'] as const)('HTTP %s 认证、分页、单次取消和持续使用同一连接', async mode => {
         const f = await httpFixture(mode);
         const client = new McpClient({ type: 'streamable-http', url: f.url, headers: { Authorization: 'Bearer fixture' } }, 2000);
