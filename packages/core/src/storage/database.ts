@@ -757,7 +757,7 @@ export class PlatformDatabase {
     // 回收会删除未引用的段，后续 SQLite 可能复用编号，已有运行下次重新取得完整快照。
     this.histories.clearSnapshots();
     this.objects.clearRequestCache();
-    const result = this.db.transaction(() => {
+    this.db.transaction(() => {
       this.db.prepare(`DELETE FROM histories WHERE id NOT IN (
         SELECT history_id FROM conversations UNION SELECT history_id FROM snapshots
         UNION SELECT history_id FROM migrations WHERE history_id IS NOT NULL
@@ -767,19 +767,36 @@ export class PlatformDatabase {
         AND segment_entries.ordinal>=s.segment_offset AND segment_entries.ordinal<s.segment_offset+s.count
       )`).run();
       this.db.prepare('DELETE FROM segments WHERE id NOT IN (SELECT segment_id FROM history_spans)').run();
-      const objectsRemoved = this.db.prepare(`WITH RECURSIVE reachable(hash) AS (
-        SELECT metadata_hash FROM conversations UNION SELECT body_hash FROM segment_entries
-        UNION SELECT value_hash FROM records UNION SELECT metadata_hash FROM migrations UNION SELECT metadata_hash FROM snapshots
-        UNION SELECT value_hash FROM runs UNION SELECT payload_hash FROM run_events
-        UNION SELECT body_hash FROM memory_entries UNION SELECT body_hash FROM memory_summaries
-        UNION SELECT source_hash FROM memory_revisions
-        UNION SELECT body_hash FROM memory_revision_entries WHERE body_hash IS NOT NULL
-        UNION SELECT body_hash FROM memory_revision_summaries WHERE body_hash IS NOT NULL
-        UNION SELECT e.child_hash FROM object_edges e JOIN reachable r ON e.parent_hash=r.hash
-      ) DELETE FROM objects WHERE hash NOT IN (SELECT hash FROM reachable)`).run().changes;
-      const chunksRemoved = this.db.prepare('DELETE FROM chunks WHERE hash NOT IN (SELECT chunk_hash FROM object_chunks)').run().changes;
-      return { objectsRemoved, chunksRemoved, externalFilesRemoved: 0 };
     })();
+    // 可达集合已覆盖所有引用对象的列，删除时逐行的外键检查只会得出同一结论；object_edges.child_hash、
+    // records.value_hash 等引用列没有索引，每删一个对象都要扫描整张表，大库上要跑几天。删除对象时关闭外键，
+    // 原本由级联删除的切块关联、对象边与搜索正文显式删除（PRAGMA 不能在事务内修改）。
+    this.db.pragma('foreign_keys = OFF');
+    let result: StorageOperations['collectGarbage']['output'];
+    try {
+      result = this.db.transaction(() => {
+        this.db.prepare('CREATE TEMP TABLE IF NOT EXISTS unreachable_objects(hash BLOB PRIMARY KEY) WITHOUT ROWID').run();
+        this.db.prepare('DELETE FROM temp.unreachable_objects').run();
+        this.db.prepare(`INSERT INTO temp.unreachable_objects(hash) WITH RECURSIVE reachable(hash) AS (
+          SELECT metadata_hash FROM conversations UNION SELECT body_hash FROM segment_entries
+          UNION SELECT value_hash FROM records UNION SELECT metadata_hash FROM migrations UNION SELECT metadata_hash FROM snapshots
+          UNION SELECT value_hash FROM runs UNION SELECT payload_hash FROM run_events
+          UNION SELECT body_hash FROM memory_entries UNION SELECT body_hash FROM memory_summaries
+          UNION SELECT source_hash FROM memory_revisions
+          UNION SELECT body_hash FROM memory_revision_entries WHERE body_hash IS NOT NULL
+          UNION SELECT body_hash FROM memory_revision_summaries WHERE body_hash IS NOT NULL
+          UNION SELECT e.child_hash FROM object_edges e JOIN reachable r ON e.parent_hash=r.hash
+        ) SELECT hash FROM objects WHERE hash NOT IN (SELECT hash FROM reachable)`).run();
+        const unreachable = 'IN (SELECT hash FROM temp.unreachable_objects)';
+        this.db.prepare(`DELETE FROM object_chunks WHERE object_hash ${unreachable}`).run();
+        this.db.prepare(`DELETE FROM object_edges WHERE parent_hash ${unreachable}`).run();
+        this.db.prepare(`DELETE FROM history_search WHERE body_hash ${unreachable}`).run();
+        const objectsRemoved = this.db.prepare(`DELETE FROM objects WHERE hash ${unreachable}`).run().changes;
+        this.db.prepare('DELETE FROM temp.unreachable_objects').run();
+        const chunksRemoved = this.db.prepare('DELETE FROM chunks WHERE hash NOT IN (SELECT chunk_hash FROM object_chunks)').run().changes;
+        return { objectsRemoved, chunksRemoved, externalFilesRemoved: 0 };
+      })();
+    } finally { this.db.pragma('foreign_keys = ON'); }
     const referenced = new Set((this.db.prepare('SELECT file_id FROM chunks WHERE file_id IS NOT NULL').all() as { file_id: string }[]).map(row => row.file_id));
     // Only owned content filenames are collected; arbitrary files in the data directory are untouched.
     for (const shard of fs.readdirSync(this.objectPath, { withFileTypes: true })) {
