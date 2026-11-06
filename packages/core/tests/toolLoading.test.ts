@@ -62,6 +62,9 @@ describe('目录捕获', () => {
     // 真实工具仍在目录中，原生异步包装等按工具属性生成的声明解锁前后一致。
     expect(locked.entries.get('office_create')?.tool.declaration.description).toContain('完整说明');
     expect(unlocked.locked).toBeUndefined();
+    // 常驻工具锁定后仍发送完整定义，锁定不改变声明形态。
+    const resident = tools.catalog(['read_file'], undefined, undefined, new Map([['read_file', '服务已断开']]));
+    expect(resident.declarations).toEqual(tools.catalog(['read_file']).declarations);
   });
 });
 

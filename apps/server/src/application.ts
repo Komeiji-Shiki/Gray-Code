@@ -338,7 +338,8 @@ export class PlatformApplication {
         // 与提示词准备的替换拒绝使用同一份名单：只授予搜索时不向模型展示替换参数。
         if (isSearchInFilesReplaceForbidden(names)) overrides.set('search_in_files', readOnlySearchTool(this));
         const loading = resolveToolLoading(this.product.runtimeSettings(), names, channel, hints);
-        return this.tools.catalog(loading.names, overrides, loading.deferred, loading.locked);
+        const offline = this.mcp.lockedTools(loading.names);
+        return this.tools.catalog(loading.names, overrides, loading.deferred, offline.size ? new Map([...loading.locked ?? [], ...offline]) : loading.locked);
       },
       preparePrompt: async input => this.automations.preparePrompt(input.automationId, input.conversation.id, await new PlatformPromptService(this).prepare(input)),
       currentAutomationId: () => this.automations.meter.currentId(),

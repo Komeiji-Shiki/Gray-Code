@@ -72,11 +72,24 @@ test('MCP 列表变更只重建工具变化的服务器，保留未变化的校�
     expect(replaced.map(tool => tool.declaration.name)).toEqual(names);
     expect(replaced.map((tool, index) => tool === initial[index])).toEqual([true, true, false, true]);
 
-    // 服务器断开后只保留仍连接服务器的工具。
+    // 服务器已删除或停用（这里没有对应的启用配置）：移除它的工具，只保留仍连接服务器的工具。
     servers.splice(0, 1);
     emit('b', 'notifications/tools/list_changed');
     expect(app.mcp.names()).toEqual(['mcp__a__list', 'mcp__a___list']);
     expect(replace.mock.calls[1][1].map(tool => tool === replaced[tool.declaration.name === 'mcp__a__list' ? 2 : 3])).toEqual([true, true]);
+
+    // 仍启用的服务器断开：保留上次的工具并锁定，目录声明不变；重连后解锁。
+    jest.spyOn(app.product, 'mcpConfigs').mockReturnValue([{ id: 'a', enabled: true }] as ReturnType<typeof app.product.mcpConfigs>);
+    const connected = app.tools.catalog(app.mcp.names());
+    const [serverA] = servers.splice(0, 1);
+    emit('a', 'notifications/tools/list_changed');
+    const offlineNames = app.mcp.names();
+    expect([...offlineNames].sort()).toEqual(['mcp__a___list', 'mcp__a__list']);
+    expect([...app.mcp.lockedTools(offlineNames).keys()]).toEqual(['mcp__a__list']);
+    expect(app.tools.catalog(offlineNames, undefined, undefined, app.mcp.lockedTools(offlineNames)).declarations).toEqual(connected.declarations);
+    servers.unshift(serverA);
+    emit('a', 'notifications/tools/list_changed');
+    expect(app.mcp.lockedTools(app.mcp.names()).size).toBe(0);
   } finally { await app.close(); await f.cleanup(); }
 });
 
@@ -152,8 +165,10 @@ test('MCP configuration drafts do not spawn processes; committed stdio discovery
     expect((await app.runtime.wait(pending.id))?.status).toBe('cancelled');
     expect(captured.every(names => names.includes('mcp__fixture__echo'))).toBe(true);
     expect((await app.storage.readFullHistory(chat.id)).messages.filter(message => message.isFunctionResponse)).toHaveLength(5);
+    // 断开后工具仍在目录里但已锁定，同一会话的 tools 数组不因断线变化。
     await call('disconnectMcpServer', { serverId: 'fixture' });
-    expect(app.mcp.names()).toEqual([]);
+    expect(app.mcp.names()).toEqual(['mcp__fixture__echo']);
+    expect(app.mcp.lockedTools(['mcp__fixture__echo']).get('mcp__fixture__echo')).toContain('disconnected');
   } finally { await app.close(); await f.cleanup(); }
 });
 

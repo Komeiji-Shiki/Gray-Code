@@ -68,8 +68,8 @@ export interface ToolCatalog {
   /** 按需工具的完整声明：declarations 里只放固定占位，校验和执行仍用 entries 里的真实工具。 */
   deferred?: ReadonlyMap<string, ToolDeclaration>;
   /**
-   * 已声明占位但当前不能调用的工具及原因。解锁只改变能否执行，声明与按需工具相同，tools 数组前后不变；
-   * entries 仍保留真实工具，原生异步等按工具属性生成的声明在解锁前后一致。
+   * 仍然声明但当前不能调用的工具及原因。锁定只改变能否执行，不改变声明形态，解锁前后 tools 数组不变；
+   * entries 仍保留真实工具，原生异步等按工具属性生成的声明也保持一致。
    */
   locked?: ReadonlyMap<string, string>;
 }
@@ -183,20 +183,20 @@ export class RuntimeToolRegistry {
       }
       entries.set(name, { tool, validate: cached.validate, normalizeArguments: cached.normalizeArguments });
     }
+    const isDeferred = (definition: ToolDefinitionSnapshot) => deferred?.has(definition.declaration.name) === true;
+    // 锁定不改变声明形态：常驻工具保留完整定义，按需工具保留占位，只是 tool_search 不提供锁定工具的定义。
     const isLocked = (definition: ToolDefinitionSnapshot) => locked?.has(definition.declaration.name) === true;
-    // 锁定工具与按需工具使用同一占位，只是 tool_search 不提供它的定义。
-    const isPlaceholder = (definition: ToolDefinitionSnapshot) => isLocked(definition) || deferred?.has(definition.declaration.name) === true;
     const lockedEntries = definitions.filter(isLocked).map(definition => [definition.declaration.name, locked!.get(definition.declaration.name)!] as const);
     const lockedTools = lockedEntries.length ? { locked: new Map(lockedEntries) } : {};
-    const key = definitions.map(definition => `${definition.id}${isLocked(definition) ? 'l' : isPlaceholder(definition) ? 'd' : ''}`).join(',');
+    const key = definitions.map(definition => `${definition.id}${isDeferred(definition) ? 'd' : ''}${isLocked(definition) ? 'l' : ''}`).join(',');
     const previous = this.catalogs.get(key);
     if (previous) {
       this.catalogs.delete(key); this.catalogs.set(key, previous);
       return { ...previous, entries, ...lockedTools };
     }
-    const declarations = definitions.map(definition => isPlaceholder(definition)
+    const declarations = definitions.map(definition => isDeferred(definition)
       ? deferredToolDeclaration(definition.declaration.name) : definition.declaration);
-    const deferredDeclarations = definitions.filter(definition => isPlaceholder(definition) && !isLocked(definition))
+    const deferredDeclarations = definitions.filter(definition => isDeferred(definition) && !isLocked(definition))
       .map(definition => definition.declaration);
     const validationSchemas = Object.fromEntries(definitions.filter(definition => definition.separateValidation)
       .map(definition => [definition.declaration.name, definition.parameters]));

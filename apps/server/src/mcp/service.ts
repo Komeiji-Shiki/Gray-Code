@@ -9,7 +9,9 @@ export class PlatformMcpService {
   readonly manager: McpManager;
   private synchronizeQueue: Promise<void> = Promise.resolve();
   /** 按服务器缓存已构建的工具；指纹覆盖构建用到的全部输入，指纹不变时声明、校验 Schema 与执行目标都不变。 */
-  private serverTools = new Map<string, { fingerprint: string; tools: RuntimeTool[] }>();
+  private serverTools = new Map<string, { fingerprint: string; tools: RuntimeTool[]; serverName: string }>();
+  /** 仍启用但已断开的服务器保留的工具及锁定原因。 */
+  private offline = new Map<string, string>();
   private catalogKey?: string;
   constructor(private readonly app: PlatformApplication) {
     this.manager = new McpManager({
@@ -27,6 +29,10 @@ export class PlatformMcpService {
   }
   async initialize(): Promise<void> { await this.manager.initialize(); this.refreshTools(); }
   names(): string[] { return this.app.tools.names().filter(name => name.startsWith(MCP_TOOL_PREFIX)); }
+  /** 已断开服务器的工具在目录里锁定而不是移除，断线和重连都不会改变 tools 数组。 */
+  lockedTools(names: readonly string[]): Map<string, string> {
+    return new Map(names.flatMap(name => this.offline.has(name) ? [[name, this.offline.get(name)!] as const] : []));
+  }
   serverNames(): Map<string, string> {
     return new Map(this.manager.getAllTools().map(server => [server.serverId, server.serverName]));
   }
@@ -40,19 +46,26 @@ export class PlatformMcpService {
    * method 不能证明工具未变，所以按工具内容指纹判断：资源或提示词变化时工具指纹不变，工具目录与校验器
    * 保持原样；只有指纹变化的服务器重建工具。替换仍按 getAllTools 的服务器与工具顺序提交整个命名空间，
    * 不按服务器前缀局部替换：服务器 ID 允许以单下划线结尾，mcp__a__ 会同时匹配 a_ 的工具。
+   * 意外断开的服务器仍保留上次的工具并锁定，只有删除或停用服务器才移除，避免一次断线让整段历史失去缓存。
    */
   private refreshTools(): void {
     const servers = this.manager.getAllTools();
-    const next = new Map<string, { fingerprint: string; tools: RuntimeTool[] }>();
+    const next = new Map<string, { fingerprint: string; tools: RuntimeTool[]; serverName: string }>();
     for (const server of servers) {
       const fingerprint = JSON.stringify([server.cleanSchema, server.tools ?? []]);
       const cached = this.serverTools.get(server.serverId);
-      next.set(server.serverId, cached?.fingerprint === fingerprint ? cached : { fingerprint, tools: this.buildTools(server) });
+      next.set(server.serverId, cached?.fingerprint === fingerprint ? cached
+        : { fingerprint, tools: this.buildTools(server), serverName: server.serverName });
     }
-    const catalogKey = JSON.stringify(servers.map(server => [server.serverId, next.get(server.serverId)!.fingerprint]));
+    const enabled = new Set(this.app.product.mcpConfigs().filter(config => config.enabled).map(config => config.id));
+    const disconnected = [...this.serverTools].filter(([serverId]) => !next.has(serverId) && enabled.has(serverId));
+    for (const [serverId, cached] of disconnected) next.set(serverId, cached);
+    this.offline = new Map(disconnected.flatMap(([, cached]) => cached.tools.map(tool => [tool.declaration.name,
+      `MCP server "${cached.serverName}" is disconnected. This tool becomes available again after it reconnects.`] as const)));
+    const catalogKey = JSON.stringify([...next].map(([serverId, cached]) => [serverId, cached.fingerprint]));
     this.serverTools = next;
     if (catalogKey === this.catalogKey) return;
-    this.app.tools.replaceNamespace(MCP_TOOL_PREFIX, servers.flatMap(server => next.get(server.serverId)!.tools));
+    this.app.tools.replaceNamespace(MCP_TOOL_PREFIX, [...next.values()].flatMap(cached => cached.tools));
     this.catalogKey = catalogKey;
   }
   private buildTools(server: ReturnType<McpManager['getAllTools']>[number]): RuntimeTool[] {
