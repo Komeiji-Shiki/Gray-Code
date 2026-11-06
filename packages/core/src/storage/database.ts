@@ -327,6 +327,16 @@ export class PlatformDatabase {
     })() },
     statistics: { concurrentRead: false, execute: () => this.statistics() },
     collectGarbage: { concurrentRead: false, execute: () => this.collectGarbage() },
+    recordValueHashes: { concurrentRead: true, execute: ({ namespace, ids }) => {
+      assertIdentifier(namespace);
+      const statement = this.db.prepare('SELECT value_hash FROM records WHERE namespace=? AND id=?');
+      return ids.map(id => {
+        assertIdentifier(id);
+        return (statement.get(namespace, id) as { value_hash: Buffer } | undefined)?.value_hash.toString('hex') ?? null;
+      });
+    } },
+    retainRecords: { concurrentRead: false, execute: ({ namespace, keep, dryRun }) => this.retainRecords(namespace, keep, dryRun === true) },
+    vacuum: { concurrentRead: false, execute: () => { this.db.pragma('wal_checkpoint(TRUNCATE)'); this.db.prepare('VACUUM').run(); } },
     verify: { concurrentRead: false, execute: () => this.verify() },
     checkpoint: { concurrentRead: false, execute: () => { this.db.pragma('wal_checkpoint(TRUNCATE)'); } },
     backupSnapshot: { concurrentRead: false, execute: () => ({ ...captureStorageSnapshot(this.db, this.databasePath, this.objectPath), statistics: this.statistics() }) },
@@ -718,6 +728,29 @@ export class PlatformDatabase {
       objectsChecked++;
     }
     return { ok: issues.length === 0, issues, objectsChecked };
+  }
+
+  /** 分批提交删除，单个事务不会把数百万行的改动同时压进 WAL。 */
+  private retainRecords(namespace: string, keep: readonly string[], dryRun: boolean): StorageOperations['retainRecords']['output'] {
+    assertIdentifier(namespace);
+    for (const id of keep) assertIdentifier(id);
+    this.db.prepare('CREATE TEMP TABLE IF NOT EXISTS retained_records(id TEXT PRIMARY KEY) WITHOUT ROWID').run();
+    try {
+      this.db.transaction(() => {
+        const insert = this.db.prepare('INSERT OR IGNORE INTO temp.retained_records(id) VALUES(?)');
+        for (const id of keep) insert.run(id);
+      })();
+      const unreferenced = 'FROM records WHERE namespace=? AND id NOT IN (SELECT id FROM temp.retained_records)';
+      if (dryRun) return { removed: (this.db.prepare(`SELECT count(*) AS count ${unreferenced}`).get(namespace) as { count: number }).count };
+      const batch = this.db.prepare(`DELETE FROM records WHERE namespace=? AND id IN (SELECT id ${unreferenced} LIMIT 20000)`);
+      let removed = 0;
+      for (let changes = -1; changes !== 0;) {
+        changes = this.db.transaction(() => batch.run(namespace, namespace).changes)();
+        removed += changes;
+        this.db.pragma('wal_checkpoint(PASSIVE)');
+      }
+      return { removed };
+    } finally { this.db.prepare('DELETE FROM temp.retained_records').run(); }
   }
 
   private collectGarbage(): StorageOperations['collectGarbage']['output'] {

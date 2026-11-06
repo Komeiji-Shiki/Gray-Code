@@ -248,6 +248,49 @@ describe('workspace checkpoints application contract', () => {
       expect(await app.storage.getRecord('workspace-checkpoint-content', contentId)).not.toBeNull();
   });
 
+  test('压实合并旧检查点在对话内重复登记的内容，恢复与按引用回收照常', async () => {
+    for (const id of ['legacy', 'other']) await createConversation(id);
+    await writeFile(path.join(f.source, 'same.txt'), 'unchanged');
+    await writeFile(path.join(f.source, 'edit.txt'), 'v1');
+    const first = await app.checkpoints.create('owner', 'legacy');
+    await writeFile(path.join(f.source, 'edit.txt'), 'v2');
+    const second = await app.checkpoints.create('owner', 'legacy');
+    const elsewhere = await app.checkpoints.create('owner', 'other');
+    // 模拟复用上线前的检查点：第二个检查点为每个文件都重新登记了一条内容记录。
+    const legacyIds = Object.fromEntries(await Promise.all(Object.entries(second.contentIds).map(async ([file, contentId]) => {
+      const copy = `${second.id}-legacy-${Object.keys(second.contentIds).indexOf(file)}`;
+      await app.storage.commitRecords([{ namespace: 'workspace-checkpoint-content', id: copy, ownerId: 'legacy',
+        value: await app.storage.getRecord('workspace-checkpoint-content', contentId) }]);
+      return [file, copy] as const;
+    })));
+    const stored = await app.storage.getVersionedRecord('workspace-checkpoints', second.id);
+    await app.storage.commitRecords([{ namespace: 'workspace-checkpoints', id: second.id, ownerId: 'legacy',
+      value: { ...stored.value as object, contentIds: legacyIds }, expectedRevision: stored.revision }]);
+    await app.storage.commitRecords([{ namespace: 'workspace-checkpoint-content', id: 'orphan', ownerId: 'legacy', value: Buffer.from('orphan') }]);
+    const count = async (owner: string) => (await app.storage.listRecords('workspace-checkpoint-content', owner)).length;
+    const before = await count('legacy');
+
+    const { compactCheckpointContent } = await import('../../../apps/server/src/workspace/checkpointCompaction');
+    const dryRun = await compactCheckpointContent(app.storage, { dryRun: true });
+    expect(await count('legacy')).toBe(before);
+    expect(await compactCheckpointContent(app.storage)).toEqual(dryRun);
+    // 两个 legacy 检查点共享 same.txt，edit.txt 各一份；other 对话自己的记录不被合并过去。
+    expect(dryRun).toMatchObject({ checkpoints: 3, rewritten: 1, removed: before - 3 });
+    expect(await count('legacy')).toBe(3);
+    expect(await count('other')).toBe(Object.keys(elsewhere.contentIds).length);
+    const same = Object.keys(first.manifest.files).find(file => file.endsWith('/same.txt'))!;
+    const sharedId = async (id: string) => (await app.checkpoints.get('owner', 'legacy', id)).contentIds[same];
+    expect(await sharedId(second.id)).toBe(await sharedId(first.id));
+
+    await app.checkpoints.delete('owner', 'legacy', first.id, { force: true });
+    await writeFile(path.join(f.source, 'same.txt'), 'changed later');
+    await writeFile(path.join(f.source, 'edit.txt'), 'v3');
+    expect((await app.checkpoints.restore('owner', 'legacy', second.id)).success).toBe(true);
+    expect(await readFile(path.join(f.source, 'same.txt'), 'utf8')).toBe('unchanged');
+    expect(await readFile(path.join(f.source, 'edit.txt'), 'utf8')).toBe('v2');
+    expect(await compactCheckpointContent(app.storage)).toMatchObject({ rewritten: 0, removed: 0 });
+  });
+
   test('等待工作区写锁的检查点可取消，取消后不执行迟到的采集', async () => {
     await createConversation('queued-snapshot');
     let entered!: () => void, release!: () => void, queued!: () => void;

@@ -125,6 +125,12 @@ export interface StorageOperations {
   migrationFinish: { input: { sourceKey: string; fingerprint: string; total: number }; output: void };
   statistics: { input: undefined; output: StorageStatistics };
   collectGarbage: { input: undefined; output: { objectsRemoved: number; chunksRemoved: number; externalFilesRemoved: number } };
+  /** 记录正文对象的哈希（十六进制），缺失为 null；正文按内容去重，哈希相同即保存同一内容。 */
+  recordValueHashes: { input: { namespace: string; ids: string[] }; output: (string | null)[] };
+  /** 删除命名空间里不在 keep 中的全部记录，dryRun 只计数。仅供离线维护：调用方必须给出完整的引用集合。 */
+  retainRecords: { input: { namespace: string; keep: string[]; dryRun?: boolean }; output: { removed: number } };
+  /** 重建数据库文件归还空闲页，需要与数据库相当的临时空间。 */
+  vacuum: { input: undefined; output: void };
   verify: { input: undefined; output: { ok: boolean; issues: string[]; objectsChecked: number } };
   checkpoint: { input: undefined; output: void };
   backupSnapshot: { input: undefined; output: { directory: string; createdAt: number; statistics: StorageStatistics } };

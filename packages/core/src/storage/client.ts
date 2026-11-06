@@ -155,6 +155,9 @@ export class PlatformStorage {
   statistics() { return this.request('statistics', undefined); }
   verify() { return this.request('verify', undefined); }
   collectGarbage() { return this.request('collectGarbage', undefined); }
+  recordValueHashes(namespace: string, ids: string[]) { return this.request('recordValueHashes', { namespace, ids }); }
+  retainRecords(namespace: string, keep: string[], options: { dryRun?: boolean } = {}) { return this.request('retainRecords', { namespace, keep, ...options }); }
+  vacuum() { return this.request('vacuum', undefined); }
   checkpoint() { return this.request('checkpoint', undefined); }
   backupSnapshot() { return this.request('backupSnapshot', undefined); }
   backupInventory() { return this.request('backupInventory', undefined); }

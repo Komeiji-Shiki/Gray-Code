@@ -1,3 +1,4 @@
+import fs from "node:fs";
 import path from "node:path";
 import { parseArgs } from "node:util";
 import {
@@ -8,6 +9,7 @@ import {
 } from "@graycode/core";
 import { runApplicationCommand } from "./cli/runtime";
 import { importLifeBook } from './memory/imports/migrate';
+import { compactCheckpointContent } from './workspace/checkpointCompaction';
 
 const HELP = `GrayCode independent platform core
 
@@ -32,6 +34,7 @@ Commands:
         --actor <id> --name <name>  Target account (default owner) and library display name
   verify                            Verify SQLite and referenced content checksums
   gc                                Reclaim unreferenced content (not user history)
+  compact                           Merge duplicate checkpoint content records, reclaim content and shrink the file (--dry-run)
 
 Build first: npm run build:platform
 Keep the old application closed while importing. Source and destination must be separate.
@@ -64,6 +67,7 @@ async function main(): Promise<void> {
       actor: { type: "string" },
       name: { type: "string" },
       web: { type: "boolean" },
+      "dry-run": { type: "boolean" },
     },
   });
   if (values.help || !positionals.length) {
@@ -189,6 +193,21 @@ async function main(): Promise<void> {
       case "gc":
         result = await store.collectGarbage();
         break;
+      case "compact": {
+        // 先合并检查点内容记录，回收因此不再引用的旧清单对象，最后重建文件归还空闲页。
+        const databaseFile = path.join(path.resolve(values.data), "platform.sqlite");
+        const before = fs.statSync(databaseFile).size;
+        const dryRun = values["dry-run"] === true;
+        const checkpoints = await compactCheckpointContent(store, { dryRun,
+          onProgress: (done, total) => { if (done % 50 === 0 || done === total) process.stderr.write(`Checkpoints ${done}/${total}\n`); } });
+        if (dryRun) { result = { dryRun, checkpoints, databaseBytes: before }; break; }
+        process.stderr.write("Collecting unreferenced content\n");
+        const garbage = await store.collectGarbage();
+        process.stderr.write("Rebuilding the database file\n");
+        await store.vacuum();
+        result = { checkpoints, garbage, databaseBytes: { before, after: fs.statSync(databaseFile).size } };
+        break;
+      }
       default:
         throw new Error(`Unknown command: ${command}\n${HELP}`);
     }
