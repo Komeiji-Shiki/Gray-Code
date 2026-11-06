@@ -18,10 +18,6 @@
  * - fresh：直接聚合索引消息，完全不读历史文件；
  * - missing/stale：回退读取历史并重建写回索引（一次性成本，之后走索引）。
  *
- * 更进一步，可提供 UsageStatsCache（见 usageCache.ts）：目录监听把变更对话
- * 标记为 dirty，统计只重读 dirty 对话，其余直接复用内存明细，日常统计不再
- * 对每个对话做 stat/读文件，加载耗时降到毫秒级。
- *
  * TREE-08（全部分支计入）：reroll/editBranch 产生的非活跃候选内容只存在于
  * BranchGraph sidecar（branches.json），主历史切换后不再出现在主历史，其 token
  * 消耗原本完全不入统计。本模块统计读取时叠加 sidecar 非活跃候选节点的 token
@@ -32,7 +28,6 @@
  */
 
 import type { Content, ConversationMetadata } from './types';
-import type { UsageStatsCache } from './usageCache';
 import { activePath } from './branch/BranchGraph';
 import type { ConversationBranchGraph } from './branch/types';
 import { Logger } from '../../core/logger';
@@ -232,8 +227,6 @@ export interface UsageStatsOptions {
     endTime?: number;
     /** 可选：消息级用量索引，命中时跳过历史文件读取（见 loadOne） */
     indexStore?: UsageIndexStore;
-    /** 可选：内存明细缓存（配合目录监听增量失效），命中时跳过全部文件 IO */
-    cache?: UsageStatsCache;
 }
 
 /** 单个对话的读取结果 */
@@ -725,63 +718,34 @@ export async function aggregateUsageStats(source: UsageStatsSource, options?: Us
     const dayBuckets = new Map<string, UsageBucket>();
 
     let conversationIds: string[] = [];
-    let listFailed = false;
     try {
         conversationIds = await source.listConversations();
     } catch {
-        // 目录瞬时读取错误：本次按空列表统计（跳过全部对话），但记住失败标志，
-        // 末尾不要 prune——否则会把整个内存缓存清空，下次统计全量重读（见 prune 处）。
+        // 目录瞬时读取错误：本次按空列表统计（跳过全部对话）。
         conversationIds = [];
-        listFailed = true;
     }
 
     // 并发读取各对话（限流避免一次性打开过多文件），结果按原顺序消费。
-    // 提供 indexStore 时优先读轻量用量索引，缺失/过期再回退历史（见 loadOne）；
-    // 提供 cache 时 dirty 对话重读并回填缓存，其余直接复用内存明细（零文件 IO）。
+    // 提供 indexStore 时优先读轻量用量索引，缺失/过期再回退历史（见 loadOne）。
     const indexStore = options?.indexStore;
-    const cache = options?.cache;
-    const dirtyIds = cache ? new Set(cache.takeDirty()) : undefined;
 
     // TREE-08：分支图读取源（indexStore 优先；无读取源时跳过分支合并，行为与旧版一致）
     const branchGraphReader: BranchGraphReader | undefined =
         indexStore?.readBranchGraph ?? source.getBranchGraph;
 
-    const loadWithCache = async (conversationId: string): Promise<LoadedConversation | null> => {
-        if (cache) {
-            const cached = cache.get(conversationId);
-            if (cached && (!dirtyIds || !dirtyIds.has(conversationId))) {
-                // 内存缓存命中：跳过全部文件 IO，直接构造索引视图供主循环累加
-                // （缓存明细已含 TREE-08 分支合并条目，命中即含分支消耗）
-                return {
-                    metadata: { id: conversationId, title: cached.title, updatedAt: cached.updatedAt } as ConversationMetadata,
-                    messages: [],
-                    index: { version: 1, conversationId, updatedAt: 0, messages: cached.messages }
-                };
-            }
-        }
+    const load = async (conversationId: string): Promise<LoadedConversation | null> => {
         let loaded = await loadOne(source, conversationId, indexStore);
         // TREE-08：合并分支图非活跃候选节点消耗（读取时叠加，不写入 usage.json；
         // 无分支图/损坏/读取失败按主历史统计，与旧版行为一致）
         if (loaded && branchGraphReader) {
             loaded = await mergeBranchUsageIntoLoaded(loaded, conversationId, branchGraphReader);
         }
-        if (loaded && cache) {
-            // 回填缓存：索引路径直接用索引明细（重建路径已是合并 subagent 后的完整明细，
-            // 分支合并路径已含 source='branch' 条目），历史路径复用索引构建逻辑提取。
-            cache.set(conversationId, {
-                title: (loaded.metadata?.title || '').trim(),
-                updatedAt: loaded.metadata?.updatedAt ?? 0,
-                messages: loaded.index
-                    ? loaded.index.messages
-                    : buildConversationUsageIndex(conversationId, loaded.messages).messages
-            });
-        }
         return loaded;
     };
 
     const loadedMap = new Map<string, LoadedConversation | null>();
     await runBounded(conversationIds, 24, async (conversationId) => {
-        loadedMap.set(conversationId, await loadWithCache(conversationId));
+        loadedMap.set(conversationId, await load(conversationId));
     });
 
     for (const conversationId of conversationIds) {
@@ -825,7 +789,7 @@ export async function aggregateUsageStats(source: UsageStatsSource, options?: Us
                     ...tokens
                 }, options);
             }
-            // 索引重建已移到 loadWithCache（队列内执行，合并盘面 subagent 后回填 loaded.index，
+            // 索引重建已移到 load（队列内执行，合并盘面 subagent 后回填 loaded.index，
             // 主循环按索引路径聚合）；重建失败时本次按历史路径统计，下次统计仍会再尝试重建。
         }
 
@@ -845,13 +809,6 @@ export async function aggregateUsageStats(source: UsageStatsSource, options?: Us
             }
             byConversation.push(usage);
         }
-    }
-
-    // 清理缓存：磁盘上已不存在的对话从内存缓存移除，保持与磁盘一致。
-    // listConversations 失败时 conversationIds 为空数组，直接 prune 会清空整个内存缓存：
-    // 瞬时错误不应导致整体缓存失效，跳过 prune 等下次列表成功再清理。
-    if (cache && !listFailed) {
-        cache.prune(new Set(conversationIds));
     }
 
     // 排序：对话/模型按用量降序，日期按时间降序

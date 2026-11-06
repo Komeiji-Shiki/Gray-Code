@@ -8,38 +8,14 @@
  * 修复分三层：
  * - 纯函数 repairDuplicateFunctionResponses：同一 ID 只保留一条响应（优先真实结果），
  *   清除真实响应上残留的 rejected 标记，删除被清空的占位消息并修正 parentId 链；
- * - 读取路径 normalizeHistoryForDisplay / scanHistoryForInitialPage：检出响应异常并写回自愈；
- * - 补齐跳过活跃任务写下的在途调用（listActiveRunIds）。
+ * - 读取路径由平台 historyView 在存储版本保护下修复并写回，补齐跳过活跃任务的在途调用
+ *   （packages/core/tests/historyRepairConcurrency.test.ts）。
+ * 本文件只覆盖纯函数。
  */
 
-import { ConversationManager, MemoryStorageAdapter } from '../../modules/conversation';
-import type { ConversationHistory, Content } from '../../modules/conversation';
-import type { StorageHistoryPage, StorageReadResult } from '../../modules/conversation/storage';
+import type { ConversationHistory, Content } from '../../modules/conversation/types';
 import { repairDuplicateFunctionResponses, isPlaceholderToolResponse } from '../../modules/conversation/manager/historyRepair';
 import { validateHistoryIntegrity } from '../../modules/channel/HistoryIntegrityValidator';
-
-/** 模拟分段存储：走 getMessagesPaged 的 format === 'paged' 快路径 */
-class PagedMemoryStorageAdapter extends MemoryStorageAdapter {
-    async loadHistoryPage(
-        conversationId: string,
-        options: { beforeIndex?: number; offset?: number; limit?: number } = {}
-    ): Promise<StorageReadResult<StorageHistoryPage>> {
-        const result = await super.loadHistoryPage(conversationId, options);
-        if (result.value) {
-            result.value.format = 'paged';
-        }
-        return result;
-    }
-}
-
-/** 可提供活跃任务集合的存储：平台运行时（SqliteStorageAdapter）的能力模拟 */
-class ActiveRunStorageAdapter extends MemoryStorageAdapter {
-    activeRunIds?: Set<string>;
-
-    async listActiveRunIds(): Promise<Set<string> | undefined> {
-        return this.activeRunIds;
-    }
-}
 
 /**
  * 事故数据形态：占位先写入（无 runId、无时间戳），真实结果随后追加（属于活跃任务）。
@@ -125,96 +101,5 @@ describe('repairDuplicateFunctionResponses 纯函数', () => {
 
         expect(result.changed).toBe(true);
         expect(result.history[0].parts[0].functionCall?.rejected).toBe(false);
-    });
-});
-
-describe('读取路径清理重复响应', () => {
-    test('getMessages 清理重复响应并写回存储，修复后历史通过完整性校验', async () => {
-        const storage = new MemoryStorageAdapter();
-        const manager = new ConversationManager(storage);
-        await storage.saveHistory('conv-dup', historyWithDuplicateResponse());
-
-        const messages = await manager.getMessages('conv-dup');
-        expect(messages.map(message => message.id)).toEqual(['u1', 'm1', 'fr-real-a', 'fr-real-b']);
-
-        const persisted = await storage.loadHistory('conv-dup');
-        expect(persisted!.map(message => message.id)).toEqual(['u1', 'm1', 'fr-real-a', 'fr-real-b']);
-
-        const integrity = validateHistoryIntegrity(messages, { detectOrphanFunctionCall: true });
-        expect(integrity.valid).toBe(true);
-
-        // 幂等：再次读取不再变化
-        const again = await manager.getMessages('conv-dup');
-        expect(again.map(message => message.id)).toEqual(['u1', 'm1', 'fr-real-a', 'fr-real-b']);
-    });
-
-    test('分段存储首屏分页（getMessagesPaged）也会触发清理', async () => {
-        const storage = new PagedMemoryStorageAdapter();
-        const manager = new ConversationManager(storage);
-        await storage.saveHistory('conv-dup-paged', historyWithDuplicateResponse());
-
-        const page = await manager.getMessagesPaged('conv-dup-paged');
-
-        expect(page.total).toBe(4);
-        expect(page.messages.map(message => message.id)).toEqual(['u1', 'm1', 'fr-real-a', 'fr-real-b']);
-        const persisted = await storage.loadHistory('conv-dup-paged');
-        expect(persisted!.map(message => message.id)).toEqual(['u1', 'm1', 'fr-real-a', 'fr-real-b']);
-    });
-
-    test('无重复的无响应调用保留原补齐行为', async () => {
-        const storage = new MemoryStorageAdapter();
-        const manager = new ConversationManager(storage);
-        await storage.saveHistory('conv-dangling', [
-            { role: 'user', id: 'u1', parts: [{ text: '读一下' }], isUserInput: true },
-            { role: 'model', id: 'm1', parts: [{ functionCall: { id: 'call_1', name: 'read_file', args: { path: 'a.ts' } } }] },
-        ] as ConversationHistory);
-
-        const messages = await manager.getMessages('conv-dangling');
-
-        expect(messages).toHaveLength(3);
-        expect(messages[2].parts[0].functionResponse?.id).toBe('call_1');
-        expect(messages[1].parts[0].functionCall?.rejected).toBe(true);
-    });
-});
-
-describe('活跃任务的在途调用', () => {
-    test('活跃状态读取失败时保留历史，不误写拒绝响应', async () => {
-        const storage = new ActiveRunStorageAdapter();
-        const manager = new ConversationManager(storage);
-        const history: Array<Content & { runId: string }> = [{ role: 'model', id: 'm1', runId: 'run-live', parts: [
-            { functionCall: { id: 'call_live', name: 'execute_command', args: {} } },
-        ] }];
-        await storage.saveHistory('conv-read-error', history);
-        jest.spyOn(storage, 'listActiveRunIds').mockRejectedValueOnce(new Error('storage temporarily unavailable'));
-        const save = jest.spyOn(storage, 'saveHistory');
-        await expect(manager.getMessages('conv-read-error')).rejects.toThrow('storage temporarily unavailable');
-        expect(save).not.toHaveBeenCalled();
-        expect(await storage.loadHistory('conv-read-error')).toEqual(history);
-    });
-
-    test('属于活跃任务的未响应调用不被补齐为拒绝占位；任务结束后恢复补齐', async () => {
-        const storage = new ActiveRunStorageAdapter();
-        const manager = new ConversationManager(storage);
-        await storage.saveHistory('conv-active', [
-            { role: 'user', id: 'u1', parts: [{ text: '跑一下' }], isUserInput: true },
-            { role: 'model', id: 'm1', runId: 'run-live', parts: [{ functionCall: { id: 'call_live', name: 'execute_command', args: { command: 'sleep 99' } } }] },
-        ] as ConversationHistory);
-
-        // 任务活跃：不补占位、不打 rejected 标记（结果只是尚未落盘）
-        storage.activeRunIds = new Set(['run-live']);
-        const live = await manager.getMessages('conv-active');
-        expect(live).toHaveLength(2);
-        expect(live[1].parts[0].functionCall?.rejected).toBeUndefined();
-        expect((await storage.loadHistory('conv-active'))).toHaveLength(2);
-
-        // 任务结束（不再活跃）：遗留的悬空调用仍按旧行为补齐
-        storage.activeRunIds = new Set();
-        const settled = await manager.getMessages('conv-active');
-        expect(settled).toHaveLength(3);
-        expect(settled[2].parts[0].functionResponse?.id).toBe('call_live');
-        expect(settled[1].parts[0].functionCall?.rejected).toBe(true);
-
-        const integrity = validateHistoryIntegrity(settled, { detectOrphanFunctionCall: true });
-        expect(integrity.valid).toBe(true);
     });
 });

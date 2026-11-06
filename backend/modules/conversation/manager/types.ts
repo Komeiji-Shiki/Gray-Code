@@ -1,9 +1,5 @@
 /**
- * ConversationManager 文件级类型定义（拆分自 ConversationManager.ts，声明原样保留）。
- *
- * ConversationManager.ts 通过 `export type { ... } from './manager/types'` 再导出，
- * 保证 `import { GetHistoryOptions } from '../ConversationManager'` 等既有引用不断。
- * 注意：本文件内容按原文件缩进保留（纯移动，不重排）。
+ * 历史读取与格式化选项等会话层类型。
  */
 
 /**

@@ -7,7 +7,7 @@
 
 import type { Content } from '../../../../conversation/types';
 import type { ContextConversationStore } from './ports';
-import type { ConversationManager, GetHistoryOptions } from '../../../../conversation/ConversationManager';
+import type { GetHistoryOptions } from '../../../../conversation/manager/types';
 import type { DynamicContextStrategy } from '../../../../settings/types';
 import type { ContextTrimInfo } from '../../utils';
 import type { TokenEstimationService } from '../TokenEstimationService';

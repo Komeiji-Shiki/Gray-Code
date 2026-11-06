@@ -5,7 +5,7 @@
  */
 
 import type { Content } from '../../../modules/conversation/types';
-import type { SubAgentTranscriptData } from '../../../modules/conversation/storage';
+import type { SubAgentTranscriptData } from '../../../modules/conversation/storageTypes';
 import { withSubAgentTranscriptIndex } from '../executor/historyMetadata';
 import { MANIFEST_PREVIEW_MAX_LENGTH, type SubAgentRunSnapshot } from './types';
 

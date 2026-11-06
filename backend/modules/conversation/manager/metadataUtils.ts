@@ -1,14 +1,10 @@
 /**
- * 元数据构建/解析纯函数（拆分自 ConversationManager.ts）。
- *
- * 不依赖 this：输入输出皆为参数/返回值，供 ConversationManager 的
- * createBranchConversationCore / getMetadata 等路径直接 import 使用。
- * 注意：本文件内容按原文件缩进保留（纯移动，不重排）。
+ * 会话元数据构建与解析的纯函数。
  */
 
 import { t } from '../../../i18n';
 import type { Content, ConversationHistory, ConversationMetadata } from '../types';
-import type { ConversationStorageIntegrity } from '../storage';
+import type { ConversationStorageIntegrity } from '../storageTypes';
 
 export function cloneJson<T>(value: T): T {
     return JSON.parse(JSON.stringify(value));

@@ -169,7 +169,7 @@ async function historySearchHandler(
     if (!conversationStore) {
         return { success: false, error: t('tools.history.errors.conversationStoreRequired')};
     }
-    // conversationStore 实际上就是 ConversationManager 实例
+    // 宿主注入的会话存储需要提供完整历史读取。
     if (typeof conversationStore.getHistory !== 'function') {
         return { success: false, error: t('tools.history.errors.getHistoryNotAvailable') };
     }

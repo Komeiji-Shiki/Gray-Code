@@ -1,6 +1,6 @@
 import { MessageTokenEstimator } from './MessageTokenEstimator';
 import type { Content } from '../../../conversation/types';
-import type { ConversationManager } from '../../../conversation/ConversationManager';
+import type { ContextConversationStore } from './contextTrim/ports';
 import type { TokenizerOptions } from '../../../../../packages/core/src/tokenizer';
 
 export type NormalizedChannelType = 'gemini' | 'gemini-interactions' | 'openai' | 'anthropic' | 'openai-responses' | undefined;
@@ -8,7 +8,7 @@ export type NormalizedChannelType = 'gemini' | 'gemini-interactions' | 'openai' 
 /** 上下文预算直接使用本地 tokenizer；供应方精确计数由显式 TokenCountService 入口承担。 */
 export class TokenEstimationService extends MessageTokenEstimator {
     constructor(
-        private readonly conversationManager: Pick<ConversationManager, 'getHistoryRef' | 'updateMessage' | 'updateMessagesBatch'>,
+        private readonly conversationManager: Pick<ContextConversationStore, 'getHistoryRef' | 'updateMessage' | 'updateMessagesBatch'>,
         options: TokenizerOptions = {}
     ) { super(options); }
 

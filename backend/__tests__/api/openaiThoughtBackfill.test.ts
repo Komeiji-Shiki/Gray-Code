@@ -1,5 +1,5 @@
 import { MessageBuilderService } from '../../modules/api/chat/services/MessageBuilderService';
-import { ConversationManager } from '../../modules/conversation/ConversationManager';
+import { formatHistoryForAPI } from '../../modules/conversation/manager/historyFormatting';
 import type { BaseChannelConfig } from '../../modules/config/configs/base';
 import type { Content } from '../../modules/conversation/types';
 
@@ -70,7 +70,6 @@ function thoughtTexts(history: Content[]): string[] {
 
 describe('OpenAI thought backfill policy', () => {
     const messageBuilder = new MessageBuilderService();
-    const conversationManager = new ConversationManager({} as any);
 
     test('uses the history setting for both current and historical OAI thought content', () => {
         const disabledOptions = messageBuilder.buildHistoryOptions(
@@ -81,7 +80,7 @@ describe('OpenAI thought backfill policy', () => {
             sendCurrentThoughts: false
         });
         expect(thoughtTexts(
-            conversationManager.getHistoryForAPIFrom(createTwoRoundHistory(), disabledOptions)
+            formatHistoryForAPI(createTwoRoundHistory(), disabledOptions)
         )).toEqual([]);
 
         const enabledOptions = messageBuilder.buildHistoryOptions(
@@ -92,7 +91,7 @@ describe('OpenAI thought backfill policy', () => {
             sendCurrentThoughts: true
         });
         expect(thoughtTexts(
-            conversationManager.getHistoryForAPIFrom(createTwoRoundHistory(), enabledOptions)
+            formatHistoryForAPI(createTwoRoundHistory(), enabledOptions)
         )).toEqual(['First reasoning', 'Second reasoning']);
     });
 
@@ -105,7 +104,7 @@ describe('OpenAI thought backfill policy', () => {
             sendCurrentThoughts: true
         });
         expect(thoughtTexts(
-            conversationManager.getHistoryForAPIFrom(createTwoRoundHistory(), options)
+            formatHistoryForAPI(createTwoRoundHistory(), options)
         )).toEqual(['Second reasoning']);
     });
 
@@ -121,7 +120,7 @@ describe('OpenAI thought backfill policy', () => {
             sendCurrentThoughts: true
         });
         expect(thoughtTexts(
-            conversationManager.getHistoryForAPIFrom(createTwoRoundHistory(), historyDisabled)
+            formatHistoryForAPI(createTwoRoundHistory(), historyDisabled)
         )).toEqual(['Second reasoning']);
 
         const historyEnabled = messageBuilder.buildHistoryOptions(
@@ -132,7 +131,7 @@ describe('OpenAI thought backfill policy', () => {
             sendCurrentThoughts: false
         });
         expect(thoughtTexts(
-            conversationManager.getHistoryForAPIFrom(createTwoRoundHistory(), historyEnabled)
+            formatHistoryForAPI(createTwoRoundHistory(), historyEnabled)
         )).toEqual(['First reasoning']);
 
         // 签名开关：Responses 渠道 current 与 history 共用 sendHistoryThoughtSignatures
@@ -180,7 +179,7 @@ describe('OpenAI thought backfill policy', () => {
             }
         ];
 
-        const forApi = conversationManager.getHistoryForAPIFrom(history, options);
+        const forApi = formatHistoryForAPI(history, options);
         const modelParts = forApi.flatMap(message => message.parts);
 
         // 带 Responses reasoning 元数据的 part 保留，普通裸 thought 仍被过滤
@@ -207,7 +206,7 @@ describe('OpenAI thought backfill policy', () => {
             { role: 'model', parts: [{ text: 'From another channel', thought: true }, { text: 'First answer' }] }
         ];
         expect(thoughtTexts(
-            conversationManager.getHistoryForAPIFrom(history, options)
+            formatHistoryForAPI(history, options)
         )).toEqual(['From another channel']);
     });
 

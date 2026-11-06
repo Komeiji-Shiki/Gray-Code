@@ -17,10 +17,9 @@ import {
     type UsageIndexStore,
     type UsageStatsSource
 } from '../../modules/conversation/usageStats';
-import { UsageStatsCache, type UsageConversationEntry } from '../../modules/conversation/usageCache';
 import { createEmptyBranchGraph, importLinearHistory, insertNode, rerollCandidate } from '../../modules/conversation/branch/BranchGraph';
 import type { ConversationBranchGraph, ConversationBranchNode } from '../../modules/conversation/branch/types';
-import type { Content, ConversationMetadata } from '../../modules/conversation';
+import type { Content, ConversationMetadata } from '../../modules/conversation/types';
 
 /** 构造一条带用量的 model 消息 */
 function modelMessage(overrides: {
@@ -529,96 +528,6 @@ describe('aggregateUsageStats 索引模式', () => {
 });
 
 
-describe('aggregateUsageStats 内存缓存模式', () => {
-    const day = atLocalNoon(2026, 5, 1);
-
-    /** 构造含 conv-a 一条缓存条目的内存缓存 */
-    function seedCache(messages: UsageIndexMessage[], overrides: Partial<UsageConversationEntry> = {}): UsageStatsCache {
-        const cache = new UsageStatsCache();
-        cache.set('conv-a', { title: 'Cached', updatedAt: 1000, messages, ...overrides });
-        return cache;
-    }
-
-    test('缓存命中：跳过全部文件读取', async () => {
-        const cache = seedCache([
-            { timestamp: day, modelVersion: 'model-x', prompt: 500, candidates: 250, thoughts: 0, cacheCreation: 0, cacheRead: 0 }
-        ]);
-        const source = {
-            async listConversations() { return ['conv-a']; },
-            async getMetadata() { throw new Error('getMetadata should not be called'); },
-            async getMessages() { throw new Error('getMessages should not be called'); },
-            async getMessagesRaw() { throw new Error('getMessagesRaw should not be called'); }
-        } as UsageStatsSource;
-
-        const stats = await aggregateUsageStats(source, { cache });
-        expect(stats.totals.promptTokens).toBe(500);
-        expect(stats.totals.candidatesTokens).toBe(250);
-        expect(stats.totals.conversations).toBe(1);
-        expect(stats.byConversation[0].title).toBe('Cached');
-        expect(stats.byConversation[0].updatedAt).toBe(1000);
-        expect(stats.byModel[0].modelVersion).toBe('model-x');
-        expect(stats.byDay).toHaveLength(1);
-    });
-
-    test('dirty 对话重新读取并回填缓存，dirty 集合被消费', async () => {
-        const cache = seedCache([{ prompt: 1, candidates: 0, thoughts: 0, cacheCreation: 0, cacheRead: 0 }]);
-        cache.markDirty('conv-a');
-        let readCount = 0;
-        const source = {
-            async listConversations() { return ['conv-a']; },
-            async getMetadata() { readCount++; return { title: 'New', updatedAt: 2000 } as ConversationMetadata; },
-            async getMessages() { readCount++; return [modelMessage({ prompt: 100, candidates: 50, modelVersion: 'model-x', timestamp: day })]; }
-        } as UsageStatsSource;
-
-        const stats = await aggregateUsageStats(source, { cache });
-        expect(readCount).toBe(2);
-        expect(stats.totals.promptTokens).toBe(100);
-        expect(stats.byConversation[0].title).toBe('New');
-        // 缓存已回填为最新明细，且 dirty 已消费
-        const entry = cache.get('conv-a')!;
-        expect(entry.title).toBe('New');
-        expect(entry.updatedAt).toBe(2000);
-        expect(entry.messages[0].prompt).toBe(100);
-        expect(cache.takeDirty()).toHaveLength(0);
-    });
-
-    test('已删除对话从缓存清理', async () => {
-        const cache = seedCache([]);
-        cache.set('conv-b', { title: 'B', updatedAt: 0, messages: [] });
-        const source = {
-            async listConversations() { return ['conv-b']; },
-            async getMetadata() { return null; },
-            async getMessages() { return []; }
-        } as UsageStatsSource;
-
-        await aggregateUsageStats(source, { cache });
-        expect(cache.has('conv-a')).toBe(false);
-        expect(cache.has('conv-b')).toBe(true);
-    });
-
-    test('缓存 + 时间筛选：按缓存消息 timestamp 过滤', async () => {
-        const early = atLocalNoon(2026, 4, 1);
-        const inRange = atLocalNoon(2026, 5, 1);
-        const cache = seedCache([
-            { timestamp: early, modelVersion: 'model-x', prompt: 1, candidates: 1, thoughts: 0, cacheCreation: 0, cacheRead: 0 },
-            { timestamp: inRange, modelVersion: 'model-x', prompt: 10, candidates: 10, thoughts: 0, cacheCreation: 0, cacheRead: 0 }
-        ]);
-        const source = {
-            async listConversations() { return ['conv-a']; },
-            async getMetadata() { throw new Error('getMetadata should not be called'); },
-            async getMessages() { throw new Error('getMessages should not be called'); }
-        } as UsageStatsSource;
-
-        const stats = await aggregateUsageStats(source, {
-            cache,
-            startTime: atLocalNoon(2026, 4, 15),
-            endTime: atLocalNoon(2026, 5, 15)
-        });
-        expect(stats.totals.promptTokens).toBe(10);
-        expect(stats.totals.modelMessages).toBe(1);
-    });
-});
-
 describe('aggregateUsageStats 子代理归集（source=subagent）', () => {
     const day = atLocalNoon(2026, 6, 1);
 
@@ -795,88 +704,6 @@ describe('aggregateUsageStats 队列内重建（R2 1.1 / 2.1）', () => {
         expect(stats2.totals.promptTokens).toBe(300);
     });
 
-    test('重建路径缓存回填包含 subagent 合并条目（R2 2.1）', async () => {
-        const stale = {
-            historyMtime: 20_000,
-            index: {
-                version: 1,
-                conversationId: 'conv-a',
-                updatedAt: 10_000,
-                messages: [
-                    { timestamp: day, modelVersion: 'model-y', prompt: 100, candidates: 50, thoughts: 10, cacheCreation: 0, cacheRead: 0, source: 'subagent' }
-                ]
-            } as UsageIndex
-        };
-        const { store } = createMemoryIndexStore({ 'conv-a': stale });
-        const cache = new UsageStatsCache();
-        const source = createSource({
-            'conv-a': {
-                metadata: { title: 'Alpha' } as Partial<ConversationMetadata>,
-                messages: [modelMessage({ prompt: 300, candidates: 100, modelVersion: 'model-x', timestamp: day })]
-            }
-        });
-
-        await aggregateUsageStats(source, { indexStore: store, cache });
-
-        // 缓存回填使用重建后的完整明细：main + 合并的 subagent 条目
-        const cached = cache.get('conv-a')!;
-        expect(cached.messages.some(m => m.source === 'subagent' && m.prompt === 100)).toBe(true);
-        expect(cached.messages.some(m => m.modelVersion === 'model-x' && m.prompt === 300)).toBe(true);
-
-        // 第二次统计：缓存命中（零文件 IO），subagent 仍计入（不因重建出现波动）
-        const spyingSource = {
-            async listConversations() { return ['conv-a']; },
-            async getMetadata() { throw new Error('should hit cache'); },
-            async getMessages() { throw new Error('should hit cache'); },
-            async getMessagesRaw() { throw new Error('should hit cache'); }
-        } as UsageStatsSource;
-        const stats2 = await aggregateUsageStats(spyingSource, { indexStore: store, cache });
-        expect(stats2.totals.promptTokens).toBe(400);
-        expect(stats2.byConversation[0].subagentTokens).toBe(160);
-    });
-});
-
-describe('aggregateUsageStats listConversations 失败', () => {
-    test('listConversations 失败时跳过 prune，不清空整个内存缓存', async () => {
-        const cache = new UsageStatsCache();
-        cache.set('conv-a', {
-            title: 'Alpha',
-            updatedAt: 1,
-            messages: [{
-                timestamp: 1000,
-                modelVersion: 'model-x',
-                prompt: 10,
-                candidates: 5,
-                thoughts: 0,
-                cacheCreation: 0,
-                cacheRead: 0
-            }]
-        });
-        const source: UsageStatsSource = {
-            async listConversations() { throw new Error('io error'); },
-            async getMetadata() { return null; },
-            async getMessages() { return []; }
-        };
-
-        const stats = await aggregateUsageStats(source, { cache });
-        // 列表失败：本次按空列表统计，但缓存条目保留（否则下次统计全量重读）
-        expect(stats.totals.conversations).toBe(0);
-        expect(cache.has('conv-a')).toBe(true);
-    });
-
-    test('listConversations 成功时仍正常 prune 已删除对话', async () => {
-        const cache = new UsageStatsCache();
-        cache.set('conv-gone', { title: 'Gone', updatedAt: 1, messages: [] });
-        const source: UsageStatsSource = {
-            async listConversations() { return []; },
-            async getMetadata() { return null; },
-            async getMessages() { return []; }
-        };
-
-        await aggregateUsageStats(source, { cache });
-
-        expect(cache.has('conv-gone')).toBe(false);
-    });
 });
 
 // ==================== TREE-08：分支图合并（全部分支计入） ====================
@@ -1310,33 +1137,6 @@ describe('aggregateUsageStats 分支图合并（TREE-08）', () => {
         expect(stats.totals.modelMessages).toBe(2);
         expect(stats.totals.inactiveBranchTokens).toBeUndefined();
         expect(stats.byConversation[0].inactiveBranchTokens).toBeUndefined();
-    });
-
-    test('缓存回填包含分支条目，二次统计缓存命中仍含分支消耗', async () => {
-        const { history, graph } = buildRerollEndState(day);
-        const source = {
-            async listConversations() { return ['conv-a']; },
-            async getMetadata() { return { title: 'Alpha' } as ConversationMetadata; },
-            async getMessages() { return history; },
-            async getBranchGraph() { return graph; },
-        } as UsageStatsSource;
-        const cache = new UsageStatsCache();
-
-        const stats1 = await aggregateUsageStats(source, { cache });
-        expect(stats1.totals.promptTokens).toBe(600);
-        const cached = cache.get('conv-a')!;
-        expect(cached.messages.some(m => m.source === 'branch' && m.prompt === 200)).toBe(true);
-
-        // 二次统计：缓存命中（零文件 IO），分支消耗不丢
-        const spyingSource = {
-            async listConversations() { return ['conv-a']; },
-            async getMetadata() { throw new Error('should hit cache'); },
-            async getMessages() { throw new Error('should hit cache'); },
-            async getMessagesRaw() { throw new Error('should hit cache'); },
-        } as UsageStatsSource;
-        const stats2 = await aggregateUsageStats(spyingSource, { cache });
-        expect(stats2.totals.promptTokens).toBe(600);
-        expect(stats2.byConversation[0].inactiveBranchTokens).toBe(300);
     });
 
     test('索引 stale 重建后仍合并分支候选消耗，且重建写回不含 branch 条目（方案 A 不落盘）', async () => {

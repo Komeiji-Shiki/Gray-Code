@@ -16,8 +16,7 @@
  */
 
 import { OpenAIFormatter } from '../../modules/channel';
-import { ConversationManager } from '../../modules/conversation/ConversationManager';
-import { MemoryStorageAdapter } from '../../modules/conversation/storage';
+import { formatHistoryForAPI } from '../../modules/conversation/manager/historyFormatting';
 import type { Content } from '../../modules/conversation/types';
 import type { OpenAIConfig } from '../../modules/config/types';
 
@@ -37,10 +36,9 @@ function createOpenAIConfig(): OpenAIConfig {
 }
 
 describe('formatHistoryForAPI：无配对响应的调用整体剔除（BR-08）', () => {
-    const manager = new ConversationManager(new MemoryStorageAdapter());
 
     test('中断残留（非 rejected、无任何响应）的调用被丢弃，文本保留', () => {
-        const forApi = manager.getHistoryForAPIFrom([
+        const forApi = formatHistoryForAPI([
             { role: 'user', parts: [{ text: '继续' }] },
             { role: 'model', parts: [
                 { text: '正在处理…' },
@@ -56,7 +54,7 @@ describe('formatHistoryForAPI：无配对响应的调用整体剔除（BR-08）'
     });
 
     test('响应被追加到用户消息之后（错位形态）：调用与配对响应一并剔除', () => {
-        const forApi = manager.getHistoryForAPIFrom([
+        const forApi = formatHistoryForAPI([
             { role: 'user', parts: [{ text: '第一个问题' }] },
             { role: 'model', parts: [
                 { functionCall: { id: 'call_parallel_1', name: 'git_show', args: { file: 'a.test.ts' } } },
@@ -78,7 +76,7 @@ describe('formatHistoryForAPI：无配对响应的调用整体剔除（BR-08）'
     });
 
     test('正常成对形态（FR 块紧随 assistant）不受影响', () => {
-        const forApi = manager.getHistoryForAPIFrom([
+        const forApi = formatHistoryForAPI([
             { role: 'user', parts: [{ text: '继续' }] },
             { role: 'model', parts: [
                 { text: '马上' },
@@ -97,7 +95,7 @@ describe('formatHistoryForAPI：无配对响应的调用整体剔除（BR-08）'
     });
 
     test('用户显式拒绝（rejected + 占位响应在 FR 块内）保留成对发送', () => {
-        const forApi = manager.getHistoryForAPIFrom([
+        const forApi = formatHistoryForAPI([
             { role: 'model', parts: [
                 { functionCall: { id: 'call_rej_block', name: 'read_file', args: {}, rejected: true } }
             ] },
@@ -114,7 +112,7 @@ describe('formatHistoryForAPI：无配对响应的调用整体剔除（BR-08）'
 
     test('端到端：formatHistoryForAPI 过滤后 OpenAI formatter 不再产生孤儿 tool_calls', () => {
         const formatter = new OpenAIFormatter();
-        const history = manager.getHistoryForAPIFrom([
+        const history = formatHistoryForAPI([
             { role: 'model', parts: [
                 { text: '正在处理…' },
                 { functionCall: { id: 'call_orphan_e2e', name: 'subagents', args: {} } }

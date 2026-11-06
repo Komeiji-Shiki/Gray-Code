@@ -8,13 +8,12 @@
  * - AnthropicFormatter.convertHistoryFunctionCallMode / convertHistoryTextMode：
  *   相邻同角色消息合并为一条消息（content block 数组拼接），tool_result 与 text 允许
  *   共存于同一条 user 消息，语义不变；不跨 tool_use/tool_result 边界（角色不同，天然交替）。
- * - ConversationManager.formatHistoryForAPI：按 functionCall id 配对过滤孤儿
+ * - formatHistoryForAPI：按 functionCall id 配对过滤孤儿
  *   functionResponse（被截断/reroll 后残留），无 id 的 functionResponse 保守保留。
  */
 
 import { AnthropicFormatter } from '../../modules/channel';
-import { ConversationManager } from '../../modules/conversation/ConversationManager';
-import { MemoryStorageAdapter } from '../../modules/conversation/storage';
+import { formatHistoryForAPI } from '../../modules/conversation/manager/historyFormatting';
 import { USER_INPUT_BOUNDARY_MARKER } from '../../modules/channel/formatters/base';
 import type { Content, ContentPart } from '../../modules/conversation/types';
 import { createAnthropicConfig } from '../__fixtures__/channelFixtures';
@@ -192,11 +191,10 @@ describe('AnthropicFormatter 相邻同角色消息合并（XML/JSON 文本模式
     });
 });
 
-describe('ConversationManager.formatHistoryForAPI 孤儿 functionResponse 过滤（BR-07）', () => {
-    const manager = new ConversationManager(new MemoryStorageAdapter());
+describe('formatHistoryForAPI 孤儿 functionResponse 过滤（BR-07）', () => {
 
     test('无前置 functionCall 的孤儿 functionResponse 被剔除，消息整体跳过', () => {
-        const forApi = manager.getHistoryForAPIFrom([
+        const forApi = formatHistoryForAPI([
             { role: 'user', parts: [frPart('toolu_orphan')], isFunctionResponse: true },
             { role: 'user', parts: [{ text: 'hello' }] }
         ]);
@@ -207,7 +205,7 @@ describe('ConversationManager.formatHistoryForAPI 孤儿 functionResponse 过滤
     });
 
     test('id 匹配的 functionResponse 正常保留（tool_use 后跟 tool_result）', () => {
-        const forApi = manager.getHistoryForAPIFrom([
+        const forApi = formatHistoryForAPI([
             { role: 'user', parts: [{ text: 'do it' }] },
             { role: 'model', parts: [fcPart('toolu_1')] },
             { role: 'user', parts: [frPart('toolu_1')], isFunctionResponse: true }
@@ -225,12 +223,12 @@ describe('ConversationManager.formatHistoryForAPI 孤儿 functionResponse 过滤
         ];
 
         // 从 functionResponse 开始裁剪：前置 functionCall 被裁掉，functionResponse 变成孤儿
-        const forApi = manager.getHistoryForAPIFrom(history, { startIndex: 2 });
+        const forApi = formatHistoryForAPI(history, { startIndex: 2 });
         expect(forApi).toHaveLength(0);
     });
 
     test('无 id 的 functionResponse 保守保留（不做激进过滤）', () => {
-        const forApi = manager.getHistoryForAPIFrom([
+        const forApi = formatHistoryForAPI([
             { role: 'user', parts: [{ functionResponse: { name: 'read_file', response: { success: true } } }], isFunctionResponse: true }
         ]);
 
@@ -239,7 +237,7 @@ describe('ConversationManager.formatHistoryForAPI 孤儿 functionResponse 过滤
     });
 
     test('混合消息：孤儿 functionResponse part 剔除，同消息文本保留', () => {
-        const forApi = manager.getHistoryForAPIFrom([
+        const forApi = formatHistoryForAPI([
             {
                 role: 'user',
                 parts: [
@@ -255,7 +253,7 @@ describe('ConversationManager.formatHistoryForAPI 孤儿 functionResponse 过滤
     });
 
     test('拒绝的工具调用（rejected functionCall 在历史中）不误伤对应 functionResponse', () => {
-        const forApi = manager.getHistoryForAPIFrom([
+        const forApi = formatHistoryForAPI([
             { role: 'user', parts: [{ text: 'do it' }] },
             { role: 'model', parts: [{ functionCall: { id: 'toolu_1', name: 'read_file', args: {}, rejected: true } }] },
             { role: 'user', parts: [frPart('toolu_1')], isFunctionResponse: true }

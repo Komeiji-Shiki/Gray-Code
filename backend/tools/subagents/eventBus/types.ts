@@ -7,7 +7,7 @@
 
 import type { SubAgentContextCompactionRecord } from '../../../../shared/subAgentContextCompaction';
 import type { Content } from '../../../modules/conversation/types';
-import type { SubAgentTranscriptData } from '../../../modules/conversation/storage';
+import type { SubAgentTranscriptData } from '../../../modules/conversation/storageTypes';
 import type { ToolProgressEvent } from '../../types';
 
 export const SUBAGENT_RUNS_METADATA_KEY = 'subAgentRuns';

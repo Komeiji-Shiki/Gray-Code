@@ -7,7 +7,8 @@
  */
 
 import type { Content } from '../../../../conversation/types';
-import type { ConversationManager, GetHistoryOptions } from '../../../../conversation/ConversationManager';
+import type { GetHistoryOptions } from '../../../../conversation/manager/types';
+import type { ContextConversationStore } from './ports';
 import type { BaseChannelConfig } from '../../../../config/configs/base';
 import type { DynamicContextStrategy } from '../../../../settings/types';
 import type { Logger } from '../../../../../core/logger';
@@ -54,7 +55,7 @@ export class ContextBudgetExceededError extends Error {
 }
 
 export interface GranularFallbackDeps {
-    conversationManager: Pick<ConversationManager, 'getHistoryRef' | 'getHistoryForAPIFrom'>;
+    conversationManager: Pick<ContextConversationStore, 'getHistoryRef' | 'getHistoryForAPIFrom'>;
     tokenEstimationService: Pick<TokenEstimationService, 'estimateMessageTokens'>;
     log: Logger;
 }

@@ -2,10 +2,9 @@
  * 裁剪状态持久化辅助（从 ContextTrimService 抽离）。
  *
  * 裁剪状态存储在会话 custom metadata 中，key 为 'trimState'。
- * 历史结构变更（删除/编辑/回档等）由 ConversationManager 统一失效该状态。
+ * 历史结构变更（删除/编辑/回档等）由会话服务统一失效该状态。
  */
 
-import type { ConversationManager } from '../../../../conversation/ConversationManager';
 import type { ContextConversationStore } from './ports';
 import { CONVERSATION_CONTEXT_TRIM_STATE_KEY } from '../../../../conversation/types';
 import type { Logger } from '../../../../../core/logger';

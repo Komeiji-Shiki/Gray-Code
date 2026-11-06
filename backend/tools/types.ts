@@ -298,7 +298,7 @@ export interface ToolContext {
         setCustomMetadata: (conversationId: string, key: string, value: unknown) => Promise<void>;
         /**
          * 获取完整对话历史（history_search 工具使用）。
-         * 运行时注入的实际对象是 ConversationManager；此处仅声明为可选方法以去除 handler 内的 `as any`。
+         * 由宿主注入；此处仅声明为可选方法以去除 handler 内的 `as any`。
          */
         getHistory?: (conversationId: string) => Promise<unknown>;
     };

@@ -1,10 +1,5 @@
 /**
- * BranchService 对外导出的结果/入参类型与常量（拆分自 BranchService.ts）。
- *
- * BranchService.ts 通过 `export type { ... } from './branchServiceTypes'` 与
- * `export { MAX_CANDIDATES_PER_PARENT } from './branchServiceTypes'` 再导出，
- * 保证 `import { BranchCandidateCreateResult } from '../branch/BranchService'` 等
- * 既有引用与 `export * from './BranchService'` 的再导出口径完全不变。
+ * 分支操作的结果/入参类型与常量，平台分支服务与纯函数共用。
  */
 
 import type { ContentPart, UsageMetadata } from '../types';

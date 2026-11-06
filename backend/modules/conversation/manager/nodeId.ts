@@ -1,10 +1,5 @@
 /**
- * 稳定消息节点 ID（BR-01/BR-02）相关纯函数（拆分自 ConversationManager.ts）。
- *
- * ConversationManager.ts 通过 `export { deterministicNodeId } from './manager/nodeId'`
- * 再导出 deterministicNodeId，保证既有 `import { deterministicNodeId } from '../ConversationManager'`
- * 不断。其余函数由 ConversationManager / manager 下各服务直接 import 使用。
- * 注意：本文件内容按原文件缩进保留（纯移动，不重排）。
+ * 稳定消息节点 ID（BR-01/BR-02）：新消息补 ID，旧历史按确定性 ID 迁移。
  */
 
 import { createHash, randomUUID } from 'node:crypto';

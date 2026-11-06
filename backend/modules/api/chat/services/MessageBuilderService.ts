@@ -8,7 +8,7 @@
  */
 
 import type { ContentPart } from '../../../conversation/types';
-import type { GetHistoryOptions } from '../../../conversation/ConversationManager';
+import type { GetHistoryOptions } from '../../../conversation/manager/types';
 import type { BaseChannelConfig } from '../../../config/configs/base';
 import type { OpenAIResponsesConfig } from '../../../config/configs/openai-responses';
 import { getMultimodalCapability, type ChannelType as UtilChannelType, type ToolMode as UtilToolMode } from '../../../../tools/shared/multimodal';
@@ -31,7 +31,7 @@ export class MessageBuilderService {
      * - name: 附件名称，仅用于存储和前端显示
      *
      * 注意：displayName 不在此处添加，因为它只适合用于 Gemini function call 格式。
-     * 用户输入的附件在发送给 API 时，由 ConversationManager.getHistoryForAPI 统一处理。
+     * 用户输入的附件在发送给 API 时，由历史格式化（formatHistoryForAPI）统一处理。
      *
      * @param message 用户消息文本
      * @param attachments 附件列表

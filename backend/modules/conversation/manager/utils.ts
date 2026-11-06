@@ -1,13 +1,9 @@
 /**
- * ConversationManager 通用辅助函数（拆分自 ConversationManager.ts）。
- *
- * 均为不依赖 this 的纯函数/存储薄封装，供 ConversationManager 及 manager 下
- * 各服务（query / toolCalls）直接 import 使用。
- * 注意：本文件内容按原文件缩进保留（纯移动，不重排）。
+ * 会话历史的通用纯函数与存储薄封装。
  */
 
 import type { Content, ContentPart, ConversationHistory } from '../types';
-import type { HistoryOutlineEntry, IStorageAdapter } from '../storage';
+import type { HistoryOutlineEntry, IStorageAdapter } from '../storageTypes';
 import { needsNodeIdMigration } from './nodeId';
 import { isPlaceholderToolResponse } from './historyRepair';
 

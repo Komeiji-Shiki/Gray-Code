@@ -7,7 +7,7 @@
 
 import type { Content } from '../../../../conversation/types';
 import type { ContextConversationStore } from './ports';
-import type { ConversationManager, GetHistoryOptions } from '../../../../conversation/ConversationManager';
+import type { GetHistoryOptions } from '../../../../conversation/manager/types';
 import type { BaseChannelConfig } from '../../../../config/configs/base';
 import type { DynamicContextStrategy } from '../../../../settings/types';
 import type { Logger } from '../../../../../core/logger';

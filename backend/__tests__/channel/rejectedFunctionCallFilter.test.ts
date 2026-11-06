@@ -2,7 +2,7 @@
  * 回归测试：rejected functionCall（中断/取消/超时残留）不发给 API
  *
  * 背景（真实事故）：会话被中断时模型已输出的 functionCall 无对应 functionResponse，
- * ConversationManager.normalizeHistoryForDisplay 会将其标记为 rejected:true（有意孤儿）。
+ * 历史读取修复 会将其标记为 rejected:true（有意孤儿）。
  * 但 formatter 序列化时不过滤 rejected → OpenAI 收到 assistant tool_calls 却无对应
  * tool 消息 → 400 "An assistant message with 'tool_calls' must be followed by tool
  * messages responding to each 'tool_call_id'"；HistoryIntegrityValidator 也误报
@@ -16,8 +16,7 @@ import { OpenAIFormatter } from '../../modules/channel';
 import { AnthropicFormatter } from '../../modules/channel';
 import { OpenAIResponsesFormatter } from '../../modules/channel/formatters/openai-responses';
 import { GeminiFormatter } from '../../modules/channel';
-import { ConversationManager } from '../../modules/conversation/ConversationManager';
-import { MemoryStorageAdapter } from '../../modules/conversation/storage';
+import { formatHistoryForAPI } from '../../modules/conversation/manager/historyFormatting';
 import { validateHistoryIntegrity } from '../../modules/channel/HistoryIntegrityValidator';
 import type { Content } from '../../modules/conversation/types';
 import type { OpenAIConfig, AnthropicConfig } from '../../modules/config/types';
@@ -258,10 +257,9 @@ describe('validateHistoryIntegrity: rejected functionCall 不构成孤儿', () =
 });
 
 describe('formatHistoryForAPI: 无配对响应的 rejected 调用整体丢弃（主路径核心修复）', () => {
-    const manager = new ConversationManager(new MemoryStorageAdapter());
 
     test('中断残留（rejected 无响应）被丢弃，不再进入发送历史', () => {
-        const forApi = manager.getHistoryForAPIFrom([
+        const forApi = formatHistoryForAPI([
             { role: 'user', parts: [{ text: '继续' }] },
             { role: 'model', parts: [
                 { text: '正在处理…' },
@@ -278,7 +276,7 @@ describe('formatHistoryForAPI: 无配对响应的 rejected 调用整体丢弃（
     });
 
     test('用户显式拒绝（rejected + 占位响应）保留成对发送，rejected 字段剥离', () => {
-        const forApi = manager.getHistoryForAPIFrom([
+        const forApi = formatHistoryForAPI([
             { role: 'user', parts: [{ text: '拒绝该工具' }] },
             { role: 'model', parts: [
                 { functionCall: { id: 'call_rej_3', name: 'read_file', args: { path: 'a.txt' }, rejected: true } }
@@ -300,7 +298,7 @@ describe('formatHistoryForAPI: 无配对响应的 rejected 调用整体丢弃（
 
     test('端到端：formatHistoryForAPI 丢弃后 OpenAI formatter 不再产生孤儿 tool_calls', () => {
         const formatter = new OpenAIFormatter();
-        const history = manager.getHistoryForAPIFrom([
+        const history = formatHistoryForAPI([
             { role: 'model', parts: [
                 { text: '正在处理…' },
                 { functionCall: { id: 'call_rej_e2e', name: 'subagents', args: {}, rejected: true } }

@@ -1,23 +1,8 @@
 /**
- * 对话管理模块
- *
- * 完整支持 Gemini API 格式:
- * - Content[] 数组作为存储格式
- * - 支持函数调用、思考签名、文件数据等
- * - 支持多模态内容（图片、音频、视频、文档）
- * - 可直接用于 Gemini API 调用
+ * 对话内容的纯函数与类型：消息结构、截断与工具配对、多模态与函数调用辅助、用量统计。
+ * 会话存储与历史读写由平台（apps/server、packages/core）负责，本模块不保存状态。
  */
 
-export { ConversationManager, ConversationMessageChangedError } from './ConversationManager';
-export { FileUsageIndexStore } from './UsageIndexStore';
-export {
-    IStorageAdapter,
-    MemoryStorageAdapter
-} from './storage';
-export type {
-    // 对话存储定位结果类型（供 webview/测试复用，保持单一来源）
-    ConversationStorageLocation
-} from './storage';
 export {
     // 消息截断与工具配对删除（主对话与 SubAgent 子对话共用同一套规则）
     truncateFrom,
@@ -25,17 +10,6 @@ export {
     mutateTranscript
 } from './TranscriptMutation';
 export type { TranscriptAdapter } from './TranscriptMutation';
-export {
-    // Transcript 仓储接口与主聊天 adapter（主聊天与 SubAgent 统一读写入口）
-    cloneTranscriptContents,
-    DelegatingTranscriptRepository,
-    ConversationTranscriptRepository
-} from './TranscriptRepository';
-export type {
-    ITranscriptRepository,
-    TranscriptContentsMutator,
-    TranscriptRepositoryDelegate
-} from './TranscriptRepository';
 export type {
     Content,
     ContentPart,
@@ -156,20 +130,9 @@ export {
     formatTokenCount
 } from './tokenUtils';
 
-// Diff 存储管理器（用于抽离 apply_diff 的 originalContent/newContent）
-export {
-    DiffStorageManager,
-    getDiffStorageManager
-} from './DiffStorageManager';
-export type {
-    DiffContent,
-    DiffReference
-} from './DiffStorageManager';
-
-// 用量统计与缓存（统计页聚合 + 目录监听增量失效）
+// 用量统计
 export { aggregateUsageStats } from './usageStats';
 export type { UsageStatsResult } from './usageStats';
-export { UsageStatsCache, startUsageDirectoryWatcher } from './usageCache';
 
 // 待审批门（pending approval gate）
 export { getPendingApprovalGate, getPendingApprovalGateMismatchReason } from './pendingApprovalGate';

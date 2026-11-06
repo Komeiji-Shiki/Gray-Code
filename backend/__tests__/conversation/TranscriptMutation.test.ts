@@ -15,8 +15,6 @@ import {
     deleteLogicalMessage,
     repairParentChainAfterDelete
 } from '../../modules/conversation/TranscriptMutation';
-import { ConversationManager } from '../../modules/conversation';
-import { MemoryStorageAdapter } from '../../modules/conversation';
 import type { Content } from '../../modules/conversation';
 
 interface ChainNode {
@@ -135,52 +133,5 @@ describe('deleteLogicalMessage 修复 parentId 链（R5b-2.4）', () => {
         expect(result).toHaveLength(1);
         expect(result[0].id).toBe('u1');
         expect(result[0].parentId).toBeNull();
-    });
-});
-
-describe('deleteMessagesInRange 修复 parentId 链（R5b-2.4）', () => {
-    test('删除中间范围后直系后继重链到范围前驱', async () => {
-        const storage = new MemoryStorageAdapter();
-        const manager = new ConversationManager(storage);
-        await manager.createConversation('conv-g1-range', 'R');
-        await manager.addMessage('conv-g1-range', 'user', [{ text: 'u1' }], { isUserInput: true });
-        await manager.addMessage('conv-g1-range', 'model', [{ text: 'm1' }]);
-        await manager.addMessage('conv-g1-range', 'user', [{ text: 'u2' }], { isUserInput: true });
-        await manager.addMessage('conv-g1-range', 'model', [{ text: 'm2' }]);
-        await manager.addMessage('conv-g1-range', 'user', [{ text: 'u3' }], { isUserInput: true });
-
-        const before = await manager.getHistory('conv-g1-range');
-        expect(before).toHaveLength(5);
-        const deletedId = before[2].id!;
-        const predecessorId = before[1].id!;
-        const successorId = before[3].id!;
-        // 线性链校验
-        expect(before[3].parentId).toBe(deletedId);
-
-        // 删除中间一条（索引 2）
-        await manager.deleteMessagesInRange('conv-g1-range', 2, 2);
-
-        const after = await manager.getHistory('conv-g1-range');
-        expect(after).toHaveLength(4);
-        const successor = after.find(m => m.id === successorId)!;
-        expect(successor.parentId).toBe(predecessorId); // 重链到范围前驱
-    });
-
-    test('删除到首条时后继重链为 null', async () => {
-        const storage = new MemoryStorageAdapter();
-        const manager = new ConversationManager(storage);
-        await manager.createConversation('conv-g1-range2', 'R2');
-        await manager.addMessage('conv-g1-range2', 'user', [{ text: 'u1' }], { isUserInput: true });
-        await manager.addMessage('conv-g1-range2', 'model', [{ text: 'm1' }]);
-
-        const before = await manager.getHistory('conv-g1-range2');
-        const firstId = before[0].id!;
-        expect(before[1].parentId).toBe(firstId);
-
-        await manager.deleteMessagesInRange('conv-g1-range2', 0, 0);
-
-        const after = await manager.getHistory('conv-g1-range2');
-        expect(after).toHaveLength(1);
-        expect(after[0].parentId).toBeNull();
     });
 });

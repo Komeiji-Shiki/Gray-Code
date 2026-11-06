@@ -1,9 +1,5 @@
 /**
- * API 历史格式化纯函数（拆分自 ConversationManager.ts 的 formatHistoryForAPI / toDisplayMessages）。
- *
- * 不依赖 this：输入历史数组 + GetHistoryOptions，输出格式化后的 ConversationHistory；
- * 由 getHistoryForAPI / getHistoryForAPIFrom 直接 import 使用。
- * 注意：本文件内容按原文件缩进保留（纯移动，不重排）。
+ * API 历史格式化纯函数：输入历史数组与 GetHistoryOptions，输出发给模型的 ConversationHistory。
  */
 
 import { t } from '../../../i18n';

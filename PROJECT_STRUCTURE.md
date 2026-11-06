@@ -59,7 +59,7 @@ packages/core 不导入 Electron、VS Code、frontend 或 backend。构建脚本
 | apps/desktop | Electron 窗口、内置浏览器、电脑捕获、预加载、安装更新与数据位置 |
 | apps/client | 桌面/Web 外壳、文件树、编辑器、面板与远程控制界面 |
 | frontend | 聊天、设置、角色与工具结果界面 |
-| backend/modules | 平台复用的模型格式器、配置、提示词、MCP 与其他业务 |
+| backend/modules | 平台复用的模型格式器、配置、提示词、MCP 与其他业务；conversation 只含消息结构、历史格式化与修复、分支图和用量统计等纯函数，会话存储由平台负责 |
 | backend/tools | 共享工具实现与宿主接口，由平台提供工作区、存储和进程能力 |
 | shared | 聊天协议、纯函数和跨宿主共用逻辑 |
 | native/windows/ComputerHost | .NET Framework 电脑操作、窗口身份、捕获、输入与 UI Automation |

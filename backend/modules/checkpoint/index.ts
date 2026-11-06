@@ -53,17 +53,6 @@ export type {
     CheckpointExclusionPatternIssue
 } from './CheckpointExclusionProfiles';
 
-// 存档引用计数清理
-export {
-    computeCheckpointReferenceCounts,
-    setGlobalCheckpointRefCountCleaner,
-    getGlobalCheckpointRefCountCleaner
-} from './checkpointRefCounts';
-export type {
-    CheckpointRefCountGraphSource,
-    CheckpointRefCountCleaner
-} from './checkpointRefCounts';
-
 // 忽略解析器
 export { CheckpointIgnoreResolver } from './CheckpointIgnoreResolver';
 export type {

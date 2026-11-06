@@ -1,6 +1,6 @@
 /** 保留原事件总线用例中由平台继续使用的 manifest 和 transcript 断言。 */
 import type { Content } from '../../modules/conversation/types';
-import type { SubAgentTranscriptData } from '../../modules/conversation/storage';
+import type { SubAgentTranscriptData } from '../../modules/conversation/storageTypes';
 import { toManifest } from '../../tools/subagents/eventBus/protocol';
 import { buildLastSentHistoryProjection, restoreLastSentHistory } from '../../tools/subagents/eventBus/transcript';
 import type { SubAgentRunSnapshot } from '../../tools/subagents/eventBus/types';
