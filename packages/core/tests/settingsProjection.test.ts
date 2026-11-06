@@ -194,6 +194,24 @@ describe('one settings transaction across legacy and platform entry points', () 
       options: { temperature: 0.4, max_tokens: 4096, top_p: 0.9 }, optionsEnabled: { temperature: false, max_tokens: true, top_p: true } });
   });
 
+  test('设置页的流式开关同时决定请求体与读取方式', async () => {
+    const draft = await app.product.draft();
+    const id = await draft.configs.createConfig({ type: 'openai', enabled: true, timeout: 5000, url: 'http://localhost:1234/v1', name: 'Chat',
+      model: 'fixture', apiKey: '' });
+    await app.product.save(draft);
+    const provider = () => app.settings.snapshot().settings.providers.find(value => value.id === id)!;
+    expect(provider().stream).toBe(true);
+    await call('ui.settings.begin');
+    await call('config.updateConfig', { configId: id, updates: { options: { ...(await app.product.channel(id))!.options, stream: false } } });
+    await call('ui.settings.save'); await call('ui.settings.end');
+    expect(provider().stream).toBe(false);
+    expect(await app.product.channel(id)).toMatchObject({ preferStream: false, options: { stream: false } });
+    const snapshot = app.settings.snapshot();
+    snapshot.settings.providers.find(value => value.id === id)!.stream = true;
+    await app.settings.save({ settings: snapshot.settings, expectedRevision: snapshot.revision });
+    expect(await app.product.channel(id)).toMatchObject({ preferStream: true, options: { stream: true } });
+  });
+
   test('旧版本保存的完整渠道仍可读取，重叠字段以 provider 为准；provider 换协议后旧协议选项不再套用', async () => {
     const draft = await app.product.draft();
     const id = await draft.configs.createConfig({ type: 'openai', enabled: true, timeout: 5000, url: 'http://localhost:1234/v1', name: 'Chat',

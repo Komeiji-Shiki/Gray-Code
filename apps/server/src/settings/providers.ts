@@ -81,6 +81,8 @@ export function channelView(profile: ProviderDefinition, stored?: StoredChannel)
     if (value !== undefined) options[key] = value;
     enabled[key] = value !== undefined;
   }
+  // 设置页的流式开关与格式器都读 options.stream，适配器按 provider.stream 选择读取方式，两者必须一致。
+  options.stream = profile.stream;
   const effort = profile.generation.reasoningEffort;
   if (effort !== undefined) {
     const key = thinkingKey(profile.protocol);
@@ -119,7 +121,7 @@ export function channelProfile(channel: ChannelConfig, previous?: ProviderDefini
     ...previous,
     id: channel.id, name: channel.name, protocol: channel.type, endpoint: channel.url, model: channel.model ?? '',
     models: (channel.models ?? []).map(model => ({ id: model.id, name: model.name, capabilities: previous?.models.find(item => item.id === model.id)?.capabilities })),
-    credentialRef, stream: channel.preferStream !== false, timeoutMs: channel.timeout ?? previous?.timeoutMs ?? 120_000,
+    credentialRef, stream: (options.stream ?? channel.preferStream) !== false, timeoutMs: channel.timeout ?? previous?.timeoutMs ?? 120_000,
     authMode: channel.type === 'openai-responses' ? channel.authMode : undefined,
     generation: compact({
       reasoningEffort: previous?.generation.reasoningEffort !== undefined && enabled[thinking] ? effortOf(channel.type, options[thinking]) : undefined,
@@ -149,6 +151,7 @@ export function channelExtras(channel: ChannelConfig, profile: ProviderDefinitio
   if (channel.type === 'openai-responses' && signature === 'deepseek') extras.sendHistoryThoughtSignatures = channel.sendHistoryThoughtSignatures;
   const options: Options = { ...channel.options };
   const enabled: Options = { ...channel.optionsEnabled };
+  delete options.stream;
   for (const [key, value] of [['temperature', profile.generation.temperature], [tokenKey(channel.type), profile.generation.maxOutputTokens]] as const) {
     // 关闭时的数值由渠道记住，下次开启时设置页还能显示原值。
     if (value !== undefined) delete options[key];
