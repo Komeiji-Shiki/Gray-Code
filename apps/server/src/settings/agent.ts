@@ -1,5 +1,5 @@
 import { TOOL_SEARCH_NAME } from '@graycode/core';
-import type { AgentDefinition } from '@graycode/contracts';
+import type { AgentDefinition, AppSettings } from '@graycode/contracts';
 import type { SettingsManager } from '../../../../backend/modules/settings/SettingsManager';
 import { DEFAULT_TOOL_AUTO_EXEC_CONFIG } from '../../../../backend/modules/settings/types/toolsTypes';
 import type { PlatformApplication } from '../application';
@@ -40,6 +40,28 @@ export function toolApprovalConfigured(preferences: SettingsManager, name: strin
 /** 读取旧清单时升级工具名称；不改写已保存的配置。 */
 export function upgradeAgentToolNames(agent: AgentDefinition): AgentDefinition {
   return { ...agent, toolNames: upgradeToolNames(agent.toolNames) };
+}
+
+const TOOL_CATALOG_VERSION = 11;
+
+/**
+ * 旧版本保存的默认 Agent 缺少之后加入的内置工具，按目录版本补齐一次并记下版本。
+ * 文档与浏览器工具由宿主注册，名称从调用方传入。返回 false 表示已是当前版本、无需保存。
+ */
+export function upgradeToolCatalog(settings: AppSettings, hostTools: { artifacts: string[]; browser: string[] }): boolean {
+  const version = settings.toolCatalogVersion ?? 0;
+  if (version >= TOOL_CATALOG_VERSION) return false;
+  const baseline = settings.agents.find(agent => agent.id === 'default');
+  if (baseline && version < 10) {
+    const originalFiles = version < 2 ? ['read_file', 'list_files', 'find_files', 'search_in_files', 'write_file', 'apply_diff', 'insert_code',
+      'delete_code', 'create_directory', 'delete_file'] : [];
+    const conversationTools = version < 3 ? ['todo_write', 'todo_update', 'history_search', 'get_activity_stats'] : [];
+    baseline.toolNames = [...new Set([...baseline.toolNames, ...originalFiles, ...conversationTools, 'get_symbols', 'goto_definition',
+      'find_references', 'show_windows_notification', ...hostTools.artifacts, 'subagents', 'execute_command', 'read_skill'])];
+  }
+  if (baseline) baseline.toolNames = [...new Set([...baseline.toolNames, ...hostTools.browser])];
+  settings.toolCatalogVersion = TOOL_CATALOG_VERSION;
+  return true;
 }
 
 type ToolEnablement = Pick<SettingsManager, 'getToolsEnabled' | 'isToolEnabled'>;

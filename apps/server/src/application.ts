@@ -1,6 +1,6 @@
 import { workspaceFilePath } from './workspace/paths';
 import { prepareDeepSeekVisionHistory } from '../../../backend/modules/channel/deepseekVision';
-import { configuredAgent } from './settings/agent';
+import { configuredAgent, upgradeToolCatalog } from './settings/agent';
 import { actorForBotRun, resolveBotGuestActor } from './bots/permissions';
 import { resolveBotAgent } from './bots/profiles';
 import { canReadBotConversation } from './bots/channelAccess';
@@ -494,14 +494,8 @@ export class PlatformApplication {
       await application.externalAgents.initialize();
       await application.conversationWorkspaces.cleanupOrphans();
       const snapshot = application.settings.snapshot();
-      if ((snapshot.settings.toolCatalogVersion ?? 0) < 11) {
-        const baseline = snapshot.settings.agents.find(agent => agent.id === 'default');
-        const originalFiles = (snapshot.settings.toolCatalogVersion ?? 0) < 2
-          ? ['read_file', 'list_files', 'find_files', 'search_in_files', 'write_file', 'apply_diff', 'insert_code', 'delete_code', 'create_directory', 'delete_file'] : [];
-        const conversationTools = (snapshot.settings.toolCatalogVersion ?? 0) < 3 ? ['todo_write', 'todo_update', 'history_search', 'get_activity_stats'] : [];
-        if (baseline && (snapshot.settings.toolCatalogVersion ?? 0) < 10) baseline.toolNames = [...new Set([...baseline.toolNames, ...originalFiles, ...conversationTools, 'get_symbols', 'goto_definition', 'find_references', 'show_windows_notification', ...application.artifacts.tools().map(tool => tool.declaration.name), 'subagents', 'execute_command', 'read_skill'])];
-        if (baseline) baseline.toolNames = [...new Set([...baseline.toolNames, ...browserTools(application.browser).map(tool => tool.declaration.name)])];
-        snapshot.settings.toolCatalogVersion = 11;
+      if (upgradeToolCatalog(snapshot.settings, { artifacts: application.artifacts.tools().map(tool => tool.declaration.name),
+        browser: browserTools(application.browser).map(tool => tool.declaration.name) })) {
         await application.settings.save({ settings: snapshot.settings, expectedRevision: snapshot.revision });
       }
       await application.runtime.initialize();
