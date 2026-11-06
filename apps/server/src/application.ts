@@ -330,15 +330,15 @@ export class PlatformApplication {
       storage,
       tools: this.tools,
       models: this.models,
-      prepareTools: async (names, input, agent) => {
+      prepareTools: async (names, input, agent, hints) => {
         const channel = await this.product.channel(input.providerId ?? agent.providerId, { includeCredential: false });
         const media = this.media.tools(this.product.runtimeSettings(), channel?.toolOptions);
         const overrides = new Map(media.map(tool => [tool.declaration.name, tool]));
         if (names.includes('goal_update')) overrides.set('goal_update', this.automations.tool());
         // 与提示词准备的替换拒绝使用同一份名单：只授予搜索时不向模型展示替换参数。
         if (isSearchInFilesReplaceForbidden(names)) overrides.set('search_in_files', readOnlySearchTool(this));
-        const loading = resolveToolLoading(this.product.runtimeSettings(), names, channel);
-        return this.tools.catalog(loading.names, overrides, loading.deferred);
+        const loading = resolveToolLoading(this.product.runtimeSettings(), names, channel, hints);
+        return this.tools.catalog(loading.names, overrides, loading.deferred, loading.locked);
       },
       preparePrompt: async input => this.automations.preparePrompt(input.automationId, input.conversation.id, await new PlatformPromptService(this).prepare(input)),
       currentAutomationId: () => this.automations.meter.currentId(),

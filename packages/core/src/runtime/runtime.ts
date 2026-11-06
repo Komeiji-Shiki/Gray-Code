@@ -5,7 +5,7 @@ import type {
   ContinueRunInput, ConversationState, ConversationCommit, PlatformConversation, ModelRequestSnapshot, ModelToolCall,
 } from '@graycode/contracts';
 import { PlatformStorage } from '../storage/client';
-import { RuntimeToolRegistry, authorizeEffects, freezeToolDeclarations, needsApproval, type ToolCatalog, type ToolContext } from './tools';
+import { RuntimeToolRegistry, authorizeEffects, freezeToolDeclarations, needsApproval, type ToolCatalog, type ToolContext, type ToolLoadingHints } from './tools';
 import { QuestionBroker } from './questions';
 import { DeltaCoalescer } from './deltas';
 import { NativeAsyncTools, NATIVE_ASYNC_NAMESPACE, WAIT_FOR_TASKS, nativeToolDeclaration, waitForTasksDeclaration, type NativeToolRecord } from './nativeAsync';
@@ -17,7 +17,7 @@ export interface RuntimeServices {
   models: ModelProvider;
   tools: RuntimeToolRegistry;
   /** 按已选渠道捕获声明与执行选项，同一回合内保持稳定。 */
-  prepareTools?: (names: string[], input: StartRunInput | ContinueRunInput, agent: AgentDefinition) => Promise<ToolCatalog>;
+  prepareTools?: (names: string[], input: StartRunInput | ContinueRunInput, agent: AgentDefinition, loading?: ToolLoadingHints) => Promise<ToolCatalog>;
   actor: (id: string, scope?: RunRecord | Pick<RunRecord, 'conversationId' | 'workspaceId'>) => Promise<ActorIdentity | null>;
   agent: (id: string, actor?: ActorIdentity, conversationId?: string) => Promise<AgentDefinition | null>;
   workspace: (id: string) => Promise<WorkspaceDefinition | null>;
@@ -27,6 +27,7 @@ export interface RuntimeServices {
   preparePrompt?: (input: { request: StartRunInput | ContinueRunInput; agent: AgentDefinition; actor: ActorIdentity; workspace?: WorkspaceDefinition;
     history: PlatformMessage[]; conversation: PlatformConversation; previousTurn?: PlatformMessage; clientId?: string; automationId?: string; signal?: AbortSignal }) => Promise<{
     systemPrompt: string; toolNames: string[]; toolApproval?: AgentDefinition['toolApproval']; messageMetadata?: Record<string, unknown>; messageParts?: PlatformMessage['parts']; turnContext?: Record<string, unknown>; promptContext?: ModelInput['promptContext'];
+    toolLoading?: ToolLoadingHints;
   }>;
   transformOutput?: (input: { run: RunRecord; message: PlatformMessage; request: ModelInput }) => Promise<PlatformMessage>;
   prepareModel?: (context: ModelRequestContext) => Promise<{ history: ConversationState; messages: PlatformMessage[] }>;
@@ -252,7 +253,9 @@ export class PlatformRuntime {
       history, conversation: change?.commit.metadata ?? conversation, previousTurn, clientId: scope?.clientId, automationId, signal: scope?.signal });
     scope?.signal?.throwIfAborted();
     const names = prepared?.toolNames ?? agent.toolNames;
-    const catalog = this.services.prepareTools ? await this.services.prepareTools(names, configuredRequest, agent) : this.services.tools.catalog(names);
+    const loading = prepared?.toolLoading;
+    const catalog = this.services.prepareTools ? await this.services.prepareTools(names, configuredRequest, agent, loading)
+      : this.services.tools.catalog(names, undefined, loading?.deferred && new Set(loading.deferred), loading?.locked && new Map(Object.entries(loading.locked)));
     scope?.signal?.throwIfAborted();
     const now = Date.now();
     const run: RunRecord = { id: randomUUID(), requestKey: input.requestKey, conversationId: input.conversationId,
@@ -690,6 +693,8 @@ export class PlatformRuntime {
     try {
       const entry = catalog.entries.get(call.name);
       if (!entry) return { success: false, code: 'UNKNOWN_TOOL', error: 'Tool is absent from the configured catalog.' };
+      const lockReason = catalog.locked?.get(call.name);
+      if (lockReason) return { success: false, code: 'TOOL_LOCKED', error: lockReason };
       let args = call.args;
       if (nativeAsync) {
         const { task_handle: _handle, ...nativeArgs } = args;
@@ -769,7 +774,8 @@ export class PlatformRuntime {
             { ...review, toolCallId: call.id, toolName: call.name },
             { status: this.hasPendingApproval(run.id) ? 'awaiting_approval' : 'running' });
         },
-        agent: { ...structuredClone(agent), toolNames: catalog.declarations.map(tool => tool.name) },
+        // 子代理继承可调用的工具；锁定的占位只属于本回合的目录状态。
+        agent: { ...structuredClone(agent), toolNames: catalog.declarations.map(tool => tool.name).filter(name => !catalog.locked?.has(name)) },
         modelSelection: { providerId: selection.providerId, modelOverride: selection.modelOverride, reasoningEffort: selection.reasoningEffort },
         askUser: async questions => {
           const request = this.questions.ask(run.id, run.actorId, questions);

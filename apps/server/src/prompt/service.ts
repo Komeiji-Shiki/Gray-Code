@@ -7,6 +7,7 @@ import os from 'node:os';
 import { stat } from 'node:fs/promises';
 import { pathToFileURL } from 'node:url';
 import type { ActorIdentity, AgentDefinition, PlatformMessage, PlatformConversation, StartRunInput, ContinueRunInput, WorkspaceDefinition } from '@graycode/contracts';
+import type { ToolLoadingHints } from '@graycode/core';
 import { PromptAssembler, type PromptAssemblyHost } from '../../../../backend/modules/prompt/PromptAssembler';
 import { generateContextBadgeFormatSection, wrapPromptSection } from '../../../../backend/modules/prompt/commonSections';
 import { getSingleWorkspaceFileTree } from '../../../../backend/modules/prompt/workspaceFileTree';
@@ -23,7 +24,7 @@ import { LONG_MEMORY_GUIDANCE } from '../memory/longTerm/content';
 import { conversationMemoryScopes } from '../memory/longTerm/scopes';
 import { memoryRoots, readMemoryIndex } from '../memory/files';
 import {
-  filterPlatformModeToolNames, filterPromptModeToolNames, resolvePlatformMode, searchReplaceRestriction,
+  filterPlatformModeToolNames, resolvePlatformMode, searchReplaceRestriction, selectPromptModeTools,
 } from '../../../../backend/modules/settings/modeToolsPolicy';
 import { isApprovedPlanExecutionResponse } from '../../../../backend/modules/api/chat/services/approvalGateRules';
 
@@ -72,15 +73,19 @@ export class PlatformPromptService {
     const profile = platformMode ? this.app.settings.read('modeProfiles').modeProfiles?.[platformMode] : undefined;
     const mode = settings.resolvePromptMode(input.request.promptModeId ?? profile?.promptModeId ?? input.agent.promptModeId);
     let toolNames = [...new Set([...input.agent.toolNames.filter(name => name !== 'pet_control'), ...contextToolNames])];
+    let toolLoading: ToolLoadingHints | undefined;
     if (!isSubagent) {
       const petTools = this.app.pets.hasHost && settings.isToolEnabled('pet_control')
         && (input.agent.id === 'default' || input.agent.toolNames.includes('pet_control')) ? ['pet_control'] : [];
-      const promptToolNames = filterPromptModeToolNames(mode, [...input.agent.toolNames, ...petTools], {
+      const selection = selectPromptModeTools(mode, [...input.agent.toolNames, ...petTools], {
         planExecution: hasApprovedPlanExecution(input.history), platformMode: platformMode ?? 'chat',
       });
-      toolNames = [...new Set([...filterPlatformModeToolNames(platformMode, profile, promptToolNames),
+      toolNames = [...new Set([...filterPlatformModeToolNames(platformMode, profile, selection.names),
         ...contextToolNames, ...(botEnvironment?.version === 1
           ? ['bot_read_attachment', 'bot_sticker', ...(input.agent.toolNames.length ? ['bot_send_attachment'] : [])] : [])])];
+      const deferred = selection.deferred.filter(name => toolNames.includes(name));
+      const locked = Object.entries(selection.locked).filter(([name]) => toolNames.includes(name));
+      if (deferred.length) toolLoading = { deferred, ...(locked.length ? { locked: Object.fromEntries(locked) } : {}) };
     }
     const roots = await memoryRoots(this.app, input.actor.id, conversation.id, input.workspace);
     let memoryGuidance = '';
@@ -212,6 +217,7 @@ export class PlatformPromptService {
       // 计数预览使用空历史，bundle 已是完整文本，复用它避免再次生成目录树与诊断。
       ...(input.preview ? { previewDynamicText: bundle.text } : {}),
       toolNames,
+      ...(toolLoading ? { toolLoading } : {}),
       toolApproval: {
         ...searchReplaceRestriction(toolNames),
       },

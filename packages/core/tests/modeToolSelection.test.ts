@@ -1,4 +1,4 @@
-import type { PlatformMessage } from '@graycode/contracts';
+import type { PlatformMessage, ToolDeclaration } from '@graycode/contracts';
 import { PlatformApplication } from '../../../apps/server/src/application';
 import { ApplicationRouter } from '../../../apps/server/src/transport/router';
 import { DEFAULT_CHAT_MODE_TOOL_NAMES } from '../../../backend/modules/settings/modeToolsPolicy';
@@ -26,6 +26,9 @@ describe('平台模式按配置与会话阶段选择工具', () => {
   let app: PlatformApplication;
   let router: ApplicationRouter;
   let tools: string[] = [];
+  let declarations: readonly ToolDeclaration[] = [];
+  // 依次作为模型回复；用完后回复普通文本结束本轮。
+  let replies: PlatformMessage[] = [];
   const owner = { actorId: 'owner', clientId: 'mode-tools' };
   const mcpTool = encodeMcpToolName('mode-tools', 'read_external');
   beforeEach(async () => {
@@ -35,7 +38,10 @@ describe('平台模式按配置与会话阶段选择工具', () => {
         encrypt: async value => Buffer.from(value, 'utf8'),
         decrypt: async value => Buffer.from(value).toString('utf8'),
       },
-      models: { generate: async input => { tools = input.tools.map(tool => tool.name); return { role: 'model', parts: [{ text: 'ok' }] }; } } });
+      models: { generate: async input => {
+        tools = input.tools.map(tool => tool.name); declarations = structuredClone(input.tools);
+        return replies.shift() ?? { role: 'model', parts: [{ text: 'ok' }] };
+      } } });
     app.tools.register({ declaration: { name: mcpTool, description: '模式工具范围验证', parameters: { type: 'object', properties: {} } },
       effects: () => [], execute: async () => ({ success: true }) });
     const draft = app.settings.snapshot();
@@ -47,20 +53,34 @@ describe('平台模式按配置与会话阶段选择工具', () => {
     await app.product.save(product);
     router = new ApplicationRouter(app);
   });
-  afterEach(async () => { await app.close(); await f.cleanup(); });
+  afterEach(async () => { replies = []; await app.close(); await f.cleanup(); });
 
   async function send(history: PlatformMessage[], promptModeId = 'code', custom: { platformMode?: 'chat' | 'code' | 'character' } = { platformMode: 'code' }) {
     const conversation = await app.createConversation(owner.actorId, 'Mode tools', 'project', custom);
     if (history.length) await app.storage.appendHistory(conversation.id, history);
-    const run = await router.call(owner, 'runs.start', { conversationId: conversation.id, requestKey: 'mode-tools', agentId: 'default', promptModeId, text: '继续' }) as { id: string };
+    const run = await router.call(owner, 'runs.start', { conversationId: conversation.id, requestKey: 'mode-tools-' + conversation.id, agentId: 'default', promptModeId, text: '继续' }) as { id: string };
     expect((await app.runtime.wait(run.id))?.status).toBe('completed');
     return tools;
   }
+  /** 让模型依次调用给定工具，返回各次调用的工具结果。 */
+  async function callTools(history: PlatformMessage[], calls: Array<{ name: string; args: Record<string, unknown> }>) {
+    replies = calls.map((call, index) => ({ role: 'model', parts: [{ functionCall: { id: `call-${index}`, ...call } }] }));
+    const conversation = await app.createConversation(owner.actorId, 'Mode tools', 'project', { platformMode: 'code' });
+    await app.storage.appendHistory(conversation.id, history);
+    const run = await router.call(owner, 'runs.start', { conversationId: conversation.id, requestKey: 'mode-tools-' + conversation.id, agentId: 'default', promptModeId: 'code', text: '继续' }) as { id: string };
+    expect((await app.runtime.wait(run.id))?.status).toBe('completed');
+    const { messages } = await app.storage.readFullHistory(conversation.id);
+    const responses = messages.flatMap(message => message.parts).flatMap(part =>
+      part.functionResponse ? [part.functionResponse as { id?: string; response: Record<string, any> }] : []);
+    return calls.map((_call, index) => responses.find(response => response.id === `call-${index}`)?.response);
+  }
 
-  test('开发模式未执行计划时不发送文档工作流工具', async () => {
+  test('开发模式只以占位声明计划同步工具，不发送其他文档工作流工具', async () => {
     const sent = await send([]);
     expect(sent).toContain('read_file');
-    for (const name of [...SYNC_TOOLS, ...MODE_ONLY_TOOLS]) expect(sent).not.toContain(name);
+    expect(sent).toContain('tool_search');
+    for (const name of SYNC_TOOLS) expect(declarations.find(tool => tool.name === name)?.parameters).toEqual({ type: 'object', properties: {}, additionalProperties: true });
+    for (const name of MODE_ONLY_TOOLS) expect(sent).not.toContain(name);
   });
 
   test('runs.start 传入的模式决定工具集', async () => {
@@ -69,15 +89,27 @@ describe('平台模式按配置与会话阶段选择工具', () => {
     expect(sent).not.toContain('write_file');
   });
 
-  test('计划尚未确认时不因 planPath 提前开放同步工具', async () => {
-    const sent = await send(planTurn(false));
-    for (const name of SYNC_TOOLS) expect(sent).not.toContain(name);
+  test('确认计划前后 tools 数组逐字节相同，此前历史的缓存不因确认失效', async () => {
+    await send(planTurn(false));
+    const before = JSON.stringify(declarations);
+    const sent = await send(planTurn(true));
+    expect(JSON.stringify(declarations)).toBe(before);
+    for (const name of MODE_ONLY_TOOLS) expect(sent).not.toContain(name);
   });
 
-  test('确认执行计划后保留计划与进度同步工具，其余文档工具仍属于各自模式', async () => {
-    const sent = await send(planTurn(true));
-    for (const name of SYNC_TOOLS) expect(sent).toContain(name);
-    for (const name of MODE_ONLY_TOOLS) expect(sent).not.toContain(name);
+  test('计划尚未确认时不因 planPath 提前开放同步工具：搜索不给定义，调用被拒绝', async () => {
+    const [search, update] = await callTools(planTurn(false), [
+      { name: 'tool_search', args: { query: 'select:update_plan,update_progress' } },
+      { name: 'update_plan', args: {} },
+    ]);
+    expect(search).toMatchObject({ success: true, data: { tools: [], unavailable: ['update_plan', 'update_progress'] } });
+    expect(update).toMatchObject({ success: false, code: 'TOOL_LOCKED' });
+  });
+
+  test('确认执行计划后可以加载计划与进度同步工具', async () => {
+    const [search] = await callTools(planTurn(true), [{ name: 'tool_search', args: { query: 'select:' + SYNC_TOOLS.join(',') } }]);
+    expect(search!.data.tools.map((tool: ToolDeclaration) => tool.name)).toEqual(SYNC_TOOLS);
+    expect(search!.data.tools[0].parameters.properties).toHaveProperty('path');
   });
 
   test('默认对话使用完整的 22 项内置清单，保留 MCP 并追加上下文工具', async () => {

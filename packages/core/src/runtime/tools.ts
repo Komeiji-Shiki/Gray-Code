@@ -67,6 +67,17 @@ export interface ToolCatalog {
   entries: ReadonlyMap<string, { tool: RuntimeTool } & CompiledToolSchema>;
   /** 按需工具的完整声明：declarations 里只放固定占位，校验和执行仍用 entries 里的真实工具。 */
   deferred?: ReadonlyMap<string, ToolDeclaration>;
+  /**
+   * 已声明占位但当前不能调用的工具及原因。解锁只改变能否执行，声明与按需工具相同，tools 数组前后不变；
+   * entries 仍保留真实工具，原生异步等按工具属性生成的声明在解锁前后一致。
+   */
+  locked?: ReadonlyMap<string, string>;
+}
+
+/** 宿主准备提示词时给出的目录形态：本回合固定按需的工具，以及其中暂不能调用的工具和原因。 */
+export interface ToolLoadingHints {
+  deferred?: readonly string[];
+  locked?: Readonly<Record<string, string>>;
 }
 
 export const TOOL_SEARCH_NAME = 'tool_search';
@@ -150,7 +161,8 @@ export class RuntimeToolRegistry {
     return definition;
   }
 
-  catalog(names: string[], overrides?: ReadonlyMap<string, RuntimeTool>, deferred?: ReadonlySet<string>): ToolCatalog {
+  catalog(names: string[], overrides?: ReadonlyMap<string, RuntimeTool>, deferred?: ReadonlySet<string>,
+    locked?: ReadonlyMap<string, string>): ToolCatalog {
     const definitions: ToolDefinitionSnapshot[] = [];
     const entries = new Map<string, { tool: RuntimeTool } & CompiledToolSchema>();
     for (const name of [...new Set(names)].sort()) {
@@ -171,21 +183,27 @@ export class RuntimeToolRegistry {
       }
       entries.set(name, { tool, validate: cached.validate, normalizeArguments: cached.normalizeArguments });
     }
-    const isDeferred = (definition: ToolDefinitionSnapshot) => deferred?.has(definition.declaration.name) === true;
-    const key = definitions.map(definition => `${definition.id}${isDeferred(definition) ? 'd' : ''}`).join(',');
+    const isLocked = (definition: ToolDefinitionSnapshot) => locked?.has(definition.declaration.name) === true;
+    // 锁定工具与按需工具使用同一占位，只是 tool_search 不提供它的定义。
+    const isPlaceholder = (definition: ToolDefinitionSnapshot) => isLocked(definition) || deferred?.has(definition.declaration.name) === true;
+    const lockedEntries = definitions.filter(isLocked).map(definition => [definition.declaration.name, locked!.get(definition.declaration.name)!] as const);
+    const lockedTools = lockedEntries.length ? { locked: new Map(lockedEntries) } : {};
+    const key = definitions.map(definition => `${definition.id}${isLocked(definition) ? 'l' : isPlaceholder(definition) ? 'd' : ''}`).join(',');
     const previous = this.catalogs.get(key);
     if (previous) {
       this.catalogs.delete(key); this.catalogs.set(key, previous);
-      return { ...previous, entries };
+      return { ...previous, entries, ...lockedTools };
     }
-    const declarations = definitions.map(definition => isDeferred(definition)
+    const declarations = definitions.map(definition => isPlaceholder(definition)
       ? deferredToolDeclaration(definition.declaration.name) : definition.declaration);
-    const deferredDeclarations = definitions.filter(isDeferred).map(definition => definition.declaration);
+    const deferredDeclarations = definitions.filter(definition => isPlaceholder(definition) && !isLocked(definition))
+      .map(definition => definition.declaration);
     const validationSchemas = Object.fromEntries(definitions.filter(definition => definition.separateValidation)
       .map(definition => [definition.declaration.name, definition.parameters]));
-    const fingerprint = Object.keys(validationSchemas).length || deferredDeclarations.length
+    const lockedNames = lockedEntries.map(([name]) => name);
+    const fingerprint = Object.keys(validationSchemas).length || deferredDeclarations.length || lockedNames.length
       ? { declarations, ...(Object.keys(validationSchemas).length ? { validationSchemas } : {}),
-        ...(deferredDeclarations.length ? { deferred: deferredDeclarations } : {}) }
+        ...(deferredDeclarations.length ? { deferred: deferredDeclarations } : {}), ...(lockedNames.length ? { locked: lockedNames } : {}) }
       : declarations;
     // 捕获后的声明不可变，多个运行可以共享 Token 缓存；版本仍按原有内容与排序计算。
     Object.freeze(declarations);
@@ -193,7 +211,7 @@ export class RuntimeToolRegistry {
       ...(deferredDeclarations.length ? { deferred: new Map(deferredDeclarations.map(declaration => [declaration.name, declaration])) } : {}) };
     this.catalogs.set(key, catalog);
     if (this.catalogs.size > 64) this.catalogs.delete(this.catalogs.keys().next().value!);
-    return { ...catalog, entries };
+    return { ...catalog, entries, ...lockedTools };
   }
 
   /** 配置默认工具清单时只需要名称，避免复制随后不会使用的完整参数声明。 */

@@ -202,11 +202,12 @@ export async function manualSummaryPrefix(app: PlatformApplication, frame: Captu
     history: frame.state.history.messages, previousTurn, request: { actorId: actor.id, agentId: agent.id, conversationId: frame.state.metadata.id,
       requestKey: 'manual-summary', providerId, modelOverride, promptModeId: typeof previousTurn?.promptModeId === 'string' ? previousTurn.promptModeId : undefined,
       message: { id: randomUUID(), role: 'user', parts: [{ text: '' }] } } });
-  const loading = resolveToolLoading(app.product.runtimeSettings(), prepared.toolNames, await app.product.channel(providerId, { includeCredential: false }));
+  const loading = resolveToolLoading(app.product.runtimeSettings(), prepared.toolNames, await app.product.channel(providerId, { includeCredential: false }),
+    'toolLoading' in prepared ? prepared.toolLoading : undefined);
   return { conversationId: frame.state.metadata.id, providerId, modelOverride, systemPrompt: prepared.systemPrompt,
     promptContext: 'promptContext' in prepared ? prepared.promptContext : undefined, turnContext: 'turnContext' in prepared ? prepared.turnContext : undefined,
     taskContext: { actor: { id: actor.id, displayName: actor.displayName, role: actor.role }, workspace },
-    tools: app.tools.catalog(loading.names, undefined, loading.deferred).declarations };
+    tools: app.tools.catalog(loading.names, undefined, loading.deferred, loading.locked).declarations };
 }
 
 export interface SummarizeContextOptions extends ContextBoundaryOptions {

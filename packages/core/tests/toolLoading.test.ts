@@ -50,6 +50,19 @@ describe('目录捕获', () => {
     expect(plain.deferred).toBeUndefined();
     expect(tools.catalog(['read_file', 'office_create'], undefined, new Set(['office_create'])).declarations).toBe(deferred.declarations);
   });
+
+  test('锁定工具与按需工具声明相同，只是搜索拿不到定义；解锁只改变版本', () => {
+    const tools = registry();
+    const locked = tools.catalog(['read_file', 'office_create'], undefined, new Set(['office_create']), new Map([['office_create', '尚未开放']]));
+    const unlocked = tools.catalog(['read_file', 'office_create'], undefined, new Set(['office_create']));
+    expect(JSON.stringify(locked.declarations)).toBe(JSON.stringify(unlocked.declarations));
+    expect(locked.version).not.toBe(unlocked.version);
+    expect(locked.deferred).toBeUndefined();
+    expect(locked.locked?.get('office_create')).toBe('尚未开放');
+    // 真实工具仍在目录中，原生异步包装等按工具属性生成的声明解锁前后一致。
+    expect(locked.entries.get('office_create')?.tool.declaration.description).toContain('完整说明');
+    expect(unlocked.locked).toBeUndefined();
+  });
 });
 
 describe('加载方式解析', () => {
@@ -79,6 +92,16 @@ describe('加载方式解析', () => {
   test('开启严格工具的渠道发送完整定义，关闭时不受影响', () => {
     expect(resolveToolLoading(preferences(), ['office_create'], { strictToolsEnabled: true })).toEqual({ names: ['office_create'] });
     expect(resolveToolLoading(preferences(), ['office_create'], { strictToolsEnabled: false }).deferred?.has('office_create')).toBe(true);
+  });
+
+  test('提示词固定的按需工具不看工具页设置，锁定工具只在能按需的渠道上声明', () => {
+    const hints = { deferred: ['update_plan'], locked: { update_plan: '尚未开放' } };
+    const resolved = resolveToolLoading(preferences(true, { update_plan: 'resident' }), ['read_file', 'update_plan'], undefined, hints);
+    expect(resolved).toEqual({ names: ['read_file', 'update_plan', TOOL_SEARCH_NAME], deferred: new Set(['update_plan']),
+      locked: new Map([['update_plan', '尚未开放']]) });
+    // 不能发送占位时退回旧行为：锁定期间不声明，解锁后随完整定义出现。
+    expect(resolveToolLoading(preferences(), ['read_file', 'update_plan'], { strictToolsEnabled: true }, hints)).toEqual({ names: ['read_file'] });
+    expect(resolveToolLoading(preferences(false), ['update_plan'], undefined, { deferred: ['update_plan'] })).toEqual({ names: ['update_plan'] });
   });
 
   test('子代理继承的清单已含工具搜索时不重复，也不会把它自己算成按需', () => {

@@ -82,7 +82,7 @@ const DOCUMENT_TOOL_NAMES: ReadonlySet<string> = new Set([
 
 /**
  * 已确认的计划进入实现阶段后，执行提示要求模型回写计划 TODO 并维护进度文档；
- * 这些同步工具在执行期间随 Code 模式发送，其余文档工具仍只属于各自的模式。
+ * 这些同步工具随 Code 模式发送，其余文档工具仍只属于各自的模式。
  */
 const PLAN_EXECUTION_TOOL_NAMES: ReadonlySet<string> = new Set([
     'update_plan',
@@ -91,20 +91,50 @@ const PLAN_EXECUTION_TOOL_NAMES: ReadonlySet<string> = new Set([
     'record_progress_milestone'
 ]);
 
-/** 显式策略优先；未定制且继承 Code 工具集的模式默认省去文档工作流工具，计划执行期间保留同步工具。 */
+export const PLAN_EXECUTION_LOCK_REASON = 'Available only while carrying out a plan the user has approved. '
+    + 'This conversation has no approved plan; use create_plan in Plan mode if one is needed.';
+
+export interface PromptModeToolSelection {
+    names: string[];
+    /** 本模式固定按需声明的工具，不随工具页的常驻设置变化。 */
+    deferred: string[];
+    /** 已声明但当前不能调用的工具及原因。 */
+    locked: Record<string, string>;
+}
+
+/**
+ * 显式策略优先；未定制且继承 Code 工具集的模式默认省去文档工作流工具。
+ * 计划同步工具在 Code 模式中始终按需声明、确认计划前锁定：确认计划只解锁调用，tools 数组前后不变，
+ * 此前的整段历史不会因此失去缓存。完整定义只在执行期间才用到，按需加载不增加平时的请求前缀。
+ */
+export function selectPromptModeTools(
+    mode: Pick<PromptMode, 'toolPolicy' | 'toolPolicyCustomized'>,
+    names: string[],
+    options: { planExecution?: boolean; platformMode?: PlatformMode } = {}
+): PromptModeToolSelection {
+    const modeNames = options.platformMode === 'chat' || options.platformMode === 'character'
+        ? names : names.filter(name => name !== 'pet_control');
+    if (mode.toolPolicy) {
+        const allowed = new Set(upgradeToolNames(mode.toolPolicy));
+        return { names: modeNames.filter(name => allowed.has(name)), deferred: [], locked: {} };
+    }
+    if (mode.toolPolicyCustomized === true) return { names: modeNames, deferred: [], locked: {} };
+    const execution = modeNames.filter(name => PLAN_EXECUTION_TOOL_NAMES.has(name));
+    return {
+        names: modeNames.filter(name => !DOCUMENT_TOOL_NAMES.has(name) || PLAN_EXECUTION_TOOL_NAMES.has(name)),
+        deferred: execution,
+        locked: options.planExecution === true ? {} : Object.fromEntries(execution.map(name => [name, PLAN_EXECUTION_LOCK_REASON])),
+    };
+}
+
+/** 只要可调用名单的调用方（如旧子代理重试）不声明锁定占位。 */
 export function filterPromptModeToolNames(
     mode: Pick<PromptMode, 'toolPolicy' | 'toolPolicyCustomized'>,
     names: string[],
     options: { planExecution?: boolean; platformMode?: PlatformMode } = {}
 ): string[] {
-    const modeNames = options.platformMode === 'chat' || options.platformMode === 'character'
-        ? names : names.filter(name => name !== 'pet_control');
-    if (mode.toolPolicy) {
-        const allowed = new Set(upgradeToolNames(mode.toolPolicy));
-        return modeNames.filter(name => allowed.has(name));
-    }
-    if (mode.toolPolicyCustomized === true) return modeNames;
-    return modeNames.filter(name => !DOCUMENT_TOOL_NAMES.has(name) || options.planExecution === true && PLAN_EXECUTION_TOOL_NAMES.has(name));
+    const selection = selectPromptModeTools(mode, names, options);
+    return selection.names.filter(name => !(name in selection.locked));
 }
 
 /** search_in_files 的 replace 操作按此名称参与审批，受限模式可以单独拒绝它而保留搜索。 */

@@ -2,7 +2,7 @@ export { PlatformStorage } from './storage/client';
 export { PlatformRuntime } from './runtime/runtime';
 export type { RuntimeServices, RuntimeNotification, PreparedConversationChange, ModelRequestContext, RuntimeRunScope } from './runtime/runtime';
 export { RuntimeToolRegistry, TOOL_SEARCH_NAME, authorizeEffects, needsApproval } from './runtime/tools';
-export type { RuntimeTool, ToolContext, ToolCatalog } from './runtime/tools';
+export type { RuntimeTool, ToolContext, ToolCatalog, ToolLoadingHints } from './runtime/tools';
 export { createAskUserTool } from './runtime/questions';
 export { PlatformStorageError } from './errors';
 export { importLegacyHistory, validateLegacyImportPaths } from './migration/legacy';

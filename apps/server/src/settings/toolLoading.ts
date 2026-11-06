@@ -1,4 +1,4 @@
-import { TOOL_SEARCH_NAME, type RuntimeTool, type ToolContext } from '@graycode/core';
+import { TOOL_SEARCH_NAME, type RuntimeTool, type ToolContext, type ToolLoadingHints } from '@graycode/core';
 import type { ToolDeclaration } from '@graycode/contracts';
 import type { ToolLoadingMode } from '../../../../backend/modules/settings/types';
 import type { SettingsManager } from '../../../../backend/modules/settings/SettingsManager';
@@ -21,16 +21,20 @@ export function defaultToolLoading(name: string): ToolLoadingMode {
 /**
  * 工具搜索不进 Agent 清单：有按需工具时才追加，子代理继承的清单也在这里统一去重。
  * 严格工具要求参数表封闭，占位的宽松参数表无法转换，开启严格工具的渠道发送完整定义。
+ * 提示词给出的固定按需工具不看工具页设置；渠道不能按需时锁定工具不发送，解锁后才随完整定义出现。
  */
 export function resolveToolLoading(preferences: Pick<SettingsManager, 'getToolLoading' | 'isToolEnabled'>, names: readonly string[],
-  channel?: { toolDeferredLoading?: boolean; strictToolsEnabled?: boolean } | null): { names: string[]; deferred?: ReadonlySet<string> } {
+  channel?: { toolDeferredLoading?: boolean; strictToolsEnabled?: boolean } | null, hints?: ToolLoadingHints)
+  : { names: string[]; deferred?: ReadonlySet<string>; locked?: ReadonlyMap<string, string> } {
   const selected = names.filter(name => name !== TOOL_SEARCH_NAME);
+  const locked = new Map(Object.entries(hints?.locked ?? {}).filter(([name]) => selected.includes(name)));
   if (channel?.toolDeferredLoading === false || channel?.strictToolsEnabled === true || !preferences.isToolEnabled(TOOL_SEARCH_NAME)) {
-    return { names: selected };
+    return { names: selected.filter(name => !locked.has(name)) };
   }
   const configured = preferences.getToolLoading();
-  const deferred = new Set(selected.filter(name => (configured[name] ?? defaultToolLoading(name)) === 'deferred'));
-  return deferred.size ? { names: [...selected, TOOL_SEARCH_NAME], deferred } : { names: selected };
+  const fixed = new Set(hints?.deferred);
+  const deferred = new Set(selected.filter(name => fixed.has(name) || locked.has(name) || (configured[name] ?? defaultToolLoading(name)) === 'deferred'));
+  return deferred.size ? { names: [...selected, TOOL_SEARCH_NAME], deferred, ...(locked.size ? { locked } : {}) } : { names: selected };
 }
 
 const SELECT_PREFIX = 'select:';
