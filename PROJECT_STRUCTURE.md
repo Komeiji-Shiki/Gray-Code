@@ -71,7 +71,9 @@ packages/core 不导入 Electron、VS Code、frontend 或 backend。构建脚本
 
 运行开始时捕获模型、工具、工作区和相关配置，已经启动的任务继续使用捕获版本；工具目录刷新只影响之后的运行。工具目录按规范化 schema 复用参数校验器。
 
-按需工具在模型请求的 `tools` 里只有内容固定的占位，完整定义由 `tool_search` 的结果追加进消息，加载前后 `tools` 与系统提示逐字节相同。名称、审批、校验和执行都沿用真实工具，占位只影响发给模型的声明；默认策略与解析在 [settings/toolLoading.ts](apps/server/src/settings/toolLoading.ts)。
+按需工具在模型请求的 `tools` 里只有内容固定的占位，完整定义由 `tool_search` 的结果追加进消息，加载前后 `tools` 与系统提示逐字节相同。名称、审批、校验和执行都沿用真实工具，占位只影响发给模型的声明；默认策略与解析在 [settings/toolLoading.ts](apps/server/src/settings/toolLoading.ts)。需要按会话阶段或连接状态开放的工具用目录的锁定（如确认计划前的计划同步工具、已断开 MCP 服务器的工具）：声明不变，只在执行入口拒绝，不增减 `tools`。
+
+渠道配置以 `AppSettings.providers` 为唯一来源：端点、模型、生成参数与能力开关只存在 provider 中，`product-settings` 的 `channels` 只保存 provider 表示不了的附加选项（协议专属字段、重试与上下文设置等）。设置页与模型格式器使用的完整渠道由 [settings/providers.ts](apps/server/src/settings/providers.ts) 的 `channelView` 合成，保存时由 `channelProfile` / `channelExtras` 拆分；新增渠道字段时只需决定它属于哪一边。
 
 默认 Agent 跟随内置工具目录，但 Bot 附件、上下文笔记等环境工具不常驻，由 [prompt/service.ts](apps/server/src/prompt/service.ts) 按会话环境追加（登记见 [settings/agent.ts](apps/server/src/settings/agent.ts)）；没有内置浏览器宿主时不携带浏览器工具。工具声明随每次请求发送，是请求前缀的一部分。
 

@@ -2,6 +2,7 @@ import { createCipheriv, createDecipheriv, randomBytes } from 'node:crypto';
 import { PlatformApplication } from '../../../apps/server/src/application';
 import { ApplicationRouter } from '../../../apps/server/src/transport/router';
 import type { ProviderDefinition, SettingsSnapshot } from '@graycode/contracts';
+import { SettingsTransfer } from '../../../apps/server/src/settings/transfer';
 import { fixture } from './fixtures';
 
 describe('one settings transaction across legacy and platform entry points', () => {
@@ -144,6 +145,104 @@ describe('one settings transaction across legacy and platform entry points', () 
     const competing = await Promise.allSettled([1, 2].map(fontSize => app.settings.save({ settings: { ...snapshot.settings,
       appearance: { ...snapshot.settings.appearance, fontSize: 14 + fontSize } }, expectedRevision: snapshot.revision })));
     expect(competing.filter(result => result.status === 'fulfilled')).toHaveLength(1);
+  });
+
+  test('渠道只保存 provider 表示不了的附加选项：只改高级选项不动 provider，关闭的温度记住原值', async () => {
+    const draft = await app.product.draft();
+    const id = await draft.configs.createConfig({ type: 'anthropic', enabled: true, timeout: 5000, url: 'http://localhost:1234/v1', name: 'Claude',
+      model: 'fixture', apiKey: '', promptCachingTtl: '1h', models: [{ id: 'fixture', name: 'Fixture', contextWindow: 200000 }],
+      options: { temperature: 0.4, max_tokens: 4096, thinking: { type: 'adaptive', effort: 'custom', effortCustom: 'turbo' } },
+      optionsEnabled: { temperature: false, max_tokens: true, thinking: true } } as any);
+    await app.product.save(draft);
+    const provider = () => app.settings.snapshot().settings.providers.find(value => value.id === id)!;
+    const stored = async () => ((await app.storage.getRecord('product-settings', 'main')) as any).channels.find((value: any) => value.id === id);
+    expect(provider().generation).toEqual({ maxOutputTokens: 4096 });
+    // 共享字段只在 provider 里；关闭的温度、协议专属字段与模型附加信息留在渠道。
+    expect(await stored()).toMatchObject({ type: 'anthropic', promptCachingTtl: '1h', options: { temperature: 0.4, thinking: { effort: 'custom' } },
+      models: [{ id: 'fixture', contextWindow: 200000 }] });
+    for (const field of ['url', 'model', 'name', 'timeout', 'preferStream', 'sendHistoryThoughtSignatures']) expect(await stored()).not.toHaveProperty(field);
+    expect((await stored()).options).not.toHaveProperty('max_tokens');
+
+    const revision = app.settings.snapshot().revision;
+    const before = structuredClone(provider());
+    await call('ui.settings.begin');
+    await call('config.updateConfig', { configId: id, updates: { options: { temperature: 0.4, max_tokens: 4096, top_p: 0.9,
+      thinking: { type: 'adaptive', effort: 'custom', effortCustom: 'turbo' } }, optionsEnabled: { temperature: false, max_tokens: true, thinking: true, top_p: true } } });
+    await call('ui.settings.save'); await call('ui.settings.end');
+    expect(app.settings.snapshot().revision).toBeGreaterThan(revision);
+    expect(provider()).toEqual(before);
+
+    // provider 设置推理强度后，Anthropic 的自定义强度按 effortCustom 回写，不再把字面量 custom 当强度。
+    let snapshot = app.settings.snapshot();
+    snapshot.settings.providers.find(value => value.id === id)!.generation.reasoningEffort = 'high';
+    await app.settings.save({ settings: snapshot.settings, expectedRevision: snapshot.revision });
+    expect(await app.product.channel(id)).toMatchObject({ options: { thinking: { type: 'adaptive', effort: 'high' } }, optionsEnabled: { thinking: true } });
+    await call('ui.settings.begin');
+    await call('config.updateConfig', { configId: id, updates: { options: { ...(await app.product.channel(id))!.options,
+      thinking: { type: 'adaptive', effort: 'custom', effortCustom: 'turbo' }, temperature: 0.4 }, optionsEnabled: { ...(await app.product.channel(id))!.optionsEnabled, temperature: true } } });
+    await call('ui.settings.save'); await call('ui.settings.end');
+    expect(provider().generation).toEqual({ maxOutputTokens: 4096, temperature: 0.4, reasoningEffort: 'turbo' });
+    expect(await app.product.channel(id)).toMatchObject({ options: { top_p: 0.9, thinking: { effort: 'custom', effortCustom: 'turbo' } } });
+
+    // 设置页关闭温度：provider 不再发送温度，渠道保留最后的数值供下次开启。
+    await call('ui.settings.begin');
+    await call('config.updateConfig', { configId: id, updates: { optionsEnabled: { ...(await app.product.channel(id))!.optionsEnabled, temperature: false } } });
+    await call('ui.settings.save'); await call('ui.settings.end');
+    expect(provider().generation).toEqual({ maxOutputTokens: 4096, reasoningEffort: 'turbo' });
+    await app.close(); app = await PlatformApplication.open({ dataDirectory: f.data, secretCodec: codec }); router = new ApplicationRouter(app);
+    expect(await app.product.channel(id)).toMatchObject({ promptCachingTtl: '1h', models: [{ id: 'fixture', name: 'Fixture', contextWindow: 200000 }],
+      options: { temperature: 0.4, max_tokens: 4096, top_p: 0.9 }, optionsEnabled: { temperature: false, max_tokens: true, top_p: true } });
+  });
+
+  test('旧版本保存的完整渠道仍可读取，重叠字段以 provider 为准；provider 换协议后旧协议选项不再套用', async () => {
+    const draft = await app.product.draft();
+    const id = await draft.configs.createConfig({ type: 'openai', enabled: true, timeout: 5000, url: 'http://localhost:1234/v1', name: 'Chat',
+      model: 'fixture', apiKey: '', autoSummarizeMethod: 'notes', options: { temperature: 0.2, top_p: 0.5 }, optionsEnabled: { temperature: true, top_p: true } } as any);
+    await app.product.save(draft);
+    // 模拟旧格式：完整渠道，且端点与温度和 provider 不一致。
+    const record = structuredClone(await app.storage.getRecord('product-settings', 'main')) as any;
+    const legacy = { ...await app.product.channel(id), apiKey: '', url: 'http://stale.invalid/v1', model: 'stale', retryCount: 7,
+      options: { temperature: 0.9, top_p: 0.5 }, optionsEnabled: { temperature: true, top_p: true } };
+    record.channels = record.channels.map((value: any) => value.id === id ? legacy : value);
+    await app.storage.commitRecords([{ namespace: 'product-settings', id: 'main', value: record }]);
+    await app.close(); app = await PlatformApplication.open({ dataDirectory: f.data, secretCodec: codec }); router = new ApplicationRouter(app);
+    expect(await app.product.channel(id)).toMatchObject({ url: 'http://localhost:1234/v1', model: 'fixture', retryCount: 7,
+      options: { temperature: 0.2, top_p: 0.5 }, optionsEnabled: { temperature: true, top_p: true } });
+
+    const snapshot = app.settings.snapshot();
+    snapshot.settings.providers.find(value => value.id === id)!.protocol = 'anthropic';
+    await app.settings.save({ settings: snapshot.settings, expectedRevision: snapshot.revision });
+    const switched = await app.product.channel(id);
+    expect(switched).toMatchObject({ type: 'anthropic', autoSummarizeMethod: 'notes', options: { temperature: 0.2, max_tokens: undefined } });
+    expect(switched?.options).not.toHaveProperty('top_p');
+    expect(switched).not.toHaveProperty('retryCount', 7);
+  });
+
+  test('导出再导入保留渠道的全部附加选项与 provider 独有字段', async () => {
+    const draft = await app.product.draft();
+    const id = await draft.configs.createConfig({ type: 'openai-responses', enabled: true, timeout: 5000, url: 'http://localhost:1234/v1', name: 'Responses',
+      model: 'fixture', apiKey: '', promptCacheKeyEnabled: true, sendHistoryThoughtSignatures: false, reasoningSignatureMode: 'deepseek',
+      options: { max_output_tokens: 2048, reasoning: { effort: 'high', summary: 'auto' } }, optionsEnabled: { max_output_tokens: true, reasoning: true } } as any);
+    await app.product.save(draft);
+    let snapshot = app.settings.snapshot();
+    snapshot.settings.providers.find(value => value.id === id)!.capabilities.reasoningLevels = ['high'];
+    await app.settings.save({ settings: snapshot.settings, expectedRevision: snapshot.revision });
+    const before = { channel: await app.product.channel(id), provider: app.settings.snapshot().settings.providers.find(value => value.id === id) };
+    expect(before.channel).toMatchObject({ reasoningSignatureMode: 'deepseek', sendHistoryThoughtSignatures: false, promptCacheKeyEnabled: true });
+
+    const transfer = new SettingsTransfer(app);
+    const exported = await transfer.export(await app.product.draft());
+    const cleared = await app.product.draft();
+    await cleared.configs.deleteConfig(id);
+    await app.product.save(cleared);
+    expect(await app.product.channel(id)).toBeNull();
+    const imported = await app.product.draft();
+    await transfer.import(imported, exported, true);
+    await app.product.save(imported);
+    snapshot = app.settings.snapshot();
+    // 导入按覆盖语义刷新更新时间，其余字段完整保留。
+    expect({ ...await app.product.channel(id), updatedAt: 0 }).toEqual({ ...before.channel, updatedAt: 0 });
+    expect(snapshot.settings.providers.find(value => value.id === id)).toEqual(before.provider);
   });
 
   test('reports activation failure as a committed save, without leaving a dirty draft', async () => {

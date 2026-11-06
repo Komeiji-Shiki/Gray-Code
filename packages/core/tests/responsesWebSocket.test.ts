@@ -9,7 +9,7 @@ import { PlatformApplication } from '../../../apps/server/src/application';
 import { ApplicationRouter } from '../../../apps/server/src/transport/router';
 import { fixture } from './fixtures';
 import { ProviderModelAdapter } from '../../../apps/server/src/model/adapter';
-import { channelProfile, projectChannels } from '../../../apps/server/src/settings/providers';
+import { channelProfile, channelView } from '../../../apps/server/src/settings/providers';
 import { formatHistoryForAPI } from '../../../backend/modules/conversation/manager/historyFormatting';
 import { validateHistoryIntegrity } from '../../../backend/modules/channel/HistoryIntegrityValidator';
 
@@ -174,10 +174,10 @@ describe('Responses native socket with a real local WebSocket upstream', () => {
   });
 
   test('preserves native switches through provider/channel projection and explicit disable', () => {
-    const [channel] = projectChannels([profile], [], []);
+    const channel = channelView(profile);
     expect(channelProfile(channel).capabilities).toMatchObject({ responsesWebSocket: true, responsesAsyncTools: true });
     const disabled = { ...profile, capabilities: { ...profile.capabilities, responsesWebSocket: false, responsesAsyncTools: false } };
-    const [updated] = projectChannels([disabled], [channel], [profile]);
+    const updated = channelView(disabled, { ...channel });
     expect(channelProfile(updated, profile).capabilities).toMatchObject({ responsesWebSocket: false, responsesAsyncTools: false });
   });
 

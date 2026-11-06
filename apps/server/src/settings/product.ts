@@ -11,13 +11,15 @@ import type { McpManager } from '../../../../backend/modules/mcp/McpManager';
 import type { McpServerConfig } from '../../../../backend/modules/mcp/types';
 import { createMcpSettingsDraft, revealMcpSettings, sealMcpSettings } from '../mcp/settings';
 import type { PreparedSettingsProjection } from './service';
-import { channelProfile, projectChannels } from './providers';
+import { channelExtras, channelProfile, channelView, storedChannel, type StoredChannel } from './providers';
 import { revealSettingsFields, sealSettingsFields } from './sealedFields';
 import { isDeepStrictEqual } from 'node:util';
 import type { PendingBackgroundImages } from './images';
 import { getActualLanguage, setLanguage, type SupportedLanguage } from '../../../../backend/i18n';
 
-export interface ProductPreferences { branchRetentionDays?: number; pendingBackgroundImages?: PendingBackgroundImages; pendingConfigurationImports?: PendingConfigurationImport[]; pendingSkillBundles?: Record<string, SkillBundle>; importedSkills?: SavedPlatformSkill[]; features: GlobalSettings; channels: ChannelConfig[]; mcpServers?: McpServerConfig[]; mcpSecrets?: Record<string, string> }
+export interface ProductPreferences { branchRetentionDays?: number; pendingBackgroundImages?: PendingBackgroundImages; pendingConfigurationImports?: PendingConfigurationImport[]; pendingSkillBundles?: Record<string, SkillBundle>; importedSkills?: SavedPlatformSkill[]; features: GlobalSettings; channels: StoredChannel[]; mcpServers?: McpServerConfig[]; mcpSecrets?: Record<string, string> }
+/** 设置草稿编辑完整的渠道视图，保存时再拆成 provider 与附加选项。 */
+export type ProductDraftValue = Omit<ProductPreferences, 'channels'> & { channels: ChannelConfig[] };
 export interface ProductSettingsDraft {
   settings: SettingsManager;
   configs: ConfigManager;
@@ -25,7 +27,7 @@ export interface ProductSettingsDraft {
   app: AppSettings;
   credentials: Record<string, string | null>;
   revision: number;
-  value: ProductPreferences;
+  value: ProductDraftValue;
   dirty: boolean;
   baseApp: AppSettings;
   basePreferences: ProductPreferences;
@@ -37,6 +39,13 @@ function maskChannelCredentials(channels: ChannelConfig[], providers: AppSetting
   const credentials = new Set(providers.filter(profile => profile.credentialRef).map(profile => profile.id));
   for (const channel of channels) channel.apiKey = credentials.has(channel.id) ? secretPlaceholder : '';
 }
+/** 渠道顺序与存在与否以 provider 为准；删除的 provider 不留附加选项。 */
+function storedChannels(providers: AppSettings['providers'], channels: readonly StoredChannel[]): StoredChannel[] {
+  return providers.map(profile => storedChannel(profile, channels.find(channel => channel.id === profile.id)));
+}
+function channelViews(providers: AppSettings['providers'], channels: readonly StoredChannel[]): ChannelConfig[] {
+  return providers.map(profile => channelView(profile, channels.find(channel => channel.id === profile.id)));
+}
 
 function uiLanguage(settings: SettingsManager): SupportedLanguage {
   const language = settings.getUISettings().language;
@@ -46,6 +55,8 @@ function uiLanguage(settings: SettingsManager): SupportedLanguage {
 /** Preserve the existing feature/configuration services; only their persistence host changes. */
 export class ProductConfiguration {
   private saved!: ProductPreferences;
+  /** 由 provider 与 saved.channels 合成，随设置发布一起更新。 */
+  private views!: ChannelConfig[];
   private activeSettings!: SettingsManager;
   constructor(private readonly application: PlatformApplication) {}
   async initialize(): Promise<void> {
@@ -56,7 +67,8 @@ export class ProductConfiguration {
     this.activeSettings = manager;
     setLanguage(uiLanguage(manager));
     const { providers: profiles } = this.application.settings.read('providers');
-    this.saved = { features: structuredClone(manager.getSettings()), channels: projectChannels(profiles, persisted?.channels ?? [], profiles) };
+    this.saved = { features: structuredClone(manager.getSettings()), channels: storedChannels(profiles, persisted?.channels ?? []) };
+    this.views = channelViews(profiles, this.saved.channels);
     this.saved.branchRetentionDays = persisted?.branchRetentionDays;
     this.saved.importedSkills = persisted?.importedSkills ?? [];
     if (!persisted?.importedSkills) {
@@ -79,12 +91,12 @@ export class ProductConfiguration {
   mcpConfigs(): McpServerConfig[] { return structuredClone(this.saved.mcpServers ?? []); }
   /** 启动与设置编辑共享凭据占位语义，普通界面读取无需访问凭据存储。 */
   uiChannels(): ChannelConfig[] {
-    const channels = structuredClone(this.saved.channels);
+    const channels = structuredClone(this.views);
     maskChannelCredentials(channels, this.application.settings.read('providers').providers);
     return channels;
   }
   async channel(id: string, options: { includeCredential?: boolean } = {}): Promise<ChannelConfig | null> {
-    const config = this.saved.channels.find(channel => channel.id === id);
+    const config = this.views.find(channel => channel.id === id);
     if (!config) return null;
     // 模型适配器自行取得本次认证信息，能力和工具配置查询也只需要普通配置字段。
     const profile = options.includeCredential === false ? undefined : this.application.settings.find('providers', id);
@@ -95,7 +107,7 @@ export class ProductConfiguration {
   }
   async draft(input?: ProductSettingsDraft): Promise<ProductSettingsDraft> {
     const snapshot = input ? { settings: structuredClone(input.app), revision: input.revision } : this.application.settings.snapshot();
-    const value = structuredClone(input?.value ?? this.saved);
+    const value: ProductDraftValue = structuredClone(input?.value ?? { ...this.saved, channels: this.views });
     if (!input) maskChannelCredentials(value.channels, snapshot.settings.providers);
     const draft = { value, app: snapshot.settings, credentials: structuredClone(input?.credentials ?? {}), revision: snapshot.revision, dirty: input?.dirty ?? false,
       baseApp: structuredClone(input?.baseApp ?? snapshot.settings), basePreferences: structuredClone(input?.basePreferences ?? this.saved) } as ProductSettingsDraft;
@@ -131,13 +143,14 @@ export class ProductConfiguration {
     }
     const retention = draft.settings.getSummarizeConfig().userMessageRetention;
     if (retention !== undefined && retention !== 'first' && retention !== 'all') throw new Error('用户消息保留策略必须是首条或全部。');
-    const channels = structuredClone(draft.value.channels);
+    const views = structuredClone(draft.value.channels);
     const next = structuredClone(draft.app);
     // 草稿用 data URL 预览尚未保存的图片，提交时恢复原有资源引用格式。
     next.appearance.backgroundImage = this.application.images.savedUrl(next.appearance.backgroundImage, draft.value.pendingBackgroundImages);
     const credentials = { ...draft.credentials };
     const profiles = new Map(next.providers.map(profile => [profile.id, profile]));
-    next.providers = channels.map(channel => {
+    const channels: StoredChannel[] = [];
+    next.providers = views.map(channel => {
       if (channel.autoSummarizeMethod !== undefined && !['summary', 'notes'].includes(channel.autoSummarizeMethod))
         throw new Error('渠道自动总结方式必须是普通总结或笔记换窗口。');
       const previous = profiles.get(channel.id);
@@ -147,7 +160,9 @@ export class ProductConfiguration {
         else credentialRef = undefined;
       }
       channel.apiKey = '';
-      return channelProfile(channel, previous, credentialRef);
+      const profile = channelProfile(channel, previous, credentialRef);
+      channels.push(channelExtras(channel, profile));
+      return profile;
     });
     const active = draft.settings.getActiveChannelId();
     for (const agent of next.agents) {
@@ -160,7 +175,7 @@ export class ProductConfiguration {
     delete draft.value.pendingBackgroundImages;
     draft.revision = snapshot.revision; draft.app = snapshot.settings; draft.credentials = {}; draft.dirty = false;
     draft.baseApp = structuredClone(snapshot.settings); draft.basePreferences = structuredClone(this.saved);
-    for (const channel of draft.value.channels) channel.apiKey = snapshot.settings.providers.find(profile => profile.id === channel.id)?.credentialRef ? secretPlaceholder : '';
+    draft.value.channels = this.uiChannels();
     return snapshot;
   }
   async prepare(next: AppSettings, previous: AppSettings, value?: ProductPreferences): Promise<PreparedSettingsProjection> {
@@ -172,7 +187,8 @@ export class ProductConfiguration {
     delete saved.pendingSkillBundles;
     const backgroundImages = saved.pendingBackgroundImages;
     delete saved.pendingBackgroundImages;
-    saved.channels = projectChannels(next.providers, saved.channels, previous.providers);
+    saved.channels = storedChannels(next.providers, saved.channels);
+    const views = channelViews(next.providers, saved.channels);
     const credentials: Record<string, string | null> = {};
     const mcp = sealMcpSettings(saved.mcpServers ?? [], this.saved.mcpSecrets ?? {}, credentials);
     saved.mcpSecrets = mcp.references;
@@ -190,6 +206,7 @@ export class ProductConfiguration {
         const previousLanguage = getActualLanguage();
         if (language !== uiLanguage(this.activeSettings)) setLanguage(language);
         this.saved = saved;
+        this.views = views;
         this.activeSettings = activeSettings;
         // 工具工厂会捕获说明语言，必须在创建声明及发布 settings.changed 前同步。
         if (previousLanguage !== getActualLanguage()) this.application.refreshLocalizedTools();

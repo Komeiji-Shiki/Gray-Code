@@ -9,6 +9,9 @@ const protocolLevels: Record<ProviderProtocol, readonly string[]> = {
   'gemini-interactions': ['minimal', 'low', 'medium', 'high'],
 };
 
+/** 渠道设置页为协议提供的固定档位；不在其中的强度由设置页按自定义值保存。 */
+export function protocolReasoningLevels(protocol: ProviderProtocol): readonly string[] { return protocolLevels[protocol]; }
+
 export function reasoningLevelsForModel(profile: ProviderDefinition, model: string): string[] {
   const capabilities = { ...profile.capabilities, ...profile.models.find(item => item.id === model)?.capabilities };
   if (capabilities.reasoningParameter === 'disabled') return [];
