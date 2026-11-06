@@ -136,7 +136,7 @@ async function measureRendererSamples({ rpc, ui, chat, until, output, configId, 
   const samples = [];
   const cancellationOnly = process.env.GRAYCODE_RENDER_SCENARIO === 'cancel';
   const startupOnly = process.env.GRAYCODE_RENDER_SCENARIO === 'startup';
-  await ui('config.updateConfig', { configId, updates: { preferStream: !cancellationOnly, timeout: 60000, maxContextTokens: 2000000, contextManagementEnabled: false } });
+  await ui('config.updateConfig', { configId, updates: { options: { stream: !cancellationOnly }, timeout: 60000, maxContextTokens: 2000000, contextManagementEnabled: false } });
   await ui('ui.settings.save');
   for (const count of cancellationOnly || startupOnly ? [] : [1000, 5000]) {
     const start = performance.now();
@@ -171,7 +171,7 @@ async function measureRendererSamples({ rpc, ui, chat, until, output, configId, 
     samples.push({ messages: count, openMilliseconds, ...result });
     await fs.writeFile(path.join(output, 'renderer-performance.partial.json'), JSON.stringify(samples, null, 2));
   }
-  await ui('config.updateConfig', { configId, updates: { preferStream: false } });
+  await ui('config.updateConfig', { configId, updates: { options: { stream: false } } });
   await ui('ui.settings.save');
   const cancellation = cancellationOnly ? await measureCommandCancellation({ rpc, ui, chat, until }) : undefined;
   const os = require('node:os'), cpus = os.cpus();

@@ -493,7 +493,7 @@ async function main() {
   await ui('platform.settings.update', { settings });
   const configId = await ui('config.createConfig', { name: '本地验证模型', type: 'openai' });
   await ui('config.updateConfig', { configId, updates: { url: `http://127.0.0.1:${server.address().port}/v1`, apiKey: 'smoke-only', model: 'smoke-model',
-    models: [{ id: 'smoke-model', name: 'smoke-model' }], preferStream: petOnly, timeout: 10000 } });
+    models: [{ id: 'smoke-model', name: 'smoke-model' }], options: { stream: petOnly }, timeout: 10000 } });
   await ui('settings.setActiveChannelId', { channelId: configId });
   // 写文件由既有 Diff 配置自动应用，后续仍单独验证危险命令的审批拒绝。
   await ui('tools.updateApplyDiffConfig', { config: { autoSave: true, autoApplyWithoutDiffView: true } });

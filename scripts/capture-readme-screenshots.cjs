@@ -608,7 +608,7 @@ async function main() {
   await ui('platform.settings.update', { settings });
   const configId = await ui('config.createConfig', { name: 'DeepSeek', type: 'openai' });
   await ui('config.updateConfig', { configId, updates: { url: `${modelUrl}/v1`, apiKey: 'demo-only', model,
-    models: [{ id: model, name: model }], preferStream: true, timeout: 20000 } });
+    models: [{ id: model, name: model }], options: { stream: true }, timeout: 20000 } });
   await ui('settings.setActiveChannelId', { channelId: configId });
   await ui('tools.updateApplyDiffConfig', { config: { autoSave: true, autoApplyWithoutDiffView: true } });
   await ui('tools.updateToolConfig', { toolName: 'web_search', config: { endpoint: `${modelUrl}/search`, fetchEndpoint: `${modelUrl}/fetch`,
