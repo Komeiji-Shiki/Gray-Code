@@ -30,6 +30,8 @@ import {
   overrideChannelReasoning,
 } from "./capabilities";
 
+/** Cloudflare 与常见供应方的请求编号，用于在网关或供应方日志中定位同一次请求。 */
+const RESPONSE_TRACE_HEADERS = ['cf-ray', 'x-request-id', 'request-id'];
 /** 正文、工具调用或附件才算可用输出；只有思考的回复不能推进任务。 */
 const visiblePart = (part: Record<string, unknown>) => !part.thought && partHasContent(part);
 /** 单次请求已经产生的外部可见状态，决定失败后能否安全地重新请求。 */
@@ -184,6 +186,12 @@ export class ProviderModelAdapter implements ModelProvider {
       options.headers = chatgptHeaders(options.headers ?? {}, secret ?? '', options.body?.prompt_cache_key, input.conversationId);
       options.url = `${CHATGPT_API_BASE_URL}/responses`;
       options.stream = true;
+    }
+    if (input.onResponse) {
+      const onResponse = input.onResponse;
+      // 只保留追踪编号；其余响应头可能带账户或额度信息，不进入请求记录。
+      options.onResponse = (status, headers) => onResponse({ status,
+        ids: Object.fromEntries(RESPONSE_TRACE_HEADERS.flatMap(name => headers[name] ? [[name, headers[name]]] : [])) });
     }
     const rateLimitKey = createHash('sha256').update(JSON.stringify([new URL(options.url).origin, subscriptionCredential?.identity ?? Object.entries(options.headers ?? {})
       .filter(([key]) => ['authorization', 'x-api-key', 'api-key', 'x-goog-api-key', 'chatgpt-account-id'].includes(key.toLowerCase()))

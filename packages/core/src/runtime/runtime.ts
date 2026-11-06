@@ -420,6 +420,8 @@ export class PlatformRuntime {
         let streamingEvent: Promise<void> | undefined;
         // 请求快照与上游请求并行写入；开始流式事件排在请求记录之后，保持事件顺序。
         let requestRecorded: Promise<void> = Promise.resolve();
+        const requestId = `${run.id}:${iteration}`;
+        let requestSnapshot: ModelRequestSnapshot | undefined;
         const partialParts: PlatformMessage['parts'] = [];
         const deltas = new DeltaCoalescer(parts => {
           // 已显示的正文和思考均保留；未完成签名、工具参数不能成为可执行的历史调用。
@@ -462,16 +464,24 @@ export class PlatformRuntime {
             return accepted;
           },
           onRequest: captured => requestRecorded = (async () => {
-            const id = `${run.id}:${iteration}`;
-            await this.services.storage.putRecord({ namespace: 'model-requests', id, ownerId: run.conversationId,
-              value: { ...captured, runId: run.id, iteration, capturedAt: Date.now(), turnContext: request.turnContext,
-                // 手动总结复用最近真实调用的固定前缀；不保存信号、回调和认证头。
-                prefix: { conversationId: request.conversationId, providerId: request.providerId, modelOverride: captured.model,
-                  reasoningEffort: request.reasoningEffort, systemPrompt: request.systemPrompt, tools: request.tools,
-                  promptContext: request.promptContext, taskContext: request.taskContext, turnContext: request.turnContext } } satisfies ModelRequestSnapshot });
-            await this.event(run.id, 'model.request', { iteration, requestId: id, protocol: captured.protocol, model: captured.model,
+            requestSnapshot = { ...captured, runId: run.id, iteration, capturedAt: Date.now(), turnContext: request.turnContext,
+              // 手动总结复用最近真实调用的固定前缀；不保存信号、回调和认证头。
+              prefix: { conversationId: request.conversationId, providerId: request.providerId, modelOverride: captured.model,
+                reasoningEffort: request.reasoningEffort, systemPrompt: request.systemPrompt, tools: request.tools,
+                promptContext: request.promptContext, taskContext: request.taskContext, turnContext: request.turnContext } };
+            await this.services.storage.putRecord({ namespace: 'model-requests', id: requestId, ownerId: run.conversationId, value: requestSnapshot });
+            await this.event(run.id, 'model.request', { iteration, requestId, protocol: captured.protocol, model: captured.model,
               ...(captured.metrics ? { metrics: captured.metrics } : {}) });
           })(),
+          // 响应头晚于请求记录到达，补写同一条记录：正文沿用已保存的对象，只重新编码记录根。
+          // 追踪编号只用于排查，写入失败不影响本次回复。
+          onResponse: response => {
+            requestRecorded = requestRecorded.catch(() => undefined).then(async () => {
+              if (!requestSnapshot) return;
+              requestSnapshot = { ...requestSnapshot, response };
+              await this.services.storage.putRecord({ namespace: 'model-requests', id: requestId, ownerId: run.conversationId, value: requestSnapshot });
+            }).catch(() => undefined);
+          },
           onRetry: status => {
             // 上一次尝试只推送了思考；丢弃后界面与中断时保存的部分回复都从下一次尝试重新开始。
             deltas.discard(); partialParts.length = 0;
@@ -523,7 +533,7 @@ export class PlatformRuntime {
               returned.async = true;
             }
           }
-          finally { deltas.finish(); await streamingEvent; }
+          finally { deltas.finish(); await streamingEvent; await requestRecorded.catch(() => undefined); }
           signal.throwIfAborted();
           // 输出转换也可能被取消；完成前仍需保留已经显示的原文。
           content = { ...generated, role: 'model', id: randomUUID(), runId: run.id, requestKey: run.requestKey,

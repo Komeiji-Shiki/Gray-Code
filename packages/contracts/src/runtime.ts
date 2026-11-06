@@ -111,6 +111,8 @@ export interface ApprovalRequest {
   reason?: string;
   choices?: ApprovalChoice[];
 }
+/** 上游响应的追踪编号（如 cf-ray、x-request-id），用于在网关或供应方日志中定位同一次请求。 */
+export interface ModelResponseTrace { status: number; ids: Record<string, string> }
 export interface ModelRequestMetrics { inputItems: number; inputImages: number; nativeTools: number }
 export interface ModelInput {
   /** 原生连接归属当前任务，内部总结等独立请求不复用此连接。 */
@@ -125,6 +127,8 @@ export interface ModelInput {
   turnContext?: Record<string, unknown>;
   /** 在供应方格式化完成后捕获请求正文；不包含认证请求头。 */
   onRequest?: (request: { protocol: string; model: string; body: unknown; metrics?: ModelRequestMetrics }) => Promise<void>;
+  /** HTTP 请求收到响应头时调用；只带状态码与上游追踪编号，重试时每次尝试各调用一次。 */
+  onResponse?: (response: ModelResponseTrace) => void;
   promptContext?: { beforeHistoryMessages: PlatformMessage[]; afterHistoryMessages: PlatformMessage[]; historyPlacement: 'entry' | 'legacy'; taskContextEmbedded?: boolean };
   conversationId: string;
   providerId: string;

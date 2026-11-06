@@ -138,6 +138,15 @@ export interface FetchOptions {
     body?: string | Uint8Array;
     timeout?: number;
     signal?: AbortSignal;
+    /** 收到响应头时调用一次（含非 2xx）；头名为小写。 */
+    onResponse?: (status: number, headers: Record<string, string>) => void;
+}
+
+/** 把 fetch 响应头转成小写键的普通对象。 */
+export function responseHeaders(headers: Headers): Record<string, string> {
+    const result: Record<string, string> = {};
+    headers.forEach((value, key) => { result[key.toLowerCase()] = value; });
+    return result;
 }
 
 /** createProxyFetch 的请求选项：在标准 RequestInit 之上增加代理专用 timeout */

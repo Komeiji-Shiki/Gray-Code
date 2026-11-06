@@ -18,6 +18,7 @@ import { ChannelError, ErrorType } from './types';
 import {
     USER_AGENT,
     extractUpstreamErrorMessage,
+    responseHeaders,
     type FetchOptions,
     type ProxyFetchInit,
     type FetchResponse
@@ -154,6 +155,7 @@ export async function* proxyStreamFetch(
             body: init.body as RequestInit['body'],
             signal: init.signal
         });
+        init.onResponse?.(response.status, responseHeaders(response.headers));
 
         if (!response.ok) {
             // 获取错误详情：必须先读 text() 再尝试解析 JSON——response.json() 会消费

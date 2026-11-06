@@ -1,6 +1,6 @@
 import type { DirectoryEntry, SettingsDraft, SettingsSnapshot } from './settings';
 import type { FileEntryInfo } from './files';
-import type { RunEvent, RunRecord, ModelRequestMetrics } from './runtime';
+import type { RunEvent, RunRecord, ModelRequestMetrics, ModelResponseTrace } from './runtime';
 import type { RuntimeDiagnostics } from './remote';
 import type { ComputerAction, ComputerObservation, ComputerObserveInput, ComputerOperation, ComputerStatus, ComputerWindows } from './computer';
 import type { BrowserLayout, BrowserProfile, BrowserState, BrowserTab } from './browser';
@@ -17,6 +17,8 @@ export interface ModelRequestSnapshot {
   turnContext?: { characterTurn?: { resources: unknown; activation: unknown; config: unknown } };
   prefix?: Record<string, unknown>;
   metrics?: ModelRequestMetrics;
+  /** 最近一次尝试的响应状态与追踪编号；WebSocket 请求没有逐次响应头。 */
+  response?: ModelResponseTrace;
 }
 type Method<P, R> = { params: P; result: R };
 type Empty = Record<string, never>;

@@ -215,6 +215,14 @@ export async function* readProxyStreamBody(
                                 finishReject(new Error(`Invalid HTTP status line: ${statusLine || '(empty)'}`));
                                 return;
                             }
+                            if (init.onResponse) {
+                                const headers: Record<string, string> = {};
+                                for (const line of headerPart.split('\r\n').slice(1)) {
+                                    const colon = line.indexOf(':');
+                                    if (colon > 0) headers[line.slice(0, colon).trim().toLowerCase()] = line.slice(colon + 1).trim();
+                                }
+                                init.onResponse(statusCode, headers);
+                            }
 
                             // 检查是否是 chunked 编码
                             if (headerPart.toLowerCase().includes('transfer-encoding: chunked')) {

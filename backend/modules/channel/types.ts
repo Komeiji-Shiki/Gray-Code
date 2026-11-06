@@ -304,6 +304,9 @@ export interface HttpRequestOptions {
     
     /** 是否流式 */
     stream?: boolean;
+
+    /** 收到响应头时调用一次（含非 2xx），用于记录上游的追踪编号。 */
+    onResponse?: (status: number, headers: Record<string, string>) => void;
 }
 
 /**

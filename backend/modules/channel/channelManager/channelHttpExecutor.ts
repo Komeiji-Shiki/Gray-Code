@@ -11,6 +11,7 @@ import { ChannelError, ErrorType } from '../types';
 import { retryAfterMilliseconds } from '../../../core/modelRetry';
 import type { HttpRequestOptions, HttpResponse } from '../types';
 import { createProxyFetch, proxyStreamFetch, USER_AGENT } from '../proxyFetch';
+import { responseHeaders } from '../proxyFetch/proxyShared';
 import { parseStreamBuffer } from '../streamBufferParser';
 import {
     extractUpstreamErrorMessage,
@@ -129,6 +130,7 @@ export class ChannelHttpExecutor {
             response.headers.forEach((value, key) => {
                 responseHeaders[key] = value;
             });
+            options.onResponse?.(response.status, responseHeaders);
             
             return {
                 status: response.status,
@@ -230,7 +232,8 @@ export class ChannelHttpExecutor {
                     headers,
                     body: body ? JSON.stringify(body) : undefined,
                     timeout,
-                    signal: controller.signal
+                    signal: controller.signal,
+                    onResponse: options.onResponse
                 }, proxyUrl)) {
                     // 检查是否已取消
                     if (externalSignal?.aborted) {
@@ -306,6 +309,7 @@ export class ChannelHttpExecutor {
                     body: body ? JSON.stringify(body) : undefined,
                     signal: controller.signal
                 });
+                options.onResponse?.(response.status, responseHeaders(response.headers));
                 
                 if (!response.ok) {
                     // 获取错误详情：必须先读 text() 再尝试解析 JSON——response.json() 会消费
