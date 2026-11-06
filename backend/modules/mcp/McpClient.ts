@@ -1,7 +1,4 @@
 import { EventEmitter } from 'node:events';
-import { execFile } from 'node:child_process';
-import path from 'node:path';
-import treeKill from 'tree-kill';
 import { StringDecoder } from 'node:string_decoder';
 import { AsyncLocalStorage } from 'node:async_hooks';
 import {
@@ -9,6 +6,7 @@ import {
     type InputRequiredResult, type RequestOptions,
 } from '@modelcontextprotocol/client';
 import { StdioClientTransport } from '@modelcontextprotocol/client/stdio';
+import { killProcessTree } from '../../core/killProcessTree';
 import { createGrayCodeMcpClientInfo, PRODUCT_USER_AGENT } from '../../core/productIdentity';
 import type { McpTransportConfig, McpToolDefinition, McpResourceDefinition, McpPromptDefinition, McpRawToolResult } from './types';
 
@@ -28,16 +26,7 @@ class ManagedStdioTransport extends StdioClientTransport {
         this.stopping = (async () => {
             if (this.pid) {
                 const pid = this.pid;
-                await new Promise<void>((resolve, reject) => {
-                    const timer = setTimeout(() => reject(new Error('MCP 进程树关闭超时。')), 5000);
-                    const done = (error?: Error | null) => {
-                        clearTimeout(timer);
-                        if (error && this.pid === pid) reject(error); else resolve();
-                    };
-                    if (process.platform === 'win32') execFile(path.join(process.env.SystemRoot ?? 'C:\\Windows', 'System32', 'taskkill.exe'),
-                        ['/PID', String(pid), '/T', '/F'], { windowsHide: true, timeout: 5000 }, done);
-                    else treeKill(pid, 'SIGTERM', done);
-                });
+                await killProcessTree(pid).catch(error => { if (this.pid === pid) throw error; });
             }
             // 进程树停止失败时必须保留 SDK 持有的父进程，不能先用父进程强杀兜底丢掉后续清理身份。
             await super.close();

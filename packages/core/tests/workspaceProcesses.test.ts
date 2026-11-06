@@ -149,6 +149,17 @@ test('终止命令返回成功而目标不退出时，有明确截止时间', as
   expect(child.listenerCount('close')).toBe(0);
 });
 
+test('终止命令本身很慢时，关闭等待从它返回后才开始计时', async () => {
+  jest.useFakeTimers(); const child = childProcess();
+  let finish!: () => void;
+  termination((current, done) => { finish = () => { done(); setTimeout(() => { Object.assign(current, { exitCode: 0 }); current.emit('close', 0); }, 1000); }; }, child);
+  const stopped = stopOwnedProcess(child);
+  await jest.advanceTimersByTimeAsync(20_000);
+  finish();
+  await jest.advanceTimersByTimeAsync(1000);
+  await expect(stopped).resolves.toBeUndefined();
+});
+
 const modelOwner = { actorId: 'actor', conversationId: 'conversation', runId: 'run-1', workspaceId: workspace.id };
 
 async function completed(owner: ProcessOwner, output = 'done', saved = storage()) {

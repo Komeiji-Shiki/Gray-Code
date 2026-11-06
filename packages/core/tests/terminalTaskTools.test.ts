@@ -95,15 +95,16 @@ test('后台通知等待时，其他终端仍能启动、读取并停止', async
       expect(await task({ action: 'stop', taskId: id })).toMatchObject({ success: true, data: { running: false } });
       expect((await task({ action: 'read', taskId: id })).data.output).toContain('ready');
     })();
+    // 停止要等 taskkill 和进程快照，系统繁忙时各要数秒；真被阻塞会一直等到 release，窗口只需宽于正常停止耗时。
     await Promise.race([other, new Promise<never>((_resolve, reject) => {
-      timer = setTimeout(() => reject(new Error('无关的后台通知阻塞了终端操作')), 10000);
+      timer = setTimeout(() => reject(new Error('无关的后台通知阻塞了终端操作')), 20000);
     })]);
   } finally {
     clearTimeout(timer); release();
     await other;
     feedback.mockRestore();
   }
-}, 25000);
+}, 40000);
 
 const alive = (pid: number) => { try { process.kill(pid, 0); return true; } catch { return false; } };
 // 实机复现启动器场景：启动器拉起继承标准输出的子进程后退出，Shell 随之结束，子进程的父进程已不存在。

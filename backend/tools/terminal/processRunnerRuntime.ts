@@ -5,6 +5,7 @@ import * as path from 'path';
 import { EventEmitter } from 'events';
 import { TextDecoder } from 'util';
 import crossSpawn from 'cross-spawn';
+import { killProcessTree } from '../../core/killProcessTree';
 import type { Tool, ToolResult, ToolContext } from '../types';
 import type { ShellType } from './shellConfigRuntime';
 import type { StreamDecodeState } from './outputDecoderRuntime';
@@ -22,10 +23,6 @@ export function createTerminalRuntime(host: createTerminalRuntimeHost) {
     const TaskManager = host.tasks;
     const { getShellConfig, checkShellAvailability } = host.shells;
     const { createOutputLineBuffer, pushOutputLines, getLastLines, getMaxOutputLines, decodeWithMode, flushDecodeState } = host.output;
-
-    // tree-kill library, used to terminate process trees cross-platform
-    // eslint-disable-next-line @typescript-eslint/no-var-requires
-    const treeKill = require('tree-kill') as (pid: number, signal?: string, callback?: (error?: Error) => void) => void;
 
     /** 终端任务类型常量 */
     const TASK_TYPE_TERMINAL = 'terminal';
@@ -291,11 +288,8 @@ export function createTerminalRuntime(host: createTerminalRuntimeHost) {
                             existingProc.process.pid &&
                             existingProc.process.pid !== proc.pid
                         ) {
-                            try {
-                                treeKill(existingProc.process.pid, 'SIGTERM');
-                            } catch {
-                                // 旧进程可能已退出，忽略
-                            }
+                            // 旧进程可能已退出，失败不影响新进程注册。
+                            void killProcessTree(existingProc.process.pid).catch(() => {});
                             // 旧进程被替换：立即注销其任务并摘除条目，否则旧进程的 close/error
                             // 处理器会按 terminalId 把新进程的注册删掉（新进程变孤儿、无法取消）。
                             TaskManager.unregisterTask(terminalId, 'cancelled', {
@@ -762,8 +756,7 @@ export function createTerminalRuntime(host: createTerminalRuntimeHost) {
      * 杀掉终端进程
      * 同时支持直接调用和通过 TaskManager 取消
      *
-     * 使用 tree-kill 库来跨平台终止进程树（包括所有子进程）
-     * tree-kill 在 Windows 上使用 taskkill /T，在 Unix 上使用 SIGTERM/SIGKILL
+     * 跨平台终止进程树（包括所有子进程）：Windows 上使用 taskkill /T，Unix 上使用 SIGTERM/SIGKILL
      *
      * 修改原因：旧实现 treeKill 发出信号后立即返回，进程树尚未退出，返回的 output 是
      *          杀进程瞬间的中间态，exitCode 也还未落定（close 处理器稍后才写）。

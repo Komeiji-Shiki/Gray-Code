@@ -1,9 +1,9 @@
 import * as cp from 'child_process';
 import * as os from 'os';
+import { killProcessTree } from '../../core/killProcessTree';
 import { describeProcessTree, type ProcessTreeReport } from './processTree';
 import type { TerminalProcess, TerminalInterruptReason } from './runtimeTypes';
 
-const treeKill = require('tree-kill') as (pid: number, signal?: string, callback?: (error?: Error) => void) => void;
 const KILL_WAIT_CLOSE_TIMEOUT_MS = 10_000;
 
 /**
@@ -93,46 +93,30 @@ function terminateProcessTree(terminalProcess: TerminalProcess): Promise<void> {
 
         let rootKilled: Promise<void> = Promise.resolve();
         if (!exited) {
-            later(() => {
+            const killRoot = (signal: NodeJS.Signals) => {
                 try {
-                    proc.kill('SIGKILL');
+                    proc.kill(signal);
                 } catch {
-                    // 可能已退出，忽略
+                    // 进程可能已经退出
                 }
-                // 修改原因：发 SIGKILL 后立即 onClose() 会让等待方在 close 处理器（落定
-                //          endTime/exitCode/output）执行前就返回，拿到 stale 结果。
-                // 修改方式：SIGKILL 不可捕获——发完信号不 resolve，继续等真实 close；
-                //          若管道仍被其他进程占用而 close 迟迟未达，关闭本端管道后再兜底 resolve。
-                later(() => {
-                    releasePipes();
-                    later(onClose, 1000);
-                }, KILL_WAIT_CLOSE_TIMEOUT_MS);
-            }, KILL_WAIT_CLOSE_TIMEOUT_MS);
-
+            };
             const pid = proc.pid;
-            rootKilled = new Promise<void>((done) => {
-                if (pid) {
-                    // 使用 tree-kill 终止进程树（Windows: taskkill /F /T；Unix: 递归发信号）
-                    treeKill(pid, 'SIGTERM', (err) => {
-                        if (err) {
-                            // tree-kill 失败：回退到直接 SIGKILL
-                            try {
-                                proc.kill('SIGKILL');
-                            } catch {
-                                // 忽略错误，进程可能已经退出
-                            }
-                        }
-                        done();
-                    });
-                } else {
-                    // 没有 PID，使用默认方式
-                    try {
-                        proc.kill('SIGTERM');
-                    } catch {
-                        // 忽略错误，进程可能已经退出
-                    }
-                    done();
-                }
+            rootKilled = pid ? killProcessTree(pid).catch(() => killRoot('SIGKILL')) : Promise.resolve(killRoot('SIGTERM'));
+            // 升级等待从终止命令返回后开始计时：系统繁忙时 taskkill 可能要数秒，抢先强杀根进程会让
+            // 它再也沿父子关系找不到后代。
+            void rootKilled.then(() => {
+                if (settled) return;
+                later(() => {
+                    killRoot('SIGKILL');
+                    // 修改原因：发 SIGKILL 后立即 onClose() 会让等待方在 close 处理器（落定
+                    //          endTime/exitCode/output）执行前就返回，拿到 stale 结果。
+                    // 修改方式：SIGKILL 不可捕获——发完信号不 resolve，继续等真实 close；
+                    //          若管道仍被其他进程占用而 close 迟迟未达，关闭本端管道后再兜底 resolve。
+                    later(() => {
+                        releasePipes();
+                        later(onClose, 1000);
+                    }, KILL_WAIT_CLOSE_TIMEOUT_MS);
+                }, KILL_WAIT_CLOSE_TIMEOUT_MS);
             });
         }
 

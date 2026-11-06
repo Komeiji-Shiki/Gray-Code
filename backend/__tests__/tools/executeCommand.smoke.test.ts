@@ -29,9 +29,14 @@ let mockSettingsManager: any = null;
 jest.mock('child_process', () => ({
     spawn: jest.fn(),
     exec: jest.fn(),
-    execFile: jest.fn(),
+    // Windows 上终止进程树走 taskkill：mock 直接回调成功，与下面的 tree-kill 对应。
+    execFile: jest.fn((...args: unknown[]) => {
+        const callback = args.at(-1);
+        if (typeof callback === 'function') callback(null, '', '');
+    }),
     execSync: jest.fn(),
 }));
+jest.mock('node:child_process', () => jest.requireMock('child_process'));
 
 // 隔离 tree-kill：超时/终止路径不产生真实系统调用（CI 安全）
 jest.mock('tree-kill', () =>
@@ -494,7 +499,9 @@ describe('handler：spawn 隔离下的参数转义与执行流', () => {
         abort.abort(new Error('Cancelled by user.'));
 
         const result = await promise;
-        expect(treeKillMock).not.toHaveBeenCalled(); // Shell 已退出，不再按可能被复用的 PID 发信号
+        // Shell 已退出，不再按可能被复用的 PID 发信号
+        expect(treeKillMock).not.toHaveBeenCalled();
+        expect((jest.requireMock('child_process').execFile as jest.Mock).mock.calls.some(call => String(call[0]).includes('taskkill'))).toBe(false);
         expect(processTree.terminate).toHaveBeenCalledWith([5001]);
         expect(result.cancelled).toBe(true);
         expect(result.data.interruption).toMatchObject({
@@ -536,12 +543,15 @@ describe('handler：spawn 隔离下的参数转义与执行流', () => {
             await Promise.resolve();
             await Promise.resolve();
 
-            // 超时回调触发：先经 tree-kill 发 SIGTERM（mock 直接回调、无错误）
+            // 超时回调触发：先终止进程树（mock 直接回调、无错误）
             jest.advanceTimersByTime(100);
-            expect(treeKillMock).toHaveBeenCalledWith(4242, 'SIGTERM', expect.any(Function));
+            if (process.platform === 'win32') {
+                expect(jest.requireMock('child_process').execFile).toHaveBeenCalledWith(
+                    expect.stringContaining('taskkill.exe'), ['/PID', '4242', '/T', '/F'], expect.any(Object), expect.any(Function));
+            } else expect(treeKillMock).toHaveBeenCalledWith(4242, 'SIGTERM', expect.any(Function));
 
-            // SIGTERM 免疫：进程不 close → 等待 KILL_WAIT_CLOSE_TIMEOUT_MS 后升级 SIGKILL
-            jest.advanceTimersByTime(10_000);
+            // SIGTERM 免疫：进程不 close → 终止命令返回后等待 KILL_WAIT_CLOSE_TIMEOUT_MS 升级 SIGKILL
+            await jest.advanceTimersByTimeAsync(10_000);
             expect(proc.kill).toHaveBeenCalledWith('SIGKILL');
 
             // SIGKILL 不可捕获、close 必达：execute_command 正常 resolve（不挂死）

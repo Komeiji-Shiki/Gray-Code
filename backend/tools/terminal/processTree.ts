@@ -1,5 +1,6 @@
 import { execFile } from 'child_process';
 import * as path from 'path';
+import { taskkillTrees } from '../../core/killProcessTree';
 
 /**
  * Windows 进程树追踪。
@@ -90,11 +91,7 @@ export function windowsProcessTreePort(snapshotExecutable?: string): ProcessTree
             return snapshotExecutable && unresolvedDescendants(snapshot, relatedPids ?? []).length ? querySnapshot() : snapshot;
         },
         // 与受管进程停止相同的 taskkill /T /F；调用方已确认 PID 身份，失败由随后的快照核实。
-        terminate: pids => new Promise(resolve => {
-            if (!pids.length) { resolve(); return; }
-            execFile(path.join(system, 'System32', 'taskkill.exe'), [...pids.flatMap(pid => ['/PID', String(pid)]), '/T', '/F'],
-                { windowsHide: true, timeout: 10_000 }, () => resolve());
-        }),
+        terminate: pids => pids.length ? taskkillTrees(pids).catch(() => {}) : Promise.resolve(),
     };
 }
 
