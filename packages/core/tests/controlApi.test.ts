@@ -200,6 +200,37 @@ describe('external control API', () => {
     } finally { controller.abort(); }
   }));
 
+  test('稳定订阅方断线期间的大量流式输出不会挤掉任务事件，原始订阅方的旧游标照常重置', () => withServer(async (port, app) => {
+    const controller = new AbortController();
+    const decoder = new TextDecoder();
+    const readUntil = async (response: Response, text: string) => {
+      const reader = response.body!.getReader();
+      let value = '';
+      while (!value.includes(text)) value += decoder.decode((await reader.read()).value);
+      reader.releaseLock();
+      return value;
+    };
+    const runEvent = (runId: string, type: string, sequence: number) =>
+      ({ type: 'event', event: { runId, type, sequence, timestamp: sequence, payload: {} }, status: 'completed' });
+    try {
+      const stableController = new AbortController();
+      const stable = await request(port, '/v1/events?types=run.completed', { headers, signal: stableController.signal });
+      const raw = await request(port, '/v1/events?raw=1', { headers, signal: controller.signal });
+      app.emit({ type: 'run.created', runId: 'run-1', run: { id: 'run-1', conversationId: 'conversation-1', status: 'queued' } });
+      app.emit(runEvent('run-1', 'run.completed', 1));
+      const id = /id: (\S+)/.exec(await readUntil(stable, 'run-1'))![1];
+      const rawId = /id: (\S+)/.exec(await readUntil(raw, 'run.completed'))![1];
+      stableController.abort();
+      // 一轮超过补发条数上限的流式增量，原始订阅方仍在线，原始缓冲因此一直保留。
+      for (let index = 0; index < 1_200; index++) app.emit({ type: 'model.delta', runId: 'run-2', parts: [{ text: `增量 ${index}` }] });
+      app.emit(runEvent('run-2', 'run.completed', 2));
+      const replay = await readUntil(await request(port, '/v1/events?types=run.completed', { headers: { ...headers, 'Last-Event-ID': id }, signal: controller.signal }), 'run-2');
+      expect(replay).not.toContain('event: reset');
+      expect(replay).not.toContain('"runId":"run-1"');
+      await readUntil(await request(port, '/v1/events?raw=1', { headers: { ...headers, 'Last-Event-ID': rawId }, signal: controller.signal }), 'event: reset');
+    } finally { controller.abort(); }
+  }));
+
   test('synthesizes speech through the configured service', () => withServer(async (port, app) => {
     const speech = await request(port, '/v1/speech', { method: 'POST', headers, body: JSON.stringify({ text: '你好' }) });
     expect(await body(speech)).toMatchObject({ provider: 'fish', clips: [{ base64: 'YQ==' }] });

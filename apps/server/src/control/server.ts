@@ -66,10 +66,37 @@ function compile(route: ControlRoute): CompiledRoute {
 
 export interface ControlServerOptions { port: number; token: string; allowLan: boolean }
 
-/** 原始帧在缓存时编码（按字节计入上限）；稳定形态的帧在第一次有订阅方需要时才编码。 */
-interface BufferedEvent { id: string; raw: Record<string, any>; rawFrame: Buffer; projected?: ControlEvent; projectedFrame?: Buffer }
+interface BufferedEvent { sequence: number; frame: Buffer; matches: (types: string[], conversationId: string | null) => boolean }
 
 const sseFrame = (id: string, value: unknown) => Buffer.from(`id: ${id}\ndata: ${JSON.stringify(value)}\n\n`);
+
+/**
+ * 稳定事件与原始事件各自补发：流式增量只在原始缓冲里挤占位置，稳定订阅方断线期间即使有一轮大量输出，
+ * 重连后仍能补齐任务事件。续传按共用序号判断，游标之后没有事件被挤出就能续上，游标那一条本身不必还在缓冲里。
+ */
+class ReplayBuffer {
+  private readonly entries: BufferedEvent[] = [];
+  private bytes = 0;
+  /** 已被挤出或丢弃的最大序号；游标早于它时中间可能缺事件，只能让订阅方重置。 */
+  private droppedThrough = 0;
+  push(entry: BufferedEvent): void {
+    this.entries.push(entry);
+    this.bytes += entry.frame.length;
+    while (this.entries.length > replayLimit || this.bytes > replayBytesLimit) {
+      const dropped = this.entries.shift()!;
+      this.bytes -= dropped.frame.length;
+      this.droppedThrough = dropped.sequence;
+    }
+  }
+  clear(sequence: number): void {
+    this.entries.length = 0; this.bytes = 0; this.droppedThrough = sequence;
+  }
+  /** 返回游标之后的事件；缓冲无法证明中间没有缺口时返回 undefined。 */
+  after(sequence: number): readonly BufferedEvent[] | undefined {
+    if (sequence < this.droppedThrough) return undefined;
+    return this.entries.filter(entry => entry.sequence > sequence);
+  }
+}
 
 function rawMatches(event: Record<string, any>, types: string[], conversationId: string | null): boolean {
   const eventTypes = [event.type, event.event && typeof event.event === 'object' ? event.event.type : undefined].filter(Boolean);
@@ -82,14 +109,14 @@ function rawMatches(event: Record<string, any>, types: string[], conversationId:
 export async function startControlServer(application: PlatformApplication, options: ControlServerOptions) {
   let expected = hash(options.token);
   const router = new ApplicationRouter(application);
-  const recent: BufferedEvent[] = [];
-  /** 每个事件流按自己的模式和过滤条件挑选要写出的帧，不需要时返回 undefined。 */
-  const streams = new Map<ServerResponse, (entry: BufferedEvent) => Buffer | undefined>();
+  const buffers = { stable: new ReplayBuffer(), raw: new ReplayBuffer() };
+  /** 每个事件流按自己的模式和过滤条件挑选要写出的事件。 */
+  const streams = new Map<ServerResponse, { raw: boolean; types: string[]; conversationId: string | null }>();
   const projector = new ControlEventProjector();
   const epoch = randomUUID();
   let sequence = 0;
-  let bufferedBytes = 0;
-  let lastStreamAt = 0;
+  /** 各模式最后一个订阅方断开的时间；续传窗口内继续缓存该模式的事件。 */
+  const lastStreamAt = { stable: 0, raw: 0 };
   let closing = false;
 
   const streamEvents = ({ request, response, url }: RouteContext) => {
@@ -97,30 +124,23 @@ export async function startControlServer(application: PlatformApplication, optio
       'Content-Type': 'text/event-stream', 'Cache-Control': 'no-store', Connection: 'keep-alive', 'X-Accel-Buffering': 'no', ...corsHeaders,
     });
     response.write(': connected\n\n');
-    const raw = url.searchParams.get('raw') === '1';
-    const types = url.searchParams.get('types')?.split(',').map(value => value.trim()).filter(Boolean) ?? [];
-    const conversationId = url.searchParams.get('conversationId');
-    const select = (entry: BufferedEvent): Buffer | undefined => {
-      if (raw) return rawMatches(entry.raw, types, conversationId) ? entry.rawFrame : undefined;
-      const event = entry.projected;
-      if (!event || (types.length && !types.includes(event.type)) || (conversationId && event.conversationId !== conversationId)) return undefined;
-      return entry.projectedFrame ??= sseFrame(entry.id, event);
-    };
+    const stream = { raw: url.searchParams.get('raw') === '1',
+      types: url.searchParams.get('types')?.split(',').map(value => value.trim()).filter(Boolean) ?? [],
+      conversationId: url.searchParams.get('conversationId') };
     const cursor = String(request.headers['last-event-id'] ?? url.searchParams.get('after') ?? '');
     if (cursor) {
-      const index = recent.findIndex(entry => entry.id === cursor);
-      if (index < 0) response.write('event: reset\ndata: {}\n\n');
-      else for (const entry of recent.slice(index + 1)) {
-        const frame = select(entry);
-        if (frame) response.write(frame);
-      }
+      const [cursorEpoch, cursorSequence] = cursor.split(':');
+      const missed = cursorEpoch === epoch && /^\d+$/.test(cursorSequence)
+        ? buffers[stream.raw ? 'raw' : 'stable'].after(Number(cursorSequence)) : undefined;
+      if (!missed) response.write('event: reset\ndata: {}\n\n');
+      else for (const entry of missed) if (entry.matches(stream.types, stream.conversationId)) response.write(entry.frame);
     }
-    streams.set(response, select);
+    streams.set(response, stream);
     const heartbeat = setInterval(() => {
       if (!response.destroyed && !response.writableEnded) response.write(': heartbeat\n\n');
     }, 20_000);
     heartbeat.unref();
-    response.once('close', () => { clearInterval(heartbeat); streams.delete(response); lastStreamAt = Date.now(); });
+    response.once('close', () => { clearInterval(heartbeat); streams.delete(response); lastStreamAt[stream.raw ? 'raw' : 'stable'] = Date.now(); });
   };
 
   const routes = controlRoutes(application, { router, streamEvents }).map(compile);
@@ -166,22 +186,27 @@ export async function startControlServer(application: PlatformApplication, optio
   const unsubscribe = application.subscribe(event => {
     // 任务与会话的对应关系一直维护，订阅方晚连接时事件也能带上会话 ID。
     const projected = projector.project(event);
-    if (!streams.size && Date.now() - lastStreamAt > resumeWindowMs) {
-      if (recent.length) { recent.length = 0; bufferedBytes = 0; }
-      return;
-    }
     const id = `${epoch}:${++sequence}`;
-    const entry: BufferedEvent = { id, raw: event, rawFrame: sseFrame(id, event), projected };
-    bufferedBytes += entry.rawFrame.length;
-    recent.push(entry);
-    while (recent.length > replayLimit || bufferedBytes > replayBytesLimit) bufferedBytes -= recent.shift()!.rawFrame.length;
-    for (const [stream, select] of streams) {
-      if (stream.destroyed || stream.writableEnded) continue;
-      const frame = select(entry);
-      if (!frame) continue;
+    const now = Date.now();
+    // 某个模式既没有订阅方也过了续传窗口时不再缓存，也不为它序列化事件；序号照常递增。
+    const wanted = (raw: boolean) => [...streams.values()].some(stream => stream.raw === raw) || now - lastStreamAt[raw ? 'raw' : 'stable'] <= resumeWindowMs;
+    const entries = {
+      raw: wanted(true) ? { sequence, frame: sseFrame(id, event), matches: (types: string[], conversationId: string | null) => rawMatches(event, types, conversationId) } : undefined,
+      stable: projected && wanted(false) ? { sequence, frame: sseFrame(id, projected), matches: (types: string[], conversationId: string | null) =>
+        (!types.length || types.includes(projected.type)) && (!conversationId || projected.conversationId === conversationId) } : undefined,
+    };
+    for (const mode of ['raw', 'stable'] as const) {
+      const entry = entries[mode];
+      if (entry) buffers[mode].push(entry);
+      else if (mode === 'raw' || projected) buffers[mode].clear(sequence);
+    }
+    for (const [response, stream] of streams) {
+      if (response.destroyed || response.writableEnded) continue;
+      const entry = entries[stream.raw ? 'raw' : 'stable'];
+      if (!entry?.matches(stream.types, stream.conversationId)) continue;
       // 慢客户端不能无限堆积事件；直接断开，由 Last-Event-ID 从补发缓冲恢复。
-      if (stream.writableLength > slowClientBytes) { stream.destroy(); continue; }
-      stream.write(frame);
+      if (response.writableLength > slowClientBytes) { response.destroy(); continue; }
+      response.write(entry.frame);
     }
   });
   try {
