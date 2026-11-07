@@ -1,3 +1,4 @@
+import { promises } from 'node:fs';
 import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { DesktopStorageLocation } from '../../../apps/desktop/src/storageLocation';
@@ -51,6 +52,23 @@ test('位于独立目录联接下的新目录仍可正常迁移并保留原数�
   await expect(restarted.startup()).resolves.toBe(target);
   expect(await readFile(path.join(target, 'history.json'), 'utf8')).toBe('原数据');
   expect(await readFile(path.join(source, 'history.json'), 'utf8')).toBe('原数据');
+});
+
+(process.platform === 'win32' ? test : test.skip)('副本目录被其他进程短暂占用时，等占用解除后完成迁移', async () => {
+  const target = path.join(directory, 'destination');
+  const location = new DesktopStorageLocation(userData, source);
+  await expect(location.schedule(target)).resolves.toMatchObject({ success: true });
+  const rename = promises.rename.bind(promises);
+  let busy = 2;
+  const spy = jest.spyOn(promises, 'rename').mockImplementation(async (from, to) => {
+    if (path.basename(String(from)).startsWith('.graycode-move-') && busy-- > 0)
+      throw Object.assign(new Error('EPERM: operation not permitted, rename'), { code: 'EPERM' });
+    return rename(from, to);
+  });
+
+  await expect(new DesktopStorageLocation(userData, source).startup()).resolves.toBe(target);
+  expect(spy.mock.calls.filter(([from]) => path.basename(String(from)).startsWith('.graycode-move-'))).toHaveLength(3);
+  expect(await readFile(path.join(target, 'history.json'), 'utf8')).toBe('原数据');
 });
 
 test('重启处理已有迁移记录时，先拒绝实际嵌套路径再清理暂存目录', async () => {

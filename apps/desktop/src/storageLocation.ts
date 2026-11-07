@@ -2,6 +2,19 @@ import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { promises as fs, constants } from 'node:fs';
 import { captureDirectory } from '../../server/src/migration/directoryCapture';
+/**
+ * 刚复制或读取过的文件可能仍被杀毒软件、搜索索引短暂打开，Windows 上此时整目录改名会报 EPERM、EACCES 或 EBUSY；
+ * 只对这类错误退避重试，累计约 13 秒，其他错误和其他平台照常抛出。
+ */
+async function renameDirectory(from: string, to: string) {
+  for (let delay = 100; ; delay *= 2) {
+    try { return await fs.rename(from, to); }
+    catch (error) {
+      if (process.platform !== 'win32' || delay > 6400 || !['EPERM', 'EACCES', 'EBUSY'].includes((error as NodeJS.ErrnoException).code ?? '')) throw error;
+      await new Promise(resolve => setTimeout(resolve, delay));
+    }
+  }
+}
 interface LocationState { version: 1; currentPath: string; previousPaths?: Record<string, string>; preservedDirectories?: string[]; pendingMigration?: { sourcePath: string; targetPath: string; stagingPath: string; backupPath?: string; createdAt: number }; }
 /** 迁移安排在下一次启动、数据库打开之前执行；旧目录始终保留。 */
 export class DesktopStorageLocation {
@@ -89,12 +102,12 @@ export class DesktopStorageLocation {
           this.overlaps(backupPath, targetPath) || this.overlaps(targetPath, backupPath))
           throw new Error('目标目录已有不同内容，未覆盖；原数据和待迁移副本均保留。');
         if (await fs.lstat(backup).catch(error => { if (error.code !== 'ENOENT') throw error; return null; })) throw new Error('旧目录保留路径已被占用。');
-        await fs.rename(pending.targetPath, backup);
-        await fs.rename(pending.stagingPath, pending.targetPath);
+        await renameDirectory(pending.targetPath, backup);
+        await renameDirectory(pending.stagingPath, pending.targetPath);
       }
     } else {
       await fs.rmdir(pending.targetPath).catch(error => { if (error.code !== 'ENOENT') throw error; });
-      await fs.rename(pending.stagingPath, pending.targetPath);
+      await renameDirectory(pending.stagingPath, pending.targetPath);
     }
     const previousPaths = { ...this.state.previousPaths, [pending.sourcePath]: captured.fingerprint }; delete previousPaths[pending.targetPath];
     await this.save({ version: 1, currentPath: pending.targetPath, previousPaths,
