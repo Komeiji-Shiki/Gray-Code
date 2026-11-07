@@ -5,6 +5,37 @@ import { clearAllSmoothForState, resetTurnBaseTokenEstimate } from './streamChun
 import { loadCheckpoints, loadHistory } from './conversationActions';
 import { loadBranchGraph } from './branchActions';
 
+/**
+ * 远端视图过期记录：流式事件出现缺口或重新登录后先标记过期，当前或切回的对话再重建。
+ * 同一对话同时只进行一次重建，成功后才清除标记，失败时下次切回会再试。
+ */
+export function createRemoteViewResync(state: ChatStoreState) {
+  const stale = new Set<string>();
+  const refreshes = new Map<string, Promise<void>>();
+  function restore(conversationId: string): Promise<void> {
+    const existing = refreshes.get(conversationId);
+    if (existing) return existing;
+    const operation = synchronizeRemoteConversation(state, conversationId).then(restored => {
+      if (restored) stale.delete(conversationId);
+    }).catch(error => {
+      if (state.currentConversationId.value === conversationId) state.error.value = { code: 'RESYNC_ERROR', message: (error as Error).message };
+    }).finally(() => { if (refreshes.get(conversationId) === operation) refreshes.delete(conversationId); });
+    refreshes.set(conversationId, operation);
+    return operation;
+  }
+  return {
+    restore,
+    isStale: (conversationId: string) => stale.has(conversationId),
+    markStale: (conversationId: string) => { stale.add(conversationId); },
+    forget: (conversationId: string) => { stale.delete(conversationId); },
+    request(conversationId: string) {
+      stale.add(conversationId);
+      void restore(conversationId);
+    },
+  };
+}
+export type RemoteViewResync = ReturnType<typeof createRemoteViewResync>;
+
 /** 只重建客户端的显示状态，输入草稿与核心任务保持不变。 */
 export async function synchronizeRemoteConversation(state: ChatStoreState, conversationId: string): Promise<boolean> {
   if (state.currentConversationId.value !== conversationId) return false;
