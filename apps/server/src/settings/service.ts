@@ -313,8 +313,9 @@ export class SettingsService<T = never> {
       throw new Error('未绑定用户的默认权限必须选择非主人账号。');
     for (const workspace of settings.workspaces) {
       if (workspace.managedConversationId !== undefined && !identifier.test(workspace.managedConversationId)) throw new Error('自动工作区的对话标识无效。');
+      // 已保存的工作区在保存时校验并规范化过；目录事后被删除或移走时，不能让它拦下其他设置的保存。
       const previous = this.current?.settings.workspaces.find(item => item.id === workspace.id);
-      if (workspace.managedConversationId && previous?.managedConversationId === workspace.managedConversationId
+      if (previous && previous.managedConversationId === workspace.managedConversationId
         && previous.directory === workspace.directory && previous.deviceId === workspace.deviceId && previous.name === workspace.name
         && JSON.stringify(previous.roots) === JSON.stringify(workspace.roots)) continue;
       if (
