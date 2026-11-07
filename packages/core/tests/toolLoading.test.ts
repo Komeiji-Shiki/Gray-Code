@@ -1,7 +1,7 @@
 import { createServer } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import type { ModelInput, PlatformMessage, RunRecord, ToolDeclaration } from '@graycode/contracts';
-import { RuntimeToolRegistry, TOOL_SEARCH_NAME, type RuntimeTool } from '@graycode/core';
+import { RuntimeToolRegistry, TOOL_SEARCH_NAME, type RuntimeTool, type ToolCatalog } from '@graycode/core';
 import { PlatformApplication } from '../../../apps/server/src/application';
 import { measureContextInput } from '../../../apps/server/src/context/breakdown';
 import { defaultToolLoading, resolveToolLoading, searchDeferredTools } from '../../../apps/server/src/settings/toolLoading';
@@ -40,6 +40,19 @@ describe('目录捕获', () => {
     const second = tools.catalog(['read_file', 'office_create', 'mcp__a__search'], undefined, new Set(['office_create', 'mcp__a__search']));
     const pick = (declarations: ToolDeclaration[]) => JSON.stringify(declarations.find(item => item.name === 'office_create'));
     expect(pick(second.declarations)).toBe(pick(first.declarations));
+  });
+
+  test('占位说明跟随宿主的声明语言，切换语言后不复用旧语言的目录', () => {
+    let language: 'zh-CN' | 'en' = 'zh-CN';
+    const tools = new RuntimeToolRegistry(undefined, () => language);
+    for (const name of ['read_file', 'office_create']) tools.register(tool(name));
+    const stub = (catalog: ToolCatalog) => catalog.declarations.find(item => item.name === 'office_create')!.description;
+    const chinese = tools.catalog(['read_file', 'office_create'], undefined, new Set(['office_create']));
+    expect(stub(chinese)).toBe(`按需工具，先调用 ${TOOL_SEARCH_NAME} 加载参数定义。`);
+    language = 'en';
+    const english = tools.catalog(['read_file', 'office_create'], undefined, new Set(['office_create']));
+    expect(stub(english)).toBe(`On-demand tool. Call ${TOOL_SEARCH_NAME} first to get its parameters.`);
+    expect(english.version).not.toBe(chinese.version);
   });
 
   test('加载方式变化时目录版本变化，相同配置复用同一份声明对象', () => {

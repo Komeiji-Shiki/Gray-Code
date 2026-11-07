@@ -2,6 +2,8 @@ import { TOOL_SEARCH_NAME, type RuntimeTool, type ToolContext, type ToolLoadingH
 import type { ToolDeclaration } from '@graycode/contracts';
 import type { ToolLoadingMode } from '../../../../backend/modules/settings/types';
 import type { SettingsManager } from '../../../../backend/modules/settings/SettingsManager';
+import { getActualLanguage } from '../../../../backend/i18n';
+import { resolveLocalizationLanguage } from '../../../../backend/tools/localization/types';
 
 /** 低频且定义较大的内置工具。文档类工具已由模式决定是否发送，核心读写和命令工具每轮都可能用到，都保持常驻。 */
 const DEFERRED_BY_DEFAULT: ReadonlySet<string> = new Set([
@@ -62,19 +64,34 @@ export function searchDeferredTools(deferred: ReadonlyMap<string, ToolDeclaratio
   return { tools: names.flatMap(name => available.get(name) ?? []).map(definitionOf), ...(unavailable.length ? { unavailable } : {}) };
 }
 
+const toolSearchText = {
+  'zh-CN': {
+    description: '加载按需工具的完整定义。标为按需的工具在加载前只有名称：先调用本工具，再按工具原名、用这里返回的参数调用它。'
+      + '定义在本对话中持续有效；之前的结果已被总结掉时重新加载。',
+    query: '精确加载用 "select:名称1,名称2"，否则按关键词匹配工具名称和说明。',
+    maxResults: '关键词搜索最多返回的条数，默认 5。',
+  },
+  en: {
+    description: 'Load the full definition of on-demand tools. Tools marked on-demand list only their name until loaded: '
+      + 'call this first, then call the tool by its own name with the parameters returned here. '
+      + 'Definitions stay valid for the rest of the conversation; load again if an earlier result was summarized away.',
+    query: '"select:name1,name2" for exact names, otherwise keywords matched against names and descriptions.',
+    maxResults: 'Keyword search result limit. Defaults to 5.',
+  },
+};
+
 /** 定义作为工具结果追加进消息，请求的 tools 数组不变，加载工具不会打断前缀缓存。 */
 export function toolSearchTool(): RuntimeTool {
+  const text = toolSearchText[resolveLocalizationLanguage(getActualLanguage())];
   return {
     declaration: {
       name: TOOL_SEARCH_NAME,
-      description: 'Load the full definition of on-demand tools. Tools marked on-demand list only their name until loaded: '
-        + 'call this first, then call the tool by its own name with the parameters returned here. '
-        + 'Definitions stay valid for the rest of the conversation; load again if an earlier result was summarized away.',
+      description: text.description,
       parameters: {
         type: 'object',
         properties: {
-          query: { type: 'string', description: '"select:name1,name2" for exact names, otherwise keywords matched against names and descriptions.' },
-          max_results: { type: 'integer', minimum: 1, maximum: 20, description: 'Keyword search result limit. Defaults to 5.' },
+          query: { type: 'string', description: text.query },
+          max_results: { type: 'integer', minimum: 1, maximum: 20, description: text.maxResults },
         },
         required: ['query'],
         additionalProperties: false,

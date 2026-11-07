@@ -107,7 +107,8 @@ import { subagentTools } from './subagents/tools';
 import { TeamService } from './teams/service';
 import { teamTools } from './teams/tools';
 import { upgradeImportedMemoryGraphs } from './memory/imports/upgrades';
-import { setDetectedLanguage } from '../../../backend/i18n';
+import { getActualLanguage, setDetectedLanguage } from '../../../backend/i18n';
+import { resolveLocalizationLanguage } from '../../../backend/tools/localization/types';
 
 export interface ApplicationOptions {
   dataDirectory: string;
@@ -156,7 +157,7 @@ export class PlatformApplication {
   readonly tokenizers: TokenizerResourceManager;
   readonly tools = new RuntimeToolRegistry(tool => ({ ...tool,
     execute: (args, context) => withDependencyRuntime(this.dependencies, () => tool.execute(args, context)),
-  }));
+  }), () => resolveLocalizationLanguage(getActualLanguage()));
   readonly notifications = new PlatformNotifications();
   readonly companion = new CompanionService(this);
   readonly clawd: ClawdService;
@@ -526,7 +527,7 @@ export class PlatformApplication {
   }
   refreshLocalizedTools(): void {
     // 这些声明只随语言变化，不因保存其他设置反复重建；运行中的目录仍使用原捕获版本。
-    for (const tool of [...readTools(this), ...languageTools(this), ...officeTools(this), this.skills.tool()]) {
+    for (const tool of [...readTools(this), ...languageTools(this), ...officeTools(this), this.skills.tool(), toolSearchTool()]) {
       this.tools.replaceNamespace(tool.declaration.name, [tool]);
     }
   }

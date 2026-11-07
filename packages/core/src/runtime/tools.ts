@@ -82,12 +82,20 @@ export interface ToolLoadingHints {
 
 export const TOOL_SEARCH_NAME = 'tool_search';
 
+/** 工具说明写给模型的语言，与宿主其他工具声明一致：中文界面用中文，其余语言用英文。 */
+export type ToolDeclarationLanguage = 'zh-CN' | 'en';
+
+const deferredToolDescriptions: Record<ToolDeclarationLanguage, string> = {
+  'zh-CN': `按需工具，先调用 ${TOOL_SEARCH_NAME} 加载参数定义。`,
+  en: `On-demand tool. Call ${TOOL_SEARCH_NAME} first to get its parameters.`,
+};
+
 /**
- * 按需工具在请求里的固定声明，内容只取决于名称。模型加载工具时定义作为工具结果追加进消息，
+ * 按需工具在请求里的固定声明，内容只取决于名称和声明语言。模型加载工具时定义作为工具结果追加进消息，
  * tools 数组逐字节不变，前缀缓存不受影响。参数表保持宽松，真实校验在执行入口完成。
  */
-function deferredToolDeclaration(name: string): ToolDeclaration {
-  return canonical({ name, description: `On-demand tool. Call ${TOOL_SEARCH_NAME} first to get its parameters.`,
+function deferredToolDeclaration(name: string, language: ToolDeclarationLanguage): ToolDeclaration {
+  return canonical({ name, description: deferredToolDescriptions[language],
     parameters: { type: 'object', properties: {}, additionalProperties: true } }) as ToolDeclaration;
 }
 
@@ -134,8 +142,9 @@ export class RuntimeToolRegistry {
   private readonly catalogs = new Map<string, Pick<ToolCatalog, 'declarations' | 'version' | 'deferred'>>();
   private nextDefinitionId = 0;
 
-  /** 宿主可为实际执行提供上下文，声明和效果分类保持纯函数。 */
-  constructor(private readonly decorate?: (tool: RuntimeTool) => RuntimeTool) {}
+  /** 宿主可为实际执行提供上下文，声明和效果分类保持纯函数；按需占位按宿主当前的声明语言生成。 */
+  constructor(private readonly decorate?: (tool: RuntimeTool) => RuntimeTool,
+    private readonly declarationLanguage: () => ToolDeclarationLanguage = () => 'en') {}
   diagnostics() { return { registeredTools: this.tools.size, compiledToolSchemas: this.validators.size }; }
 
   register(tool: RuntimeTool): void {
@@ -188,14 +197,15 @@ export class RuntimeToolRegistry {
     const isLocked = (definition: ToolDefinitionSnapshot) => locked?.has(definition.declaration.name) === true;
     const lockedEntries = definitions.filter(isLocked).map(definition => [definition.declaration.name, locked!.get(definition.declaration.name)!] as const);
     const lockedTools = lockedEntries.length ? { locked: new Map(lockedEntries) } : {};
-    const key = definitions.map(definition => `${definition.id}${isDeferred(definition) ? 'd' : ''}${isLocked(definition) ? 'l' : ''}`).join(',');
+    const language = definitions.some(isDeferred) ? this.declarationLanguage() : undefined;
+    const key = `${language ?? ''}:${definitions.map(definition => `${definition.id}${isDeferred(definition) ? 'd' : ''}${isLocked(definition) ? 'l' : ''}`).join(',')}`;
     const previous = this.catalogs.get(key);
     if (previous) {
       this.catalogs.delete(key); this.catalogs.set(key, previous);
       return { ...previous, entries, ...lockedTools };
     }
     const declarations = definitions.map(definition => isDeferred(definition)
-      ? deferredToolDeclaration(definition.declaration.name) : definition.declaration);
+      ? deferredToolDeclaration(definition.declaration.name, language!) : definition.declaration);
     const deferredDeclarations = definitions.filter(definition => isDeferred(definition) && !isLocked(definition))
       .map(definition => definition.declaration);
     const validationSchemas = Object.fromEntries(definitions.filter(definition => definition.separateValidation)
