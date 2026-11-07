@@ -111,6 +111,10 @@ describe('完整前缀总结与持久笔记换窗口', () => {
     expect(seen[0].messages.at(-1)?.contextControl).toBe('reminder');
     expect(seen[1].messages).toHaveLength(3);
     expect(seen[1].messages[0].id).toBe('first'); expect(seen[1].messages[1].id).toBe('latest'); expect(seen[1].messages[2].contextMethod).toBe('notes');
+    // 运行中途换窗要求续做；最新要求已保留在新窗口里，不再让模型按 ID 回查。
+    const boundary = seen[1].messages[2].parts[0].text!;
+    expect(boundary).toContain('Available note names: checkpoint'); expect(boundary).toContain('Continue the unfinished work');
+    expect(boundary).not.toContain('latest real user message');
     expect(JSON.stringify(seen[1].messages)).toContain('checkpoint'); expect(JSON.stringify(seen[1].messages)).toContain('latest');
     expect(JSON.stringify(seen[1].messages)).not.toContain('必须可恢复的原始证据');
     expect(JSON.stringify(seen[2].messages)).toContain('必须可恢复的原始证据');
@@ -153,7 +157,11 @@ describe('完整前缀总结与持久笔记换窗口', () => {
     await draft.configs.updateConfig(providerId, { contextManagementEnabled: false, autoSummarizeMethod: 'notes' }); await app.product.save(draft);
     expect((await app.context.summarizeManually('owner', 'compaction', providerId)).success).toBe(true);
     expect(seen).toHaveLength(0);
-    expect((await app.storage.readFullHistory('compaction')).messages.at(-1)).toMatchObject({ contextMethod: 'notes', contextSwitchReason: 'manual', isAutoSummary: false });
+    const boundary = (await app.storage.readFullHistory('compaction')).messages.at(-1)!;
+    expect(boundary).toMatchObject({ contextMethod: 'notes', contextSwitchReason: 'manual', isAutoSummary: false });
+    // 两轮之间换窗且没有笔记：下一条消息才是请求，不要求读笔记、回查旧要求或续做。
+    expect(boundary.parts[0].text).toContain('Respond to the next message');
+    expect(boundary.parts[0].text).not.toMatch(/context_notes|latest real user message|Continue the unfinished work/);
   });
 
   test('渠道方式独立保存，导入导出、类型切换和重启保留，非法方式不能提交', async () => {
@@ -191,7 +199,8 @@ describe('完整前缀总结与持久笔记换窗口', () => {
       const history = (await app.storage.readFullHistory('compaction')).messages;
       const users = history.filter(message => message.role === 'user' && !message.isSummary && !message.isSummarized);
       expect(users.map(message => message.id)).toEqual(userMessageRetention === 'all' ? ['first', 'middle', 'latest'] : ['first', 'latest']);
-      expect(JSON.stringify(history.at(-1)?.parts)).toContain('latest real user message has ID latest');
+      // 最新要求原文保留在新窗口里，说明不再让模型按 ID 回查。
+      expect(JSON.stringify(history.at(-1)?.parts)).not.toContain('latest real user message');
       expect(history.at(-1)?.retainedUserMessageIds).toEqual(users.map(message => message.id));
     }
     const updated = await app.product.draft(); await updated.settings.updateSummarizeConfig({ userMessageRetention: 'all' }); await app.product.save(updated);
@@ -297,6 +306,7 @@ describe('完整前缀总结与持久笔记换窗口', () => {
     app = await PlatformApplication.open({ dataDirectory: f.data, models: { generate: async () => { throw new Error('此处不能调用模型'); } } });
     const history = (await app.storage.readFullHistory('compaction')).messages;
     expect(history.at(-1)?.contextMethod).toBe('notes'); expect(history.find(message => message.id === 'evidence')?.parts[0].text).toContain('必须可恢复');
+    expect(history.at(-1)?.parts[0].text).toContain('Available note names: checkpoint');
     expect(await app.storage.getRecord('context-notes', JSON.stringify(['compaction', 'checkpoint']))).toMatchObject({ text: '保留精确证据：evidence' });
   });
 });

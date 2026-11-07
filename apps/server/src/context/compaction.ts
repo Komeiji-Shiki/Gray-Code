@@ -107,8 +107,9 @@ export function activeContextHistory(messages: PlatformMessage[], config: Channe
     ...(pendingAsyncCallIds ? { pendingAsyncCallIds } : {}) }) as PlatformMessage[];
 }
 
-/** 摘要和窗口切换共用可恢复边界，重复切换也只覆盖本次仍活跃的消息。 */
-export async function applyContextBoundary(frame: CapturedContext, text: string, method: ContextManagementMethod, automatic: boolean,
+/** 摘要和窗口切换共用可恢复边界，重复切换也只覆盖本次仍活跃的消息；说明可以按保留下来的用户消息生成。 */
+export async function applyContextBoundary(frame: CapturedContext, text: string | ((retained: ReadonlySet<string>) => string),
+  method: ContextManagementMethod, automatic: boolean,
   channelType: string, policy?: ContextUserMessageRetention,
   reason: Content['contextSwitchReason'] = automatic ? 'threshold' : 'manual', options: ContextBoundaryOptions = {}): Promise<ContextBoundaryResult> {
   const full = frame.state.history.messages as Content[];
@@ -119,6 +120,7 @@ export async function applyContextBoundary(frame: CapturedContext, text: string,
   const covered = full.filter(message => !retained.has(message.id!) && !message.isSummarized
     && (!options.consumedMessageIds || options.consumedMessageIds.has(message.id!)));
   if (!covered.length) throw new Error('当前没有可替换的历史内容。');
+  const content = typeof text === 'string' ? text : text(retained);
   const ids = new Set(covered.map(message => message.id!));
   const algorithms = new SummaryAlgorithms({ estimateMessageTokens: message => estimateTokens(message as PlatformMessage) });
   const positions = contextBoundaryPositions(frame.state.history.messages);
@@ -133,13 +135,13 @@ export async function applyContextBoundary(frame: CapturedContext, text: string,
   if (options.insertAtConsumedEnd && options.consumedMessageIds) {
     insertIndex = consumedEnd + 1;
   }
-  const summary: Content = { id: randomUUID(), role: 'user', parts: [{ text }], timestamp: Date.now(),
+  const summary: Content = { id: randomUUID(), role: 'user', parts: [{ text: content }], timestamp: Date.now(),
     parentId: full[insertIndex - 1]?.id ?? null, isSummary: true, isAutoSummary: automatic, contextMethod: method,
     contextWindowId: randomUUID(), contextSwitchReason: reason, summarizedMessageIds: [...ids],
     ...(policy ? { retainedUserMessageIds: [...retained] } : {}),
     summarizedMessageCount: covered.reduce((count, message) => count + (message.isSummary ? message.summarizedMessageCount ?? 0 : 1), 0),
     summaryTokenStats: algorithms.buildSummaryTokenStats({ fullHistory: full.filter(message => !message.isSummarized),
-      messagesToSummarize: covered, summaryText: text, channelType }), index: insertIndex };
+      messagesToSummarize: covered, summaryText: content, channelType }), index: insertIndex };
   (summary as PlatformMessage).contextBoundaryAfterMessageId = lastConsumedMessageId;
   if (method === 'notes') {
     (summary as PlatformMessage).longMemoryInputIds = [];
@@ -166,21 +168,34 @@ export async function applyContextBoundary(frame: CapturedContext, text: string,
   return { summaryContent: summary, insertIndex, removedCount: covered.length };
 }
 
+/**
+ * 笔记窗口的切换说明：只要求读取确实存在的笔记，最新要求不在新窗口里时才让模型回查。
+ * 两轮之间切换（定时或手动）时下一条消息才是新的请求，不要求续做未完成的工作。
+ */
+function notesWindowText(names: readonly string[], latestUserId: string | undefined, continuing: boolean): string {
+  return [`A new context window has started${continuing ? ' for the same task' : ''}. Earlier messages and tool results remain available through context_history.`,
+    ...names.length ? [`Read working notes with context_notes before continuing. Available note names: ${names.join(', ')}.`,
+      `Recorded notes and dependencies remain in history: use context_notes action=recall with the current intent or taskId; token usage is estimated automatically.`] : [],
+    ...continuing && latestUserId ? [`The latest real user message has ID ${latestUserId}. Read it and any relevant preceding history to recover the current request and constraints.`] : [],
+    continuing ? `This is a context transition, not a new user request or task completion. Continue the unfinished work.`
+      : `This is a context transition, not a user request. Respond to the next message; read earlier history only when it refers back to it.`].join('\n');
+}
+
 export async function notesWindowBoundary(app: PlatformApplication, frame: CapturedContext, automatic: boolean, channelType: string,
   policy = conversationContextSettings(app, frame.state.metadata).userMessageRetention,
   reason: Content['contextSwitchReason'] = automatic ? 'threshold' : 'manual', options: ContextBoundaryOptions = {}): Promise<ContextBoundaryResult> {
   const id = frame.state.metadata.id;
   const names = (await app.storage.listRecords('context-notes', id)).map(key => JSON.parse(key)[1] as string);
   const latestUser = [...frame.state.history.messages].reverse().find(isHistoricalUserInput);
-  const text = [`A new context window has started for the same task. Earlier messages and tool results remain available through context_history.`,
-    `Read working notes with context_notes before continuing. Available note names: ${names.length ? names.join(', ') : '(none yet; recover the current task from history)'}.`,
-    `Recorded notes and dependencies remain in history: use context_notes action=recall with the current intent or taskId; token usage is estimated automatically.`,
-    latestUser ? `The latest real user message has ID ${latestUser.id}. Read it and any relevant preceding history to recover the current request and constraints.` : '',
-    `This is a context transition, not a new user request or task completion. Continue the unfinished work.`].filter(Boolean).join('\n');
+  // 按预算或模型请求的切换发生在运行中途，任务还要继续；定时与手动切换只在没有运行时进行。
+  const continuing = reason === 'model_requested' || reason === 'input_budget_exceeded';
   const estimateTokens = options.estimateTokens ?? ((message: PlatformMessage) => new MessageTokenEstimator().estimateMessageTokens(message as Content));
+  // 保留预算按最长的说明扣除，实际写入的说明再按保留结果省去回查最新要求的一句。
+  const longest = notesWindowText(names, latestUser?.id, continuing);
   const retainedUserTokenBudget = options.retainedUserTokenBudget === undefined ? undefined
-    : Math.max(0, options.retainedUserTokenBudget - estimateTokens({ role: 'user', parts: [{ text }] }));
-  return applyContextBoundary(frame, text, 'notes', automatic, channelType, policy, reason, { ...options, retainedUserTokenBudget });
+    : Math.max(0, options.retainedUserTokenBudget - estimateTokens({ role: 'user', parts: [{ text: longest }] }));
+  return applyContextBoundary(frame, retained => notesWindowText(names, latestUser && !retained.has(latestUser.id!) ? latestUser.id : undefined, continuing),
+    'notes', automatic, channelType, policy, reason, { ...options, retainedUserTokenBudget });
 }
 
 /** 老会话优先读取保存的请求；没有前缀快照时按原回合的提示词模式和动态快照恢复。 */
