@@ -3,7 +3,7 @@ import { ApplicationIntegrationType, ChannelType, Client, Events, GatewayIntentB
 import { discordModal, discordPanel } from './discordComponents';
 import { BotDeliveryError } from './deliveryError';
 
-import { withoutReplyChain, type BotAttachment, type BotChannel, type BotGateway, type BotInbound, type BotInteraction, type BotReply, type BotReference } from './gateway';
+import { withoutAdjacentReply, withoutReplyChain, type BotAttachment, type BotChannel, type BotGateway, type BotInbound, type BotInteraction, type BotReply, type BotReference } from './gateway';
 export type DiscordInbound = BotInbound;
 export type DiscordGateway = BotGateway;
 
@@ -121,10 +121,10 @@ export class DiscordJsGateway implements DiscordGateway {
       }
       return result;
     };
-    // 回复的正是频道里紧挨着的上一条时，模型上下文的末尾已经是它，引用只会重复一遍。
+    // Discord 可以直接查询频道里的上一条，比网关自己记录的更准确。
     const previous = message.references?.some(ref => ref.kind === 'reply') ? await this.previousMessageId(message) : undefined;
-    const references = (message.references ?? []).filter(ref => ref.kind !== 'reply' || ref.id !== previous);
-    return { ...message, references: await expand(references, 0) };
+    const adjacent = withoutAdjacentReply(message, previous);
+    return { ...adjacent, references: await expand(adjacent.references ?? [], 0) };
   }
   /** 读取失败时返回 undefined，引用照常展开。 */
   private async previousMessageId(message: BotInbound): Promise<string | undefined> {

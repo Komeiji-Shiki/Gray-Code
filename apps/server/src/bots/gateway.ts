@@ -5,6 +5,8 @@ export interface BotInbound {
   id: string; authorId: string; channelId: string; content: string; mentioned: boolean; direct: boolean; network?: string;
   /** 平台消息编号与传输事件编号分开保存，回复不得引用 OneBot 12 的事件 ID。 */
   sourceMessageId?: string;
+  /** 收到这条消息时，同一会话里 Bot 最后见到的平台消息编号（收到的或自己发出的）；不知道时为空。 */
+  previousMessageId?: string;
   authorName?: string; repliedToBot?: boolean; guildId?: string;
   automated?: boolean;
   timestamp?: number;
@@ -22,18 +24,24 @@ export interface BotReference {
   timestamp?: number; attachments?: BotAttachment[]; references?: BotReference[]; unavailable?: string;
   segments?: BotMessageSegment[];
 }
-/**
- * 回复天然连成对话链，更早的祖先已在会话上下文里：只展开直接被回复的那条，它携带的转发内容仍照旧展开。
- * 消息段按下标指向 references，丢弃回复时要同步重排下标，否则后面的转发会指错位置。
- */
-export function withoutReplyChain<T extends BotReference>(parent: T): T {
-  const references = parent.references;
-  if (parent.kind !== 'reply' || !references?.some(reference => reference.kind === 'reply')) return parent;
+/** 消息段按下标指向 references，丢弃引用时要同步重排下标，否则后面的引用会指错位置。 */
+function withoutReferences<T extends Pick<BotInbound, 'references' | 'segments'>>(source: T, drop: (reference: BotReference) => boolean): T {
+  const references = source.references;
+  if (!references?.some(drop)) return source;
   const kept = new Map<number, number>();
-  references.forEach((reference, index) => { if (reference.kind === 'forward') kept.set(index, kept.size); });
-  return { ...parent, references: references.filter(reference => reference.kind === 'forward'),
-    ...(parent.segments ? { segments: parent.segments.flatMap(segment => segment.type !== 'reference' ? [segment]
+  references.forEach((reference, index) => { if (!drop(reference)) kept.set(index, kept.size); });
+  return { ...source, references: references.filter(reference => !drop(reference)),
+    ...(source.segments ? { segments: source.segments.flatMap(segment => segment.type !== 'reference' ? [segment]
       : kept.has(segment.index) ? [{ ...segment, index: kept.get(segment.index)! }] : []) } : {}) };
+}
+/** 回复天然连成对话链，更早的祖先已在会话上下文里：只展开直接被回复的那条，它携带的转发内容仍照旧展开。 */
+export function withoutReplyChain<T extends BotReference>(parent: T): T {
+  return parent.kind === 'reply' ? withoutReferences(parent, reference => reference.kind === 'reply') : parent;
+}
+/** 回复的正是会话里紧挨着的上一条时，模型上下文的末尾已经是它，引用只会重复一遍；转发是新带进来的内容，照常保留。 */
+export function withoutAdjacentReply<T extends BotInbound>(message: T, previousMessageId = message.previousMessageId): T {
+  return previousMessageId === undefined ? message
+    : withoutReferences(message, reference => reference.kind === 'reply' && reference.id === previousMessageId);
 }
 export interface BotButton{ id: string; label: string; style?: 'primary' | 'secondary' | 'danger'; disabled?: boolean }
 export interface BotSelectOption { label: string; value: string; description?: string; selected?: boolean }

@@ -6,6 +6,7 @@ import { PlatformApplication } from '../../../apps/server/src/application';
 import { createOneBotProtocol } from '../../../apps/server/src/bots/onebotProtocol';
 import { fixture } from './fixtures';
 import { OneBotGateway } from '../../../apps/server/src/bots/onebotGateway';
+import type { BotInbound } from '../../../apps/server/src/bots/gateway';
 import { oneBotContent } from '../../../apps/server/src/bots/onebotContent';
 import { botFinalReplies } from '../../../apps/server/src/bots/streaming';
 import { plainBotText } from '../../../apps/server/src/bots/text';
@@ -222,6 +223,52 @@ test('QQ 卡片、表情等消息段转成说明，相邻发送至少间隔一�
     expect(await replies).toEqual([{ id: '1' }, { id: '2' }, { id: '3' }]);
     expect(times[1] - times[0]).toBeGreaterThanOrEqual(1000); expect(times[2] - times[1]).toBeGreaterThanOrEqual(1000);
   } finally { jest.useRealTimers(); }
+});
+
+test('QQ 回复紧挨着的上一条时不展开引用，回复更早的消息或发送途中插进新消息时照常展开', async () => {
+  const gateway = new OneBotGateway('ws://127.0.0.1:1', createOneBotProtocol(configuration(11, 'ws://127.0.0.1:1')));
+  const received: BotInbound[] = [];
+  const originals: Record<string, Record<string, unknown>> = {
+    1: { sender: { user_id: 11, nickname: '甲' }, message: [{ type: 'text', data: { text: '第一条' } }] },
+    50: { sender: { user_id: 900, nickname: 'Gray' }, message: [{ type: 'text', data: { text: 'Bot 的回复' } }] },
+  };
+  const emit = (id: number, message: unknown[]) => (gateway as any).message({ post_type: 'message', message_type: 'group', self_id: 900,
+    user_id: 12, group_id: 30, message_id: id, message });
+  const reply = (id: number, text: string) => [{ type: 'reply', data: { id: String(id) } }, { type: 'text', data: { text } }];
+  let during: (() => void) | undefined;
+  (gateway as any).botId = '900'; (gateway as any).receive = (message: BotInbound) => received.push(message);
+  (gateway as any).call = async (action: { action: string; params: Record<string, any> }) => {
+    if (action.action === 'get_msg') return originals[action.params.message_id];
+    if (action.action === 'get_forward_msg') return { messages: [] };
+    during?.(); during = undefined;
+    return { message_id: 50 };
+  };
+
+  emit(1, [{ type: 'text', data: { text: '第一条' } }]);
+  expect(received[0].previousMessageId).toBeUndefined();
+  emit(2, [...reply(1, '接着说'), { type: 'forward', data: { id: 'f1' } }]);
+  const adjacent = await gateway.hydrate(received[1]);
+  expect(adjacent.references).toEqual([expect.objectContaining({ kind: 'forward', id: 'f1' })]);
+  expect(adjacent.segments).toEqual([{ type: 'text', text: '接着说' }, { type: 'reference', index: 0 }]);
+
+  await gateway.sendReply('group:30', { content: '好的' });
+  emit(3, reply(50, '回复 Bot'));
+  const toBot = await gateway.hydrate(received[2]);
+  expect(toBot.previousMessageId).toBe('50'); expect(toBot.references).toEqual([]); expect(toBot.repliedToBot).toBe(true);
+
+  emit(4, reply(1, '回到第一条'));
+  expect((await gateway.hydrate(received[3])).references?.[0]).toMatchObject({ id: '1', content: '第一条' });
+
+  // 回执返回前收到的消息可能在 Bot 回复之前，也可能在之后，这时不记录上一条。
+  during = () => emit(5, [{ type: 'text', data: { text: '同时发的' } }]);
+  jest.useFakeTimers();
+  try {
+    const sending = gateway.sendReply('group:30', { content: '第二条回复' });
+    await jest.advanceTimersByTimeAsync(1000); await sending;
+  } finally { jest.useRealTimers(); }
+  emit(6, reply(50, '还是回复 Bot'));
+  expect(received[5].previousMessageId).toBeUndefined();
+  expect((await gateway.hydrate(received[5])).references?.[0]).toMatchObject({ id: '50', content: 'Bot 的回复' });
 });
 
 test('OneBot 回复只含表情包标记时，经真实 WebSocket 只发出表情包图片', async () => {

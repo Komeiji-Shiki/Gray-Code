@@ -1,5 +1,5 @@
 import type { OneBotSettings } from '@graycode/contracts';
-import { withoutReplyChain, type BotInbound, type BotAttachment, type BotReference, type BotMessageSegment, type BotMessageReceipt,
+import { withoutAdjacentReply, withoutReplyChain, type BotInbound, type BotAttachment, type BotReference, type BotMessageSegment, type BotMessageReceipt,
   type BotProcessingTarget, type BotReply } from './gateway';
 import { formatBotMention } from '../../../../shared/botMessagePresentation';
 import { oneBotContent } from './onebotContent';
@@ -220,6 +220,7 @@ async function hydrateOneBot(message: BotInbound, version: 11 | 12, call: (actio
     return result;
   };
   const references = await refs(message.references ?? [], 0);
-  return withMentionNames({ ...message, attachments: await Promise.all((message.attachments ?? []).map(attachment)), references,
-    repliedToBot: !!botUserId && references.some(reference => reference.kind === 'reply' && reference.authorId === botUserId) });
+  // 紧挨着的回复仍要读取原文：是否回复了 Bot 要看它的作者。
+  return withMentionNames(withoutAdjacentReply({ ...message, attachments: await Promise.all((message.attachments ?? []).map(attachment)), references,
+    repliedToBot: !!botUserId && references.some(reference => reference.kind === 'reply' && reference.authorId === botUserId) }));
 }
