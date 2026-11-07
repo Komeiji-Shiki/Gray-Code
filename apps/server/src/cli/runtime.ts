@@ -17,7 +17,8 @@ export async function runApplicationCommand(
     locale: Intl.DateTimeFormat().resolvedOptions().locale,
     ...(command === 'serve' ? {
       remoteAccess: (app: PlatformApplication) => new RemoteAccessService(app, { clientDirectory: values.web ? path.resolve(__dirname, '../../client/dist') : undefined }),
-      controlApi: (app: PlatformApplication) => new ControlApiService(app, { discoveryDirectory: controlDiscoveryDirectory() }),
+      controlApi: (app: PlatformApplication) => new ControlApiService(app, { discoveryDirectory: controlDiscoveryDirectory(),
+        mcpBridge: path.join(__dirname, 'controlMcp.cjs') }),
     } : {}),
     secretCodec: environmentSecretCodec(typeof values['key-env'] === 'string' ? values['key-env'] : undefined) });
   try {

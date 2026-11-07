@@ -1,10 +1,14 @@
+import { spawn } from 'node:child_process';
 import { mkdtemp, readFile, readdir, rm } from 'node:fs/promises';
+import { request as httpRequest } from 'node:http';
 import { createServer } from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
+import { createInterface } from 'node:readline';
 import type { PlatformApplication } from '../../../apps/server/src/application';
-import { startControlServer } from '../../../apps/server/src/control/server';
+import { startControlEndpoint } from '../../../apps/server/src/control/server';
 import { ControlApiService } from '../../../apps/server/src/control/service';
+import { ControlDiscoveryFile } from '../../../apps/server/src/control/discovery';
 import { PlatformStorageError } from '../../../packages/core/src/errors';
 import { SpeechProviderError } from '../../../apps/server/src/speech/service';
 
@@ -80,6 +84,20 @@ function createApp() {
   return { app: app as unknown as PlatformApplication & typeof app };
 }
 
+/** 服务测试要读写外部控制设置、取令牌并发布事件，在基础夹具上补齐这几项。 */
+function serviceApp(config: Record<string, any>) {
+  const { app } = createApp();
+  const listeners: ((event: Record<string, any>) => void)[] = [];
+  const state = { config, secret: token };
+  const read = app.settings.read;
+  Object.assign(app, {
+    settings: { read: (...keys: string[]) => keys[0] === 'controlApi' ? { controlApi: state.config } : read(...keys), credential: async () => state.secret },
+    subscribe: (listener: (event: Record<string, any>) => void) => { listeners.push(listener); return () => {}; },
+    publish: (event: Record<string, any>) => { for (const listener of [...listeners]) listener(event); },
+  });
+  return { app: app as typeof app & { publish(event: Record<string, any>): void }, state };
+}
+
 /** 测试只检查响应中的字段，统一按任意 JSON 读取。 */
 const body = (response: Response): Promise<any> => response.json();
 
@@ -89,8 +107,22 @@ async function request(port: number, path: string, init: RequestInit = {}) {
 
 async function withServer(test: (port: number, app: ReturnType<typeof createApp>['app']) => Promise<void>) {
   const { app } = createApp();
-  const server = await startControlServer(app, { port: 0, token, allowLan: false });
-  try { await test(server.port, app); } finally { await server.close(); }
+  const endpoint = await startControlEndpoint(app);
+  const server = await endpoint.network({ port: 0, token, allowLan: false });
+  try { await test(server.port, app); } finally { await endpoint.close(); }
+}
+
+/** fetch 不能改 Host，也连不到命名管道；这两类请求直接用 http 模块发出。 */
+function raw(target: { port: number } | { socketPath: string }, route: string, headers: Record<string, string> = {}) {
+  return new Promise<{ status: number; headers: Record<string, unknown>; value: any }>((resolve, reject) => {
+    const outgoing = httpRequest({ ...target, ...('port' in target ? { host: '127.0.0.1' } : {}), path: route, headers }, response => {
+      const chunks: Buffer[] = [];
+      response.on('data', chunk => chunks.push(chunk));
+      response.on('end', () => resolve({ status: response.statusCode!, headers: response.headers, value: JSON.parse(Buffer.concat(chunks).toString('utf8')) }));
+    });
+    outgoing.on('error', reject);
+    outgoing.end();
+  });
 }
 
 describe('external control API', () => {
@@ -108,6 +140,32 @@ describe('external control API', () => {
     expect(wrongMethod.status).toBe(405);
     expect(wrongMethod.headers.get('allow')).toBe('GET');
   }));
+
+  test('网络端口不再允许跨域读取，拒绝 DNS 重绑定带来的域名 Host', () => withServer(async port => {
+    const allowed = await request(port, '/v1/health', { headers });
+    expect(allowed.status).toBe(200); expect(allowed.headers.get('access-control-allow-origin')).toBeNull();
+    expect((await request(port, '/v1/health', { method: 'OPTIONS' })).status).toBe(401);
+    for (const host of [`localhost:${port}`, `127.0.0.1:${port}`, '[::1]', '192.168.1.20:8080'])
+      expect((await raw({ port }, '/v1/health', { ...headers, Host: host })).status).toBe(200);
+    const rebound = await raw({ port }, '/v1/health', { ...headers, Host: `attacker.example:${port}` });
+    expect(rebound.status).toBe(403); expect(rebound.value.error).toContain('Host');
+  }));
+
+  test('本机管道不需要令牌，接口说明给出 MCP 工具名，事件流与音频接口不暴露为工具', async () => {
+    const { app } = createApp();
+    const directory = await mkdtemp(path.join(os.tmpdir(), 'graycode-control-pipe-'));
+    const endpoint = await startControlEndpoint(app);
+    try {
+      const pipe = await new ControlDiscoveryFile(directory).pipe();
+      await endpoint.local(pipe);
+      expect((await raw({ socketPath: pipe }, '/v1/health')).value).toMatchObject({ status: 'ok' });
+      const catalog = (await raw({ socketPath: pipe }, '/v1')).value;
+      const tools = catalog.routes.filter((route: Record<string, unknown>) => route.tool).map((route: Record<string, unknown>) => route.tool);
+      expect(tools).toEqual(expect.arrayContaining(['get_status', 'send_message', 'get_run', 'resolve_approval', 'answer_question']));
+      expect(catalog.routes.find((route: Record<string, unknown>) => route.path === '/v1/events').tool).toBeUndefined();
+      expect(catalog.routes.find((route: Record<string, unknown>) => route.path === '/v1/speech').tool).toBeUndefined();
+    } finally { await endpoint.close(); await rm(directory, { recursive: true, force: true }); }
+  });
 
   test('exposes status choices and pages conversations with an opaque cursor', () => withServer(async (port, app) => {
     expect(await body(await request(port, '/v1/status', { headers }))).toMatchObject({ actorId: 'owner', activeRuns: 2,
@@ -240,59 +298,54 @@ describe('external control API', () => {
     expect(await body(upstream)).toMatchObject({ code: 'UPSTREAM_FAILED' });
   }));
 
-  test('service follows saved settings, rotates tokens in place and publishes a discovery file while listening', async () => {
-    const { app } = createApp();
+  test('本机管道随服务常开，发现文件只写管道与 MCP 命令；网络端口跟随设置启停并原地轮换令牌', async () => {
+    const { app, state } = serviceApp({ enabled: true, port: 0, credentialRef: 'control_api_token', allowLan: false });
     const directory = await mkdtemp(path.join(os.tmpdir(), 'graycode-control-discovery-'));
-    const listeners: ((event: Record<string, any>) => void)[] = [];
-    let config: Record<string, any> = { enabled: true, port: 0, credentialRef: 'control_api_token', allowLan: false };
-    let secret = token;
-    const read = app.settings.read;
-    Object.assign(app, {
-      settings: { read: (...keys: string[]) => keys[0] === 'controlApi' ? { controlApi: config } : read(...keys), credential: async () => secret },
-      subscribe: (listener: (event: Record<string, any>) => void) => { listeners.push(listener); return () => {}; },
-      publish: (event: Record<string, any>) => { for (const listener of [...listeners]) listener(event); },
-    });
     const settle = () => new Promise(resolve => setTimeout(resolve, 80));
-    const save = async (next: Record<string, any> = config) => {
-      config = next;
+    const save = async (next: Record<string, any> = state.config) => {
+      state.config = next;
       app.publish({ type: 'settings.changed' });
       await settle();
     };
     const discovery = async () => JSON.parse(await readFile(path.join(directory, `${process.pid}.json`), 'utf8'));
-    const service = new ControlApiService(app, { discoveryDirectory: directory });
+    const service = new ControlApiService(app, { discoveryDirectory: directory, mcpBridge: '/bridge/controlMcp.cjs' });
     try {
       await service.initialize();
       await settle();
-      const { port } = service.status();
+      const { port, local } = service.status();
       expect(service.status().state).toBe('listening');
       expect(service.keepsAlive).toBe(true);
-      expect(await discovery()).toMatchObject({ url: `http://127.0.0.1:${port}`, token, pid: process.pid, dataDirectory: '/data' });
+      const found = await discovery();
+      expect(found).toMatchObject({ pipe: local.pipe, http: { url: `http://127.0.0.1:${port}` }, pid: process.pid, dataDirectory: '/data',
+        mcp: { command: process.execPath, args: ['/bridge/controlMcp.cjs'] } });
+      expect(JSON.stringify(found)).not.toContain(token);
       const controller = new AbortController();
       const stream = await request(port!, '/v1/events', { headers: { Authorization: `Bearer ${token}` }, signal: controller.signal });
       const ended = stream.text();
 
-      secret = 'b'.repeat(64);
+      state.secret = 'b'.repeat(64);
       await save();
       await expect(ended).resolves.toContain(': connected');
       expect(service.status().port).toBe(port);
       expect((await request(port!, '/v1/health', { headers: { Authorization: `Bearer ${token}` } })).status).toBe(401);
-      expect((await request(port!, '/v1/health', { headers: { Authorization: `Bearer ${secret}` } })).status).toBe(200);
-      expect(await discovery()).toMatchObject({ token: secret });
+      expect((await request(port!, '/v1/health', { headers: { Authorization: `Bearer ${state.secret}` } })).status).toBe(200);
 
       const probe = createServer();
       const fixed = await new Promise<number>(resolve => probe.listen(0, '127.0.0.1', () => resolve((probe.address() as any).port)));
       await new Promise(resolve => probe.close(resolve));
-      await save({ ...config, port: fixed });
+      await save({ ...state.config, port: fixed });
       expect(service.status()).toMatchObject({ state: 'listening', port: fixed });
 
       service.stop();
       await settle();
       expect(service.status().state).toBe('stopped');
       expect(service.keepsAlive).toBe(false);
-      expect(await readdir(directory)).toEqual([]);
+      // 网络端口停了，本机管道照常可用，发现文件只剩管道。
+      expect(await discovery()).not.toHaveProperty('http');
+      expect((await raw({ socketPath: local.pipe! }, '/v1/health')).status).toBe(200);
       await save();
       expect(service.status().state).toBe('stopped');
-      await save({ ...config, port: 0 });
+      await save({ ...state.config, port: 0 });
       expect(service.status().state).toBe('listening');
       controller.abort();
     } finally {
@@ -303,6 +356,57 @@ describe('external control API', () => {
       expect(service.keepsAlive).toBe(false);
       expect(await readdir(directory)).toEqual([]);
       await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  test('MCP 桥经本机管道生成并调用工具，GrayCode 启动后通知客户端刷新工具列表', async () => {
+    const { app } = serviceApp({ enabled: false, port: 0 });
+    const home = await mkdtemp(path.join(os.tmpdir(), 'graycode-control-home-'));
+    // 用构建产物验证真实启动方式；发现目录跟随用户目录，换成临时目录即可隔离。
+    const bridge = spawn(process.execPath, [path.resolve('apps/server/dist/controlMcp.cjs')],
+      { env: { ...process.env, HOME: home, USERPROFILE: home }, stdio: ['pipe', 'pipe', 'inherit'] });
+    const inbox: Record<string, any>[] = [];
+    const waiters: (() => void)[] = [];
+    createInterface({ input: bridge.stdout! }).on('line', line => { inbox.push(JSON.parse(line)); waiters.splice(0).forEach(wake => wake()); });
+    const receive = async (match: (message: Record<string, any>) => boolean) => {
+      for (;;) {
+        const index = inbox.findIndex(match);
+        if (index >= 0) return inbox.splice(index, 1)[0];
+        await new Promise<void>(resolve => waiters.push(resolve));
+      }
+    };
+    let id = 0;
+    const rpc = (method: string, params: Record<string, unknown> = {}) => {
+      const current = ++id;
+      bridge.stdin!.write(`${JSON.stringify({ jsonrpc: '2.0', id: current, method, params })}\n`);
+      return receive(message => message.id === current);
+    };
+    const service = new ControlApiService(app, { discoveryDirectory: path.join(home, '.graycode', 'control-api'), mcpBridge: 'unused' });
+    try {
+      const initialized = await rpc('initialize', { protocolVersion: '2025-06-18', capabilities: {}, clientInfo: { name: 'jest', version: '1' } });
+      expect(initialized.result).toMatchObject({ protocolVersion: '2025-06-18', capabilities: { tools: { listChanged: true } }, serverInfo: { name: 'graycode' } });
+      bridge.stdin!.write(`${JSON.stringify({ jsonrpc: '2.0', method: 'notifications/initialized' })}\n`);
+      expect((await rpc('tools/list')).result.tools).toEqual([]);
+      expect((await rpc('tools/call', { name: 'get_status', arguments: {} })).error.message).toContain('get_status');
+
+      await service.initialize();
+      await receive(message => message.method === 'notifications/tools/list_changed');
+      const tools = (await rpc('tools/list')).result.tools;
+      expect(tools.find((tool: Record<string, any>) => tool.name === 'send_message').inputSchema).toMatchObject({ required: ['id'],
+        properties: { id: { type: 'string' }, text: { description: '消息正文' } } });
+      const status = await rpc('tools/call', { name: 'get_status', arguments: {} });
+      expect(JSON.parse(status.result.content[0].text)).toMatchObject({ providers: [{ id: 'provider', models: ['model-a', 'model-b'] }] });
+      const sent = await rpc('tools/call', { name: 'send_message', arguments: { id: 'conversation-1', text: '经 MCP 发送', wait: 5 } });
+      expect(sent.result.isError).toBeUndefined();
+      expect(app.starts[0]).toMatchObject({ conversationId: 'conversation-1', message: { parts: [{ text: '经 MCP 发送' }] } });
+      expect((await rpc('tools/call', { name: 'get_run', arguments: {} })).result).toMatchObject({ isError: true, content: [{ text: '缺少路径参数 id。' }] });
+      const missing = await rpc('tools/call', { name: 'get_conversation', arguments: { id: 'missing' } });
+      expect(missing.result.isError).toBe(true); expect(missing.result.content[0].text).toContain('会话不存在');
+    } finally {
+      bridge.stdin!.end();
+      await new Promise(resolve => bridge.once('exit', resolve));
+      await service.close();
+      await rm(home, { recursive: true, force: true });
     }
   });
 });

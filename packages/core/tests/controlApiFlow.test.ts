@@ -1,6 +1,6 @@
 import type { AgentDefinition, PlatformMessage } from '@graycode/contracts';
 import { PlatformApplication } from '../../../apps/server/src/application';
-import { startControlServer } from '../../../apps/server/src/control/server';
+import { startControlEndpoint, type ControlEndpoint, type ControlNetworkListener } from '../../../apps/server/src/control/server';
 import { fixture } from './fixtures';
 
 const token = 'c'.repeat(64);
@@ -12,7 +12,8 @@ const text = (value: string): PlatformMessage => ({ role: 'model', parts: [{ tex
 describe('外部控制接口驱动真实任务', () => {
   let f: Awaited<ReturnType<typeof fixture>>;
   let app: PlatformApplication;
-  let server: Awaited<ReturnType<typeof startControlServer>>;
+  let endpoint: ControlEndpoint;
+  let server: ControlNetworkListener;
   let agent: AgentDefinition;
   let script: PlatformMessage[];
   let executions: number;
@@ -38,9 +39,10 @@ describe('外部控制接口驱动真实任务', () => {
       toolNames: ['control_fixture', 'ask_user'], approvalMode: 'sensitive', maxIterations: 8 };
     snapshot.settings.agents.push(agent);
     await app.settings.save({ settings: snapshot.settings, expectedRevision: snapshot.revision });
-    server = await startControlServer(app, { port: 0, token, allowLan: false });
+    endpoint = await startControlEndpoint(app);
+    server = await endpoint.network({ port: 0, token, allowLan: false });
   });
-  afterEach(async () => { await server.close(); await app.close(); await f.cleanup(); });
+  afterEach(async () => { await endpoint.close(); await app.close(); await f.cleanup(); });
 
   test('等待超时时列出待审批项，代理批准后拿到最终回复，重复批准返回 404', async () => {
     script = [{ role: 'model', parts: [{ functionCall: { id: 'delete-call', name: 'control_fixture', args: { target: 'old.log' } } }] },

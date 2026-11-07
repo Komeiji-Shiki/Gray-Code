@@ -30,6 +30,8 @@ export interface RouteContext {
 export interface ControlRoute {
   method: 'GET' | 'POST';
   path: string;
+  /** MCP 桥把带名称的接口暴露成同名工具；说明、事件流和音频这类不适合模型直接调用的接口不设。 */
+  tool?: string;
   summary: string;
   query?: Record<string, string>;
   body?: Record<string, string>;
@@ -121,7 +123,8 @@ export function controlRoutes(application: PlatformApplication, options: {
       method: 'GET', path: '/v1', summary: '列出全部接口、参数与约定（本说明）。',
       handle: async () => [200, {
         name: 'GrayCode Control API', version: packageMetadata.version,
-        auth: '每个请求带 Authorization: Bearer <token> 或 X-GrayCode-Token: <token>。',
+        auth: '本机程序经发现文件里的 pipe（命名管道或 Unix socket）发送请求，不需要令牌；'
+          + '网络端口的每个请求带 Authorization: Bearer <token> 或 X-GrayCode-Token: <token>。',
         conventions: [
           '请求与响应都是 JSON；错误响应为 { error, code? }，按 HTTP 状态区分：400 参数错误，401 令牌错误，404 不存在，'
             + '409 会话已有任务在运行或数据已变化，502 上游服务失败。',
@@ -129,7 +132,7 @@ export function controlRoutes(application: PlatformApplication, options: {
             + '可以用 /v1/runs/:id/approvals/:approvalId 批准或拒绝、用 /v1/runs/:id/questions/:questionId 回答，GrayCode 界面也能处理。',
           '长任务建议 wait 传秒数（如 120），超时返回 202 与当前状态，再用 GET /v1/runs/:id?wait=120 继续等待。',
         ],
-        routes: routes.map(({ method, path, summary, query, body }) => ({ method, path, summary,
+        routes: routes.map(({ method, path, tool, summary, query, body }) => ({ method, path, ...(tool ? { tool } : {}), summary,
           ...(query ? { query } : {}), ...(body ? { body } : {}) })),
       }],
     },
@@ -138,7 +141,7 @@ export function controlRoutes(application: PlatformApplication, options: {
       handle: async () => [200, { name: 'GrayCode', version: packageMetadata.version, status: 'ok' }],
     },
     {
-      method: 'GET', path: '/v1/status', summary: '活动任务数，以及发送消息时可选的智能体、模型渠道与工作区。',
+      method: 'GET', path: '/v1/status', tool: 'get_status', summary: '活动任务数，以及发送消息时可选的智能体、模型渠道与工作区。',
       handle: async () => {
         const settings = application.settings.read('agents', 'providers', 'workspaces');
         return [200, {
@@ -152,7 +155,7 @@ export function controlRoutes(application: PlatformApplication, options: {
       },
     },
     {
-      method: 'GET', path: '/v1/conversations', summary: '按最近更新列出会话。',
+      method: 'GET', path: '/v1/conversations', tool: 'list_conversations', summary: '按最近更新列出会话。',
       query: { limit: '1-100，默认 50', query: '标题与内容关键字', workspaceUri: '只看该工作区', cursor: '上一页的 nextCursor' },
       handle: async ({ url }) => {
         const list = await application.storage.listConversations({
@@ -165,7 +168,7 @@ export function controlRoutes(application: PlatformApplication, options: {
       },
     },
     {
-      method: 'POST', path: '/v1/conversations', summary: '新建会话，返回会话元数据（含 id）。',
+      method: 'POST', path: '/v1/conversations', tool: 'create_conversation', summary: '新建会话，返回会话元数据（含 id）。',
       body: { title: '可选，默认“外部控制对话”', workspaceId: '可选，取自 /v1/status 的 workspaces' },
       handle: async ({ body }) => {
         const input = await body();
@@ -175,11 +178,11 @@ export function controlRoutes(application: PlatformApplication, options: {
       },
     },
     {
-      method: 'GET', path: '/v1/conversations/:id', summary: '读取会话元数据。',
+      method: 'GET', path: '/v1/conversations/:id', tool: 'get_conversation', summary: '读取会话元数据。',
       handle: async ({ params }) => [200, await conversationOf(params.id)],
     },
     {
-      method: 'GET', path: '/v1/conversations/:id/messages', summary: '读取历史分页，默认最近 50 条。',
+      method: 'GET', path: '/v1/conversations/:id/messages', tool: 'read_messages', summary: '读取历史分页，默认最近 50 条。',
       query: { limit: '1-200，默认 50', beforeIndex: '只读这个位置之前的消息', offset: '从这个位置开始读',
         view: 'compact（默认：正文、工具调用摘要、附件类型）或 raw（原始结构，含 base64 附件）' },
       handle: async ({ params, url }) => {
@@ -196,7 +199,7 @@ export function controlRoutes(application: PlatformApplication, options: {
       },
     },
     {
-      method: 'POST', path: '/v1/conversations/:id/messages',
+      method: 'POST', path: '/v1/conversations/:id/messages', tool: 'send_message',
       summary: '发送用户消息并启动任务。结束时返回 200 与最终回复 reply，仍在运行时返回 202。',
       body: {
         text: '消息正文', attachments: '可选，[{ name, mimeType, data(base64) }]',
@@ -231,7 +234,7 @@ export function controlRoutes(application: PlatformApplication, options: {
       },
     },
     {
-      method: 'GET', path: '/v1/runs/:id', summary: '任务状态；结束后附带最终回复 reply。',
+      method: 'GET', path: '/v1/runs/:id', tool: 'get_run', summary: '任务状态；结束后附带最终回复 reply。',
       query: { wait: `可选，最多等待任务结束的秒数（1-${maxWaitSeconds}）` },
       handle: async ({ params, url }) => {
         const wait = url.searchParams.has('wait') ? integer(url.searchParams.get('wait'), 0, 1, maxWaitSeconds, 'wait') : undefined;
@@ -240,7 +243,7 @@ export function controlRoutes(application: PlatformApplication, options: {
       },
     },
     {
-      method: 'GET', path: '/v1/runs/:id/events', summary: '任务事件，按序号递增。',
+      method: 'GET', path: '/v1/runs/:id/events', tool: 'list_run_events', summary: '任务事件，按序号递增。',
       query: { after: '只返回这个序号之后的事件，默认 0', limit: '1-1000，默认 200' },
       handle: async ({ params, url }) => {
         const run = await runOf(params.id);
@@ -250,7 +253,8 @@ export function controlRoutes(application: PlatformApplication, options: {
       },
     },
     {
-      method: 'POST', path: '/v1/runs/:id/approvals/:approvalId', summary: '批准或拒绝待审批的工具调用，审批项见任务状态的 pending.approvals。',
+      method: 'POST', path: '/v1/runs/:id/approvals/:approvalId', tool: 'resolve_approval',
+      summary: '批准或拒绝待审批的工具调用，审批项见任务状态的 pending.approvals。',
       body: { accepted: 'true 批准，false 拒绝', choiceId: '审批带 choices 时改为传其中一个选项的 id（如只允许这一次或始终允许）' },
       handle: async ({ params, body }) => {
         const request = approvalOf((await runOf(params.id)).id, params.approvalId);
@@ -264,7 +268,8 @@ export function controlRoutes(application: PlatformApplication, options: {
       },
     },
     {
-      method: 'POST', path: '/v1/runs/:id/questions/:questionId', summary: '回答模型提出的问题，问题见任务状态的 pending.questions。',
+      method: 'POST', path: '/v1/runs/:id/questions/:questionId', tool: 'answer_question',
+      summary: '回答模型提出的问题，问题见任务状态的 pending.questions。',
       body: { answers: '字符串数组，与 questions 一一对应；问题带 options 时可直接填其中一项' },
       handle: async ({ params, body }) => {
         const run = await runOf(params.id);
@@ -275,7 +280,7 @@ export function controlRoutes(application: PlatformApplication, options: {
       },
     },
     {
-      method: 'POST', path: '/v1/runs/:id/cancel', summary: '取消任务。',
+      method: 'POST', path: '/v1/runs/:id/cancel', tool: 'cancel_run', summary: '取消任务。',
       handle: async ({ params }) => {
         const run = await runOf(params.id);
         await application.runtime.cancel(run.id, session.actorId);
@@ -291,7 +296,7 @@ export function controlRoutes(application: PlatformApplication, options: {
       handle: async context => { options.streamEvents(context); },
     },
     {
-      method: 'POST', path: '/v1/rpc', summary: '调用界面同款内部 RPC，覆盖尚未封装成 REST 的操作；方法与参数随版本变化，不保证兼容。',
+      method: 'POST', path: '/v1/rpc', tool: 'call_rpc', summary: '调用界面同款内部 RPC，覆盖尚未封装成 REST 的操作；方法与参数随版本变化，不保证兼容。',
       body: { method: 'RPC 方法名', params: '可选，参数对象' },
       handle: async ({ body }) => {
         const input = await body();

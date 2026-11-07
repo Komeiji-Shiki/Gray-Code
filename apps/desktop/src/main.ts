@@ -486,7 +486,8 @@ async function main(): Promise<void> {
     browser: application => browser = new DesktopBrowser(application, () => window, notify),
     computerCapture: new DesktopComputerCapture(),
     remoteAccess: application => new RemoteAccessService(application, { clientDirectory }),
-    controlApi: application => new ControlApiService(application, { discoveryDirectory: controlDiscoveryDirectory() }),
+    controlApi: application => new ControlApiService(application, { discoveryDirectory: controlDiscoveryDirectory(),
+      mcpBridge: path.join(__dirname, 'controlMcp.cjs') }),
     secretCodec,
   });
   if (window && !window.isDestroyed()) bindDesktopAppearance(window, application);

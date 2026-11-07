@@ -23,6 +23,9 @@ writeFileSync('apps/desktop/dist/build-info.json', JSON.stringify(buildInfo, nul
 // 原生终端放入独立宿主，进程退出时一并回收其读取线程。
 await build({ entryPoints: ['apps/server/src/workspace/terminalHost.ts'], outfile: 'apps/desktop/dist/terminalHost.cjs',
   bundle: true, platform: 'node', format: 'cjs', target: 'node24', external: ['node-pty'] });
+// MCP 控制桥由 MCP 客户端以 GrayCode.exe 加 ELECTRON_RUN_AS_NODE 启动，只依赖 Node 内置模块。
+await build({ entryPoints: ['apps/server/src/control/mcpBridge.ts'], outfile: 'apps/desktop/dist/controlMcp.cjs',
+  bundle: true, platform: 'node', format: 'cjs', target: 'node24' });
 // 试用包仅编译可执行产物，不额外执行类型检查。
 if (!process.argv.includes('--package-only')) {
 execFileSync(process.execPath, [require.resolve('typescript/bin/tsc'), '-p', 'apps/desktop/tsconfig.json'], { stdio: 'inherit', windowsHide: true });

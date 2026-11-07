@@ -1,18 +1,17 @@
-import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
-import type { AddressInfo } from 'node:net';
+import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
+import { isIP, type AddressInfo } from 'node:net';
 import { createHash, randomUUID, timingSafeEqual } from 'node:crypto';
 import type { PlatformApplication } from '../application';
 import { ApplicationRouter } from '../transport/router';
 import { ControlRequestError, controlRoutes, jsonBodyLimit, session, type ControlRoute, type RouteContext } from './routes';
 import { controlDiscoveryDirectory } from './discovery';
-import { ControlEventProjector, type ControlEvent } from './events';
+import { ControlEventProjector } from './events';
 
 const replayLimit = 1_000;
 const replayBytesLimit = 8 * 1024 * 1024;
 /** 断线后在这段时间内重连可以续传；没有事件流连接时不再缓存，也不再为每个事件序列化。 */
 const resumeWindowMs = 5 * 60_000;
 const slowClientBytes = 4 * 1024 * 1024;
-const corsHeaders = { 'Access-Control-Allow-Origin': '*' };
 /** 存储层与上游失败带有错误码；没有错误码的是业务校验错误，按参数错误处理。 */
 const statusByCode: Record<string, number> = {
   NOT_FOUND: 404, INVALID_INPUT: 400, REVISION_CONFLICT: 409, SOURCE_CHANGED: 409, STORAGE_BUSY: 409,
@@ -46,8 +45,15 @@ function tokenFrom(request: IncomingMessage): string {
 function write(response: ServerResponse, status: number, value: unknown, headers: Record<string, string> = {}): void {
   if (response.destroyed || response.writableEnded) return;
   response.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store',
-    'X-Content-Type-Options': 'nosniff', ...corsHeaders, ...headers });
+    'X-Content-Type-Options': 'nosniff', ...headers });
   response.end(JSON.stringify(value ?? null));
+}
+
+/** 网络端口只接受 localhost 或 IP 字面量作为 Host：DNS 重绑定的页面带的是它自己的域名。 */
+function trustedHost(host: string | undefined): boolean {
+  if (!host) return false;
+  const name = host.startsWith('[') ? host.slice(1, host.indexOf(']')) : host.replace(/:\d+$/, '');
+  return name === 'localhost' || isIP(name) !== 0;
 }
 
 function failure(error: unknown): [number, { error: string; code?: string }] {
@@ -64,7 +70,7 @@ function compile(route: ControlRoute): CompiledRoute {
   return { route, pattern: new RegExp(`^${source}$`), names };
 }
 
-export interface ControlServerOptions { port: number; token: string; allowLan: boolean }
+export interface ControlNetworkOptions { port: number; token: string; allowLan: boolean }
 
 interface BufferedEvent { sequence: number; frame: Buffer; matches: (types: string[], conversationId: string | null) => boolean }
 
@@ -106,12 +112,19 @@ function rawMatches(event: Record<string, any>, types: string[], conversationId:
     event.event?.run?.conversationId, event.event?.payload?.conversationId].includes(conversationId);
 }
 
-export async function startControlServer(application: PlatformApplication, options: ControlServerOptions) {
-  let expected = hash(options.token);
+export type ControlEndpoint = Awaited<ReturnType<typeof startControlEndpoint>>;
+export type ControlNetworkListener = Awaited<ReturnType<ControlEndpoint['network']>>;
+
+/**
+ * 外部控制接口：路由、事件补发与应用订阅只有一份，本机管道和网络端口只在鉴权上不同。
+ * 管道由操作系统按当前用户限制连接，浏览器也连不到，不需要令牌；网络端口校验 Host 与令牌。
+ */
+export async function startControlEndpoint(application: PlatformApplication) {
   const router = new ApplicationRouter(application);
   const buffers = { stable: new ReplayBuffer(), raw: new ReplayBuffer() };
-  /** 每个事件流按自己的模式和过滤条件挑选要写出的事件。 */
-  const streams = new Map<ServerResponse, { raw: boolean; types: string[]; conversationId: string | null }>();
+  /** 每个事件流按自己的模式和过滤条件挑选要写出的事件；记下来源监听，轮换令牌时只断开网络端口的流。 */
+  const streams = new Map<ServerResponse, { raw: boolean; types: string[]; conversationId: string | null; server: Server }>();
+  const servers = new Set<Server>();
   const projector = new ControlEventProjector();
   const epoch = randomUUID();
   let sequence = 0;
@@ -119,9 +132,9 @@ export async function startControlServer(application: PlatformApplication, optio
   const lastStreamAt = { stable: 0, raw: 0 };
   let closing = false;
 
-  const streamEvents = ({ request, response, url }: RouteContext) => {
+  const streamEvents = ({ request, response, url }: RouteContext, server: Server) => {
     response.writeHead(200, {
-      'Content-Type': 'text/event-stream', 'Cache-Control': 'no-store', Connection: 'keep-alive', 'X-Accel-Buffering': 'no', ...corsHeaders,
+      'Content-Type': 'text/event-stream', 'Cache-Control': 'no-store', Connection: 'keep-alive', 'X-Accel-Buffering': 'no',
     });
     response.write(': connected\n\n');
     const stream = { raw: url.searchParams.get('raw') === '1',
@@ -135,7 +148,7 @@ export async function startControlServer(application: PlatformApplication, optio
       if (!missed) response.write('event: reset\ndata: {}\n\n');
       else for (const entry of missed) if (entry.matches(stream.types, stream.conversationId)) response.write(entry.frame);
     }
-    streams.set(response, stream);
+    streams.set(response, { ...stream, server });
     const heartbeat = setInterval(() => {
       if (!response.destroyed && !response.writableEnded) response.write(': heartbeat\n\n');
     }, 20_000);
@@ -143,8 +156,7 @@ export async function startControlServer(application: PlatformApplication, optio
     response.once('close', () => { clearInterval(heartbeat); streams.delete(response); lastStreamAt[stream.raw ? 'raw' : 'stable'] = Date.now(); });
   };
 
-  const routes = controlRoutes(application, { router, streamEvents }).map(compile);
-  const resolve = (method: string, pathname: string) => {
+  const resolve = (routes: CompiledRoute[], method: string, pathname: string) => {
     const candidates = routes.flatMap(entry => {
       const match = entry.pattern.exec(pathname);
       return match ? [{ ...entry, match }] : [];
@@ -161,27 +173,44 @@ export async function startControlServer(application: PlatformApplication, optio
     return { route: found.route, params };
   };
 
-  const server = createServer(async (request, response) => {
-    response.on('error', () => response.destroy());
-    try {
-      if (request.method === 'OPTIONS') {
-        response.writeHead(204, { ...corsHeaders, 'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
-          'Access-Control-Allow-Headers': 'Authorization, Content-Type, Idempotency-Key, Last-Event-ID, X-GrayCode-Token' });
-        response.end(); return;
+  /** 每个监听各自编译路由，事件流由此知道来源；鉴权在路由之前完成。 */
+  const serve = (authorize: (request: IncomingMessage) => void): Server => {
+    const server: Server = createServer(async (request, response) => {
+      response.on('error', () => response.destroy());
+      try {
+        authorize(request);
+        const url = new URL(request.url ?? '/', 'http://127.0.0.1');
+        const { route, params } = resolve(routes, request.method ?? 'GET', url.pathname.replace(/\/+$/, '') || '/');
+        const result = await route.handle({ url, params, request, response, body: (limit = jsonBodyLimit) => readJson(request, limit) });
+        if (result) write(response, result[0], result[1]);
+      } catch (error) {
+        if (response.headersSent) { response.destroy(); return; }
+        const allow = (error as { allow?: string }).allow;
+        write(response, ...failure(error), allow ? { Allow: allow } : {});
       }
-      const token = tokenFrom(request);
-      if (!token || !timingSafeEqual(expected, hash(token)))
-        throw new ControlRequestError(401, `访问令牌不正确。令牌在 GrayCode「设置 → 外部控制」中；本机程序也可以读取 ${controlDiscoveryDirectory()} 下的发现文件。`);
-      const url = new URL(request.url ?? '/', 'http://127.0.0.1');
-      const { route, params } = resolve(request.method ?? 'GET', url.pathname.replace(/\/+$/, '') || '/');
-      const result = await route.handle({ url, params, request, response, body: (limit = jsonBodyLimit) => readJson(request, limit) });
-      if (result) write(response, result[0], result[1]);
-    } catch (error) {
-      if (response.headersSent) { response.destroy(); return; }
-      const allow = (error as { allow?: string }).allow;
-      write(response, ...failure(error), allow ? { Allow: allow } : {});
-    }
-  });
+    });
+    const routes = controlRoutes(application, { router, streamEvents: context => streamEvents(context, server) }).map(compile);
+    return server;
+  };
+  const listen = async (server: Server, target: { path: string } | { port: number; host: string }) => {
+    await new Promise<void>((resolve, reject) => {
+      server.once('error', reject);
+      server.listen(target, () => { server.off('error', reject); resolve(); });
+    });
+    servers.add(server);
+  };
+  const endStreams = (server: Server) => {
+    for (const [response, stream] of streams) if (stream.server === server) { response.end(); streams.delete(response); }
+  };
+  const shut = async (server: Server) => {
+    servers.delete(server);
+    endStreams(server);
+    // 等待中的长请求不能拖住退出；给正常请求留出返回时间后强制关闭连接。
+    const deadline = setTimeout(() => server.closeAllConnections(), 5_000);
+    deadline.unref();
+    try { await new Promise<void>(resolve => server.close(() => resolve())); }
+    finally { clearTimeout(deadline); }
+  };
 
   const unsubscribe = application.subscribe(event => {
     // 任务与会话的对应关系一直维护，订阅方晚连接时事件也能带上会话 ID。
@@ -212,33 +241,42 @@ export async function startControlServer(application: PlatformApplication, optio
   try {
     // 先订阅再登记已在运行的任务，两者之间创建的任务也不会漏掉会话 ID。
     projector.track(await application.storage.listRuns({ activeOnly: true }));
-    await new Promise<void>((resolve, reject) => {
-      server.once('error', reject);
-      server.listen(options.port, options.allowLan ? '0.0.0.0' : '127.0.0.1', () => resolve());
-    });
   } catch (error) {
-    unsubscribe(); server.close(); throw error;
+    unsubscribe(); throw error;
   }
 
   return {
-    port: (server.address() as AddressInfo).port,
-    /** 保留端口和进行中的请求；事件流按旧令牌建立，轮换后全部断开，客户端需用新令牌重连。 */
-    rotateToken: async (token: string) => {
-      expected = hash(token);
-      for (const stream of streams.keys()) stream.end();
-      streams.clear();
+    /** 本机管道：Windows 命名管道或 Unix socket。 */
+    local: async (pipe: string) => {
+      const server = serve(() => {});
+      await listen(server, { path: pipe });
+      return { close: () => shut(server) };
+    },
+    /** 网络端口：默认只监听回环地址，每个请求校验 Host 与令牌。 */
+    network: async (options: ControlNetworkOptions) => {
+      let expected = hash(options.token);
+      const server = serve(request => {
+        if (!trustedHost(request.headers.host)) throw new ControlRequestError(403, 'Host 必须是 localhost 或 IP 地址。');
+        const token = tokenFrom(request);
+        if (!token || !timingSafeEqual(expected, hash(token))) throw new ControlRequestError(401,
+          `访问令牌不正确。令牌在 GrayCode「设置 → 外部控制」中；本机程序可以改用 ${controlDiscoveryDirectory()} 下发现文件里的 pipe，不需要令牌。`);
+      });
+      await listen(server, { port: options.port, host: options.allowLan ? '0.0.0.0' : '127.0.0.1' });
+      return {
+        port: (server.address() as AddressInfo).port,
+        /** 保留端口和进行中的请求；事件流按旧令牌建立，轮换后全部断开，客户端需用新令牌重连。 */
+        rotateToken: async (token: string) => {
+          expected = hash(token);
+          endStreams(server);
+        },
+        close: () => shut(server),
+      };
     },
     close: async () => {
       if (closing) return;
       closing = true;
       unsubscribe();
-      for (const stream of streams.keys()) stream.end();
-      streams.clear();
-      // 等待中的长请求不能拖住退出；给正常请求留出返回时间后强制关闭连接。
-      const deadline = setTimeout(() => server.closeAllConnections(), 5_000);
-      deadline.unref();
-      try { await new Promise<void>(resolve => server.close(() => resolve())); }
-      finally { clearTimeout(deadline); }
+      await Promise.all([...servers].map(shut));
       await router.clientClosed(session.clientId).catch(error => console.warn('[ControlApi] 客户端资源释放失败：', error));
     },
   };
