@@ -1209,8 +1209,18 @@ const en: LanguageMessages = {
             },
             controlApiSettings: {
                 title: 'Control API',
-                description: 'Run a local token-protected HTTP API so scripts, Stream Decks, AI agents such as Claude Code or Codex, and other apps can send messages, read conversations and subscribe to events.',
-                enabled: 'Enable Control API',
+                description: 'Let AI agents such as Claude Code or Codex, scripts, Stream Decks and other apps send messages, read conversations, handle approvals and subscribe to events. Local agents connect directly through MCP; other devices and apps use the token-protected network API.',
+                mcp: {
+                    title: 'Local agents (MCP)',
+                    hint: 'Add this configuration to an MCP client and it will launch the control bridge bundled with GrayCode, with no token or port needed. The local channel is always on while the app runs and only your system account can connect. The tool list is empty while GrayCode is not running and fills in once it opens.',
+                    json: 'Claude Code and others (.mcp.json)',
+                    toml: 'Codex (~/.codex/config.toml)',
+                    copy: 'Copy configuration',
+                    copied: 'Configuration copied.'
+                },
+                network: 'Network API',
+                networkHint: 'For LAN devices, Stream Decks and apps without MCP support that call over HTTP. Requires an access token. Not needed if you only connect local AI agents.',
+                enabled: 'Enable network API',
                 enabledHint: 'Keeps listening in the background after the main window closes, until the app quits or you stop it.',
                 allowLan: 'Allow LAN access',
                 allowLanHint: 'Listens on 127.0.0.1 by default. LAN access uses unencrypted HTTP and the token is not protected in transit.',
@@ -1230,12 +1240,12 @@ const en: LanguageMessages = {
                 start: 'Start saved API',
                 stop: 'Stop this API',
                 stopAccepted: 'Stop request accepted.',
-                saveAllFirst: 'Save all settings before starting the Control API.',
+                saveAllFirst: 'Save all settings before starting the network API.',
                 states: { disabled: 'Disabled', stopped: 'Stopped for now', starting: 'Starting', listening: 'Listening', stopping: 'Stopping', error: 'Failed to start' },
                 address: 'API address',
                 lanAddress: 'LAN address',
                 endpoints: 'Endpoints',
-                endpointsHint: 'All endpoints require the token. The event stream uses Server-Sent Events and supports resume with Last-Event-ID.',
+                endpointsHint: 'The local channel and the network API serve the same endpoints; network access requires the token. MCP exposes the common endpoints as tools of the same name. The event stream uses Server-Sent Events and supports resume with Last-Event-ID.',
                 endpointCatalog: 'Full reference with paths, parameters, waiting and error codes. Scripts and AI agents can read it once and start using the API.',
                 endpointStatus: 'Service status, version, active runs, and the agents, providers and workspaces you can choose.',
                 endpointConversations: 'List conversations; POST to the same path creates one.',
@@ -1243,8 +1253,8 @@ const en: LanguageMessages = {
                 endpointEvents: 'Subscribe to application events; filter with types and conversationId.',
                 endpointRpc: 'Call the same RPC methods as the UI for operations without a REST wrapper.',
                 endpointSpeech: 'Synthesize speech with the configured provider; returns base64 audio clips.',
-                agentHint: 'While listening, a discovery file with the address and token is written to ~/.graycode/control-api/. Local agents such as Claude Code or Codex read it and follow GET /v1 to call the API directly. It is removed when the API stops or the app quits.',
-                securityHint: 'The token grants owner permissions, including sending messages and approving tool calls. Only give it to trusted apps and never put it in browser addresses or public logs.'
+                agentHint: 'While the app runs, a discovery file is written to ~/.graycode/control-api/ with the local channel address, the MCP launch command and, when the network API is on, its HTTP address. It never contains the token. Local programs that do not use MCP can call the local channel directly by following GET /v1. The file is removed when the app quits.',
+                securityHint: 'The MCP bridge and the token both act with your full permissions, including sending messages and approving tool calls. Only connect trusted agents and apps, and never put the token in browser addresses or public logs.'
             },
             channelSettings: {
                 selector: {
@@ -2547,7 +2557,7 @@ const en: LanguageMessages = {
                     },
                     controlApi: {
                         title: 'Control API',
-                        description: 'Let external apps control GrayCode through a local HTTP API'
+                        description: 'Let AI agents and external apps control GrayCode through MCP or HTTP'
                     },
                     appearance: {
                         title: 'Appearance',

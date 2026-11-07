@@ -1,43 +1,84 @@
 # 外部控制接口与语音合成
 
-GrayCode 2.x 提供一个本地 HTTP 控制接口，让脚本、Stream Deck、桌面小工具、Claude Code 与 Codex 等 AI 代理或其他应用直接驱动 GrayCode；同时提供统一的语音合成能力，支持云端接口、本地部署和 Windows 本机语音。
+GrayCode 2.x 提供外部控制接口，让 Claude Code 与 Codex 等 AI 代理、脚本、Stream Deck、桌面小工具或其他应用直接驱动 GrayCode；同时提供统一的语音合成能力，支持云端接口、本地部署和 Windows 本机语音。
 
 ## 一、外部控制接口
 
-### 启用
+同一组接口有两个入口：
 
-打开「设置 → 外部控制」：
+- **本机通道**：随应用常开，不需要开关、端口和令牌。Windows 上是命名管道，macOS 与 Linux 上是 Unix socket，地址只写在当前用户的发现文件里。AI 代理通过 MCP 控制桥接入，其他本机程序也可以直接经通道发送 HTTP 请求。
+- **网络接口**：普通 TCP 端口上的 HTTP，需要访问令牌，供局域网设备、Stream Deck 和不支持 MCP 的应用使用，默认关闭。
 
-1. 勾选「启用外部控制接口」。
+### 让 AI 代理直接使用（MCP）
+
+打开「设置 → 外部控制」，在「本机代理（MCP）」中复制配置：
+
+- Claude Code 等使用 `mcpServers` 的客户端：把 JSON 写入项目的 `.mcp.json` 或客户端自己的 MCP 配置。
+- Codex：把 TOML 追加到 `~/.codex/config.toml`。
+
+桌面版的配置形如：
+
+```json
+{
+  "mcpServers": {
+    "graycode": {
+      "command": "C:\\Users\\<用户>\\AppData\\Local\\GrayCode\\current\\GrayCode.exe",
+      "args": ["C:\\Users\\<用户>\\AppData\\Local\\GrayCode\\current\\resources\\app\\apps\\desktop\\dist\\controlMcp.cjs"],
+      "env": { "ELECTRON_RUN_AS_NODE": "1" }
+    }
+  }
+}
+```
+
+`ELECTRON_RUN_AS_NODE` 让 `GrayCode.exe` 以 Node 方式运行控制桥，不需要另外安装 Node。命令行版（`npm run platform`）的配置改为用 `node` 运行 `apps/server/dist/controlMcp.cjs`，不带 `env`。路径以设置页显示的为准。
+
+控制桥把常用接口提供为同名工具：`get_status`、`list_conversations`、`create_conversation`、`get_conversation`、`read_messages`、`send_message`、`get_run`、`list_run_events`、`resolve_approval`、`answer_question`、`cancel_run` 与 `call_rpc`，参数与下文的 HTTP 接口一致。事件流和语音合成不适合模型直接调用，没有对应工具。
+
+- GrayCode 未运行时工具列表为空，调用会提示先打开 GrayCode；之后启动、重启或升级让工具变化时，控制桥会通知客户端刷新列表。
+- 同时运行多个实例时连接最近启动的一个；要连接指定实例，在 `args` 末尾加 `--data <数据目录>`。
+- MCP 客户端的工具调用通常有超时，`send_message` 的 `wait` 建议不超过 50 秒，任务未完成时再用 `get_run` 等待。
+
+### 发现文件
+
+应用运行时，GrayCode 会在 `~/.graycode/control-api/<进程号>.json` 写入发现文件（Windows 上是 `%USERPROFILE%\.graycode\control-api\`），内容包括：
+
+- `pipe`：本机通道地址；
+- `mcp`：控制桥的启动命令 `command`、`args` 与 `env`；
+- `http`：网络接口正在监听时的 `url`；
+- `pid`、`startedAt`、`version` 与 `dataDirectory`。
+
+发现文件不含令牌。应用退出时删除，异常退出留下的旧文件会在下次启动时清理。目录只有当前用户可读，Windows 上的管道名带随机段，其他系统账号拿不到地址，也无法抢先占用同名管道。
+
+不用 MCP 的本机程序可以读取 `pipe`，把 HTTP 请求直接发到通道上，先请求 `GET /v1` 查看全部接口。以 Node 为例：
+
+```js
+http.request({ socketPath: discovery.pipe, path: '/v1', headers: { host: 'localhost' } }, …)
+```
+
+### 启用网络接口
+
+在「设置 → 外部控制」的「网络接口」中：
+
+1. 勾选「启用网络接口」。
 2. 选择监听端口。`0` 表示由系统分配空闲端口；需要固定地址时填写 `18766` 等端口。
 3. 生成访问令牌。令牌至少 32 个字符，保存时写入加密凭据。
 4. 保存全部设置，再点击「启动已保存的接口」。
 
-接口默认只监听 `127.0.0.1`。开启「允许局域网访问」后会监听 `0.0.0.0`，局域网内其他设备可以用 HTTP 直接访问；这条通道没有 TLS，令牌和消息内容不会加密，只建议在可信网络中使用。
+网络接口默认只监听 `127.0.0.1`。开启「允许局域网访问」后会监听 `0.0.0.0`，局域网内其他设备可以用 HTTP 直接访问；这条通道没有 TLS，令牌和消息内容不会加密，只建议在可信网络中使用。
 
-关闭主窗口后，只要接口仍在监听，应用会继续留在后台；手动停止或启动失败（如端口被占用）后不再保持后台。使用 `npm run platform -- --data <目录> serve` 运行无界面服务时，只要保存过的设置里启用了外部控制接口，它也会随服务一起启动。
+关闭主窗口后，只要网络接口仍在监听，应用会继续留在后台；手动停止或启动失败（如端口被占用）后不再保持后台。本机通道不会让应用留在后台。使用 `npm run platform -- --data <目录> serve` 运行无界面服务时，本机通道随服务启动；保存过的设置里启用了网络接口时，网络接口也会一起启动。
 
-### 让 AI 代理直接使用
+### 网络接口的认证
 
-接口监听时，GrayCode 会在 `~/.graycode/control-api/<进程号>.json` 写入发现文件，内容包括 `url`、`token`、`pid`、`version` 与 `dataDirectory`；接口停止或应用退出时删除，异常退出留下的旧文件会在下次写入时清理。Windows 上对应 `%USERPROFILE%\.graycode\control-api\`。
-
-Claude Code、Codex 等本机代理只需要知道这个约定：读取发现文件拿到地址和令牌，再请求 `GET /v1`，返回内容列出全部接口、参数、等待方式和错误码，按说明调用即可。可以在代理的项目说明（如 `CLAUDE.md`、`AGENTS.md`）里写一句：
-
-```text
-GrayCode 外部控制接口：读取 ~/.graycode/control-api/*.json 取得 url 与 token，GET {url}/v1 查看用法。
-```
-
-发现文件里的令牌与加密凭据的访问范围相同：同一系统用户的进程本来就能解密 GrayCode 的凭据存储，文件只是多了一个约定位置。
-
-### 认证
-
-所有请求都需要附带令牌：
+经网络接口的请求都需要附带令牌：
 
 ```bash
 curl -H "Authorization: Bearer <token>" http://127.0.0.1:18766/v1
 ```
 
-也可以使用 `X-GrayCode-Token: <token>`。令牌等同于主人权限，不要写进浏览器地址栏、公开日志或会提交到仓库的脚本。
+也可以使用 `X-GrayCode-Token: <token>`。令牌拥有与你本人相同的权限，不要写进浏览器地址栏、公开日志或会提交到仓库的脚本。
+
+网络接口不发送 CORS 头，网页无法跨域读取响应；`Host` 请求头必须是 `localhost` 或 IP 地址，带域名的请求返回 `403`，用来挡住 DNS 重绑定。
 
 ### 接口一览
 
@@ -112,7 +153,8 @@ curl -X POST http://127.0.0.1:18766/v1/conversations/<conversationId>/messages \
 | 状态 | 含义 |
 | --- | --- |
 | `400` | 参数或业务校验失败，说明里会写出可选值。 |
-| `401` | 令牌缺失或不正确。 |
+| `401` | 经网络接口访问时令牌缺失或不正确。 |
+| `403` | 经网络接口访问时 `Host` 不是 `localhost` 或 IP 地址。 |
 | `404` | 会话、任务或接口不存在；接口不存在时请先读 `GET /v1`。 |
 | `405` | 路径存在但不支持该方法，`Allow` 响应头列出可用方法。 |
 | `409` | 会话已有任务在运行（`STORAGE_BUSY`），或数据已被其他操作修改。 |
@@ -139,10 +181,11 @@ curl -N -H "Authorization: Bearer <token>" \
 
 ### 安全边界
 
-- 接口只以主人身份工作，没有单独的只读令牌或工具白名单。
-- 任务仍然经过正常的工具权限、工作区与审批流程。持有令牌的调用方可以通过接口批准审批，等同于在界面中点击确认；只想让外部程序观察、不想让它批准时，不要把令牌交给它。
-- 令牌更换并保存后立即生效：端口不变，旧令牌失效，用旧令牌建立的事件流会断开，需要用新令牌重连。修改端口或局域网开关会重新监听。
-- 只需要本机脚本访问时，保持「允许局域网访问」关闭。
+- 接口以你本人的身份工作，没有单独的只读令牌或工具白名单。
+- 任务仍然经过正常的工具权限、工作区与审批流程。能连接本机通道或持有令牌的调用方可以通过接口批准审批，等同于在界面中点击确认；只想让外部程序观察、不想让它批准时，不要把它接入 MCP，也不要把令牌交给它。
+- 本机通道的访问范围与 GrayCode 的加密凭据相同：同一系统用户的进程本来就能解密凭据存储，通道没有扩大这个范围。
+- 令牌更换并保存后立即生效：端口不变，旧令牌失效，用旧令牌建立的事件流会断开，需要用新令牌重连。修改端口或局域网开关会重新监听；本机通道不受影响。
+- 只在本机接入 AI 代理时不需要开启网络接口；需要本机脚本经 TCP 访问时，保持「允许局域网访问」关闭。
 
 ## 二、语音合成
 

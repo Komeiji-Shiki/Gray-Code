@@ -73,6 +73,19 @@ async function copy(value: string, message: string) {
   notice.value = message
 }
 const example = computed(() => `curl -H "Authorization: Bearer ${token.value || '<token>'}" "${address.value}/v1"`)
+// JSON 是 Claude Code 等客户端通用的 mcpServers 写法；JSON 字符串同时是合法的 TOML 基本字符串，Windows 路径的反斜杠不用另外转义。
+const mcpConfigs = computed(() => {
+  const launch = status.value?.local.mcp
+  if (!launch) return []
+  const env = launch.env ? Object.entries(launch.env) : []
+  const toml = [`[mcp_servers.graycode]`, `command = ${JSON.stringify(launch.command)}`, `args = ${JSON.stringify(launch.args)}`,
+    ...(env.length ? [`env = { ${env.map(([name, value]) => `${name} = ${JSON.stringify(value)}`).join(', ')} }`] : [])]
+  return [
+    { key: 'json', label: t('components.settings.controlApiSettings.mcp.json'),
+      text: JSON.stringify({ mcpServers: { graycode: { command: launch.command, args: launch.args, ...(launch.env ? { env: launch.env } : {}) } } }, null, 2) },
+    { key: 'toml', label: t('components.settings.controlApiSettings.mcp.toml'), text: toml.join('\n') },
+  ]
+})
 const unsubscribe = onMessageFromExtension(message => {
   if (message.type === 'command' && message.command === 'platform.controlApi.changed') void refresh().catch(() => {})
 })
@@ -91,6 +104,19 @@ useDesktopSettingsDraft(save, () => ready)
   <section class="control-settings">
     <h4>{{ t('components.settings.controlApiSettings.title') }}</h4>
     <p>{{ t('components.settings.controlApiSettings.description') }}</p>
+    <h3 data-search-anchor="control-api-mcp">{{ t('components.settings.controlApiSettings.mcp.title') }}</h3>
+    <p>{{ t('components.settings.controlApiSettings.mcp.hint') }}</p>
+    <p v-if="status?.local.error" role="alert" class="control-error">{{ status.local.error }}</p>
+    <div v-for="item in mcpConfigs" :key="item.key" class="control-config">
+      <span>{{ item.label }}</span>
+      <button type="button" @click="action(() => copy(item.text, t('components.settings.controlApiSettings.mcp.copied')))">
+        {{ t('components.settings.controlApiSettings.mcp.copy') }}
+      </button>
+      <pre class="control-example">{{ item.text }}</pre>
+    </div>
+    <p class="control-hint">{{ t('components.settings.controlApiSettings.agentHint') }}</p>
+    <h3>{{ t('components.settings.controlApiSettings.network') }}</h3>
+    <p>{{ t('components.settings.controlApiSettings.networkHint') }}</p>
     <div v-if="status" class="control-status">
       <strong :class="{ failed: status.state === 'error' }">{{ stateLabels[status.state] }}</strong>
       <span v-if="status.port">{{ address }}</span>
@@ -171,7 +197,6 @@ useDesktopSettingsDraft(save, () => ready)
       <li><code>POST /v1/speech</code><span>{{ t('components.settings.controlApiSettings.endpointSpeech') }}</span></li>
     </ul>
     <pre class="control-example">{{ example }}</pre>
-    <p class="control-hint">{{ t('components.settings.controlApiSettings.agentHint') }}</p>
     <p class="control-hint">{{ t('components.settings.controlApiSettings.securityHint') }}</p>
     <p v-if="notice" role="status">{{ notice }}</p>
     <p v-if="error" role="alert" class="control-error">{{ error }}</p>
@@ -277,6 +302,20 @@ useDesktopSettingsDraft(save, () => ready)
   overflow-wrap: anywhere;
   min-width: 0;
   align-self: center;
+}
+.control-config {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 10px;
+  align-items: center;
+  margin: 14px 0;
+}
+.control-config > span {
+  color: var(--gc-text-muted);
+}
+.control-config .control-example {
+  grid-column: 1 / -1;
+  margin: 0;
 }
 .control-endpoints {
   display: grid;

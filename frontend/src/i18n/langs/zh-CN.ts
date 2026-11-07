@@ -1211,8 +1211,18 @@ const zhCN = {
             },
             controlApiSettings: {
                 title: '外部控制接口',
-                description: '在本地启动带令牌的 HTTP 接口，让脚本、Stream Deck、Claude Code 与 Codex 等 AI 代理或其他应用发送消息、读取会话和订阅事件。',
-                enabled: '启用外部控制接口',
+                description: '让 Claude Code、Codex 等 AI 代理以及脚本、Stream Deck 或其他应用发送消息、读取会话、处理审批和订阅事件。本机代理通过 MCP 直接接入，其他设备和应用使用带令牌的网络接口。',
+                mcp: {
+                    title: '本机代理（MCP）',
+                    hint: '把下面的配置加入 MCP 客户端，客户端会启动 GrayCode 自带的控制桥，不需要令牌和端口。本机通道随应用常开，只有当前系统账号能连接；GrayCode 未运行时工具列表为空，打开后自动出现。',
+                    json: 'Claude Code 等（.mcp.json）',
+                    toml: 'Codex（~/.codex/config.toml）',
+                    copy: '复制配置',
+                    copied: '配置已复制。'
+                },
+                network: '网络接口',
+                networkHint: '供局域网设备、Stream Deck 和不支持 MCP 的应用通过 HTTP 调用，需要访问令牌。只在本机接入 AI 代理时不必开启。',
+                enabled: '启用网络接口',
                 enabledHint: '关闭主窗口后仍会在后台保持监听，直到应用退出或手动停止。',
                 allowLan: '允许局域网访问',
                 allowLanHint: '默认只监听 127.0.0.1。开启后局域网内其他设备可用 HTTP 访问，令牌不会被加密。',
@@ -1232,12 +1242,12 @@ const zhCN = {
                 start: '启动已保存的接口',
                 stop: '停止本次接口',
                 stopAccepted: '停止请求已接受。',
-                saveAllFirst: '请先保存全部设置，再启动外部控制接口。',
+                saveAllFirst: '请先保存全部设置，再启动网络接口。',
                 states: { disabled: '未启用', stopped: '本次已停止', starting: '正在启动', listening: '正在监听', stopping: '正在停止', error: '启动失败' },
                 address: '接口地址',
                 lanAddress: '局域网地址',
                 endpoints: '接口一览',
-                endpointsHint: '所有接口都需要令牌。事件流使用 Server-Sent Events，可用 Last-Event-ID 从断点续传。',
+                endpointsHint: '本机通道与网络接口提供同一组接口，经网络访问时需要令牌。MCP 把其中常用的接口提供为同名工具。事件流使用 Server-Sent Events，可用 Last-Event-ID 从断点续传。',
                 endpointCatalog: '完整接口说明：路径、参数、等待方式与错误码，脚本和 AI 代理读一次即可上手。',
                 endpointStatus: '服务状态、版本、活动任务数，以及可选的智能体、模型渠道与工作区。',
                 endpointConversations: '列出会话；POST 同路径可新建会话。',
@@ -1245,8 +1255,8 @@ const zhCN = {
                 endpointEvents: '订阅全部应用事件，可用 types 与 conversationId 过滤。',
                 endpointRpc: '调用界面同款 RPC 方法，适合尚未封装为 REST 的操作。',
                 endpointSpeech: '使用已配置的提供商合成语音，返回 base64 音频片段。',
-                agentHint: '接口监听时会在 ~/.graycode/control-api/ 写入发现文件（地址与令牌），本机的 Claude Code、Codex 等代理读取后按 GET /v1 的说明直接调用；接口停止或应用退出时删除。',
-                securityHint: '令牌等同于主人权限，可以发送消息、批准工具调用，请只交给可信应用；不要在浏览器地址栏或公开日志中携带令牌。'
+                agentHint: '应用运行时会在 ~/.graycode/control-api/ 写入发现文件，包含本机通道地址、MCP 启动命令，以及网络接口开启时的 HTTP 地址，不含令牌。不用 MCP 的本机程序可经本机通道按 GET /v1 的说明直接调用。应用退出时删除。',
+                securityHint: 'MCP 控制桥和令牌都拥有与你本人相同的权限，可以发送消息、批准工具调用，请只接入可信的代理和应用；不要在浏览器地址栏或公开日志中携带令牌。'
             },
             channelSettings: {
                 selector: {
@@ -2549,7 +2559,7 @@ const zhCN = {
                     },
                     controlApi: {
                         title: '外部控制',
-                        description: '让外部应用通过本地 HTTP 接口控制 GrayCode'
+                        description: '让 AI 代理与外部应用通过 MCP 或 HTTP 接口控制 GrayCode'
                     },
                     appearance: {
                         title: '外观设置',

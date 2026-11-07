@@ -533,6 +533,12 @@ export function settingsSearchIndex(isDesktopHost: boolean, supportsFileAssociat
       keywords: ['外部控制', 'control api', 'api', '被控', 'http', 'sse', 'token', '令牌', '自动化']
     },
     {
+      key: 'control-api-mcp', tab: 'controlApi',
+      labelKey: 'components.settings.controlApiSettings.mcp.title',
+      keywords: ['mcp', 'claude code', 'codex', '代理', 'agent', 'エージェント', 'mcpServers', 'config.toml'],
+      anchor: '[data-search-anchor="control-api-mcp"]'
+    },
+    {
       key: 'control-api-token', tab: 'controlApi',
       labelKey: 'components.settings.controlApiSettings.token',
       keywords: ['令牌', 'token', 'bearer', 'api key', '认证'],

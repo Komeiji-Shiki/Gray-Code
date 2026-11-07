@@ -1209,8 +1209,18 @@ const ja: LanguageMessages = {
             },
             controlApiSettings: {
                 title: '外部制御 API',
-                description: 'トークンで保護されたローカル HTTP API を起動し、スクリプト、Stream Deck、Claude Code や Codex などの AI エージェント、その他のアプリからメッセージ送信、会話の取得、イベント購読を行えるようにします。',
-                enabled: '外部制御 API を有効にする',
+                description: 'Claude Code や Codex などの AI エージェント、スクリプト、Stream Deck、その他のアプリからメッセージ送信、会話の取得、承認の処理、イベント購読を行えるようにします。ローカルのエージェントは MCP で直接接続し、他のデバイスやアプリはトークン付きのネットワーク API を使います。',
+                mcp: {
+                    title: 'ローカルエージェント（MCP）',
+                    hint: '以下の設定を MCP クライアントに追加すると、GrayCode に同梱された制御ブリッジが起動します。トークンやポートは不要です。ローカルチャネルはアプリの実行中は常に有効で、現在のシステムアカウントだけが接続できます。GrayCode が起動していない間はツール一覧が空になり、起動すると自動的に表示されます。',
+                    json: 'Claude Code など（.mcp.json）',
+                    toml: 'Codex（~/.codex/config.toml）',
+                    copy: '設定をコピー',
+                    copied: '設定をコピーしました。'
+                },
+                network: 'ネットワーク API',
+                networkHint: 'LAN 上のデバイス、Stream Deck、MCP 非対応のアプリが HTTP で呼び出すためのもので、アクセストークンが必要です。ローカルの AI エージェントを接続するだけなら有効にする必要はありません。',
+                enabled: 'ネットワーク API を有効にする',
                 enabledHint: 'メインウィンドウを閉じても、アプリ終了または手動停止までバックグラウンドで待ち受けます。',
                 allowLan: 'LAN からのアクセスを許可',
                 allowLanHint: '既定では 127.0.0.1 のみ待ち受けます。LAN アクセスは暗号化されない HTTP で、トークンも保護されません。',
@@ -1230,12 +1240,12 @@ const ja: LanguageMessages = {
                 start: '保存した API を起動',
                 stop: '今回の API を停止',
                 stopAccepted: '停止要求を受け付けました。',
-                saveAllFirst: '外部制御 API を起動する前に、すべての設定を保存してください。',
+                saveAllFirst: 'ネットワーク API を起動する前に、すべての設定を保存してください。',
                 states: { disabled: '無効', stopped: '今回のみ停止', starting: '起動中', listening: '待ち受け中', stopping: '停止中', error: '起動失敗' },
                 address: 'API アドレス',
                 lanAddress: 'LAN アドレス',
                 endpoints: 'エンドポイント一覧',
-                endpointsHint: 'すべてのエンドポイントにトークンが必要です。イベントストリームは Server-Sent Events で、Last-Event-ID による再開に対応します。',
+                endpointsHint: 'ローカルチャネルとネットワーク API は同じエンドポイントを提供し、ネットワーク経由ではトークンが必要です。MCP はよく使うエンドポイントを同名のツールとして提供します。イベントストリームは Server-Sent Events で、Last-Event-ID による再開に対応します。',
                 endpointCatalog: 'パス、パラメーター、待機方法、エラーコードをまとめた完全な説明です。スクリプトや AI エージェントは一度読めばすぐに使えます。',
                 endpointStatus: 'サービスの状態、バージョン、実行中のタスク数、選択できるエージェント・モデルチャネル・ワークスペース。',
                 endpointConversations: '会話一覧。同じパスへの POST で新しい会話を作成します。',
@@ -1243,8 +1253,8 @@ const ja: LanguageMessages = {
                 endpointEvents: 'アプリのイベントを購読します。types と conversationId で絞り込めます。',
                 endpointRpc: 'UI と同じ RPC メソッドを呼び出します。REST 化されていない操作に使えます。',
                 endpointSpeech: '設定済みのプロバイダーで音声を合成し、base64 の音声断片を返します。',
-                agentHint: '待ち受け中はアドレスとトークンを含む検出ファイルを ~/.graycode/control-api/ に書き込みます。Claude Code や Codex などのローカルエージェントはこれを読み、GET /v1 の説明に従って直接呼び出せます。API の停止時やアプリ終了時に削除されます。',
-                securityHint: 'トークンはオーナー権限と同じで、メッセージ送信やツール呼び出しの承認もできます。信頼できるアプリだけに渡し、ブラウザのアドレス欄や公開ログに載せないでください。'
+                agentHint: 'アプリの実行中は ~/.graycode/control-api/ に検出ファイルを書き込みます。ローカルチャネルのアドレス、MCP の起動コマンド、ネットワーク API が有効なときはその HTTP アドレスを含み、トークンは含みません。MCP を使わないローカルのプログラムは、GET /v1 の説明に従ってローカルチャネルを直接呼び出せます。アプリ終了時に削除されます。',
+                securityHint: 'MCP ブリッジとトークンはどちらもあなた自身と同じ権限を持ち、メッセージ送信やツール呼び出しの承認もできます。信頼できるエージェントとアプリだけを接続し、トークンをブラウザのアドレス欄や公開ログに載せないでください。'
             },
             channelSettings: {
                 selector: {
@@ -2547,7 +2557,7 @@ const ja: LanguageMessages = {
                     },
                     controlApi: {
                         title: '外部制御',
-                        description: 'ローカル HTTP API で外部アプリから GrayCode を制御できるようにします'
+                        description: 'MCP または HTTP で AI エージェントや外部アプリから GrayCode を制御できるようにします'
                     },
                     appearance: {
                         title: '外観',
