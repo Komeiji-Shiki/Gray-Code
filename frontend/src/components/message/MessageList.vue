@@ -27,7 +27,7 @@ import MessageItem from './MessageItem.vue'
 import ChatError from './ChatError.vue'
 import SummaryMessage from './SummaryMessage.vue'
 import DirtyFilesConfirm from './DirtyFilesConfirm.vue'
-import { useChatStore } from '../../stores'
+import { useChatStore, useSettingsStore } from '../../stores'
 import { useI18n } from '../../i18n'
 import type { Message, Attachment } from '../../types'
 import { recentInterruptDeliveries, clearInterruptDeliveries } from '../../stores/chat/messageActions/interruptNotices'
@@ -48,6 +48,7 @@ const props = defineProps<{
 
 // 从 store 读取等待状态
 const chatStore = useChatStore()
+const settingsStore = useSettingsStore()
 provide(messageConversationKey, computed(() => chatStore.currentConversationId))
 provide(messageWorkspaceUriKey, computed(() => chatStore.currentConversation?.workspaceUri))
 provide(messageToolResultKey, (id, response) => chatStore.getToolDisplayResult(id, response))
@@ -252,6 +253,12 @@ function handleCopy(content: string) {
 // 处理错误后重试
 function handleErrorRetry() {
   chatStore.retryAfterError()
+}
+
+// 模型下线时供应方点名的替代模型：保存为本对话的模型后按原样重试。
+async function handleErrorSwitchModel(model: string) {
+  await chatStore.setSelectedModelId(model)
+  await chatStore.retryAfterError()
 }
 
 // 处理继续对话（工具执行后中断时）
@@ -522,7 +529,8 @@ function handleContinue() {
         
         <!-- 错误提示 - 显示在消息末尾 -->
         <ChatError v-if="chatStore.error" :error="chatStore.error"
-          @retry="handleErrorRetry" @dismiss="chatStore.dismissError()" />
+          @retry="handleErrorRetry" @dismiss="chatStore.dismissError()"
+          @switch-model="handleErrorSwitchModel" @open-channel-settings="settingsStore.showSettings('channel')" />
 
         <!-- 恢复结果提示（H-3）：恢复类结果独立展示，不占用错误条，也不提供 LLM 重试 -->
         <div v-if="restoreNotice" class="restore-notice" :class="`restore-notice-${restoreNotice.kind}`">

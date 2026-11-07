@@ -1,4 +1,5 @@
 import type { RunStatus } from '@graycode/contracts';
+import { classifyUpstreamError, type UpstreamErrorKind } from '../../../../shared/upstreamError';
 
 const PUBLIC_ERRORS = new Set([
   'Workspace or account is unavailable.',
@@ -20,6 +21,13 @@ const PUBLIC_ERRORS = new Set([
   '这个频道尚未启用，请在桌面管理页选择允许响应的频道。',
 ]);
 
+/** 上游错误按处理办法归类后只给出固定说明，替代模型名等上游原文同样不公开。 */
+const UPSTREAM_ADVICE: Record<UpstreamErrorKind, string> = {
+  model_unavailable: '模型已下线或当前不可用，需要更换模型。',
+  credential: '模型渠道的密钥已失效或没有访问权限，需要更新渠道设置。',
+  quota: '模型额度或调用频率已达上限，请稍后再试。',
+};
+
 /** 只公开已核对的固定文案；上游错误正文和异常参数不能靠正则证明没有敏感信息。 */
 export function publicBotError(error: string | undefined): string | undefined {
   const message = error?.trim();
@@ -29,6 +37,8 @@ export function publicBotError(error: string | undefined): string | undefined {
     return '账号尚未绑定，默认访客对话也未启用。请由主人配置默认权限或单独授权。';
   const limit = /^The configured iteration limit \(([1-9]\d{0,5})\) was reached\.$/.exec(message);
   if (limit) return message;
+  const advice = classifyUpstreamError(message);
+  if (advice) return UPSTREAM_ADVICE[advice.kind];
   const status = /^HTTP ([45]\d{2})(?::|$)/.exec(message);
   if (status) return `模型接口返回 HTTP ${status[1]}。`;
   return undefined;

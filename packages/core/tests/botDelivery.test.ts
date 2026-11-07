@@ -78,6 +78,12 @@ describe('Bot 回复合并与发送恢复', () => {
     expect(publicBotError('Workspace or account is unavailable.')).toBe('Workspace or account is unavailable.');
     expect(publicBotError('HTTP 502: upstream echoed Bearer private-value at https://secret.invalid/')).toBe('模型接口返回 HTTP 502。');
     expect(publicBotError('Bearer private-value at C:\\Users\\secret\\config.json')).toBeUndefined();
+    // 能归类的上游错误给出固定的处理说明，替代模型名和上游原文都不公开。
+    const retired = publicBotError('HTTP 410: Model deepseek-flash has been deprecated. Use deepseek-v4.1-flash instead.');
+    expect(retired).toBe('模型已下线或当前不可用，需要更换模型。');
+    expect(publicBotError('Anthropic 在流式响应中返回错误: This API key has expired.')).toBe('模型渠道的密钥已失效或没有访问权限，需要更新渠道设置。');
+    expect(publicBotError('HTTP 429: Go usage limit exceeded')).toBe('模型额度或调用频率已达上限，请稍后再试。');
+    expect(botFailureContext('failed', 'HTTP 429: Go usage limit exceeded')).toContain('错误摘要：模型额度或调用频率已达上限');
     expect(botFailureContext('failed', 'Bearer private-value at C:\\Users\\secret\\config.json')).toContain('具体错误未提供给模型');
     expect(botFailureContext('failed', 'Bearer private-value at C:\\Users\\secret\\config.json')).not.toContain('private-value');
     expect(botFailureContext('interrupted', 'Workspace or account is unavailable.')).toContain('上一轮任务执行中断');

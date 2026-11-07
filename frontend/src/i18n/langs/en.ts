@@ -799,7 +799,14 @@ const en: LanguageMessages = {
             error: {
                 title: 'Request Failed',
                 retry: 'Retry',
-                dismiss: 'Dismiss'
+                dismiss: 'Dismiss',
+                advice: {
+                    model_unavailable: 'The model has been retired or is currently unavailable.',
+                    credential: 'The channel key has expired or lacks access.',
+                    quota: 'The usage or rate limit has been reached. Retry later, or pick another channel in the input box.'
+                },
+                switchModel: 'Switch to {model} and retry',
+                openChannelSettings: 'Open channel settings'
             },
             interrupt: {
                 delivered: 'Received "{text}" — queued for processing',

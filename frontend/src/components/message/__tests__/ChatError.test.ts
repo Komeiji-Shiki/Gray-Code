@@ -28,6 +28,25 @@ test('复制完整错误码和多行正文，成功后显示反馈并保留重�
   wrapper.unmount()
 })
 
+test('模型请求失败按类别给出处理办法：替代模型一键切换，密钥失效打开渠道设置，额度上限只提示', async () => {
+  const wrapper = mount(ChatError, { props: { error: { code: 'API_ERROR',
+    message: 'HTTP 410: Model deepseek-flash has been deprecated. Use deepseek-v4.1-flash instead.' } }, global })
+  expect(wrapper.get('.error-advice-text').text()).toBe('模型已下线或当前不可用。')
+  await wrapper.get('.error-advice-action').trigger('click')
+  expect(wrapper.get('.error-advice-action').text()).toBe('改用 deepseek-v4.1-flash 并重试')
+  expect(wrapper.emitted('switchModel')).toEqual([['deepseek-v4.1-flash']])
+  await wrapper.setProps({ error: { code: 'API_ERROR', message: 'HTTP 401: Unauthorized' } })
+  await wrapper.get('.error-advice-action').trigger('click')
+  expect(wrapper.emitted('openChannelSettings')).toHaveLength(1)
+  await wrapper.setProps({ error: { code: 'API_ERROR', message: 'HTTP 429: Go usage limit exceeded' } })
+  expect(wrapper.get('.error-advice-text').text()).toContain('额度或调用频率已达上限')
+  expect(wrapper.find('.error-advice-action').exists()).toBe(false)
+  // 不可重试的界面操作错误即使文本相似也不附渠道动作。
+  await wrapper.setProps({ error: { code: 'RESTORE_ERROR', message: 'HTTP 401: Unauthorized' } })
+  expect(wrapper.find('.error-advice').exists()).toBe(false)
+  wrapper.unmount()
+})
+
 test('剪贴板失败显示失败状态，保留原始错误正文', async () => {
   window.__GRAYCODE_HOST = undefined
   Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText: vi.fn().mockRejectedValue(new Error('denied')) } })

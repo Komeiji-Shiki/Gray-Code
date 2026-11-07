@@ -799,7 +799,14 @@ const ja: LanguageMessages = {
             error: {
                 title: 'リクエストに失敗しました',
                 retry: '再試行',
-                dismiss: '閉じる'
+                dismiss: '閉じる',
+                advice: {
+                    model_unavailable: 'モデルは提供終了したか、現在利用できません。',
+                    credential: 'チャネルのキーが失効しているか、アクセス権がありません。',
+                    quota: '利用枠またはレート制限に達しました。しばらくして再試行するか、入力欄で別のチャネルを選んでください。'
+                },
+                switchModel: '{model} に切り替えて再試行',
+                openChannelSettings: 'チャネル設定を開く'
             },
             interrupt: {
                 delivered: '「{text}」を受け付けました。処理待ちです',

@@ -801,7 +801,14 @@ const zhCN = {
             error: {
                 title: '请求失败',
                 retry: '重试',
-                dismiss: '关闭'
+                dismiss: '关闭',
+                advice: {
+                    model_unavailable: '模型已下线或当前不可用。',
+                    credential: '渠道密钥已失效或没有访问权限。',
+                    quota: '额度或调用频率已达上限，可以稍后重试，或在输入框换一个渠道。'
+                },
+                switchModel: '改用 {model} 并重试',
+                openChannelSettings: '打开渠道设置'
             },
             interrupt: {
                 delivered: '已接收「{text}」，排队等待处理',
